@@ -22,7 +22,7 @@
 	James Wynn james@jameswynn.com
 */
 
-#include <FileWatcher/FileWatcherLinux.h>
+#include <includes/FileWatcherLinux.h>
 
 #if FILEWATCHER_PLATFORM == FILEWATCHER_PLATFORM_LINUX
 
@@ -42,7 +42,7 @@ namespace FW
 	{
 		WatchID mWatchID;
 		String mDirName;
-		FileWatchListener* mListener;		
+		FileWatchListener* mListener;
 	};
 
 	//--------
@@ -51,10 +51,10 @@ namespace FW
 		mFD = inotify_init();
 		if (mFD < 0)
 			fprintf (stderr, "Error: %s\n", strerror(errno));
-		
+
 		mTimeOut.tv_sec = 0;
 		mTimeOut.tv_usec = 0;
-	   		
+
 		FD_ZERO(&mDescriptorSet);
 	}
 
@@ -73,7 +73,7 @@ namespace FW
 	//--------
 	WatchID FileWatcherLinux::addWatch(const String& directory, FileWatchListener* watcher)
 	{
-		int wd = inotify_add_watch (mFD, directory.c_str(), 
+		int wd = inotify_add_watch (mFD, directory.c_str(),
 			IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_MOVED_FROM | IN_DELETE);
 		if (wd < 0)
 		{
@@ -85,14 +85,14 @@ namespace FW
 //			fprintf (stderr, "Error: %s\n", strerror(errno));
 //			return -1;
 		}
-		
+
 		WatchStruct* pWatch = new WatchStruct();
 		pWatch->mListener = watcher;
 		pWatch->mWatchID = wd;
 		pWatch->mDirName = directory;
-		
+
 		mWatches.insert(std::make_pair(wd, pWatch));
-	
+
 		return wd;
 	}
 
@@ -121,9 +121,9 @@ namespace FW
 
 		WatchStruct* watch = iter->second;
 		mWatches.erase(iter);
-	
+
 		inotify_rm_watch(mFD, watchid);
-		
+
 		delete watch;
 		watch = 0;
 	}
@@ -145,7 +145,7 @@ namespace FW
 			char buff[BUFF_SIZE] = {0};
 
 			len = read (mFD, buff, BUFF_SIZE);
-		   
+
 			while (i < len)
 			{
 				struct inotify_event *pevent = (struct inotify_event *)&buff[i];

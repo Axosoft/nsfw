@@ -1,0 +1,19 @@
+{
+  "name": "node-simple-file-watcher",
+  "version": "0.0.1",
+  "description": "Node wrapper for simplefilewatcher",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/axosoft/node-simple-file-watcher"
+  },
+  "author": "Axosoft, LLC",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
+  },
+  "homepage": "https://github.com/axosoft/node-simple-file-watcher",
+  "dependencies": {
+    "nan": "^2.0.0"
+  }
+}

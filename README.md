@@ -1,5 +1,5 @@
 # node-simple-file-watcher
-a simple node wrapper for [simplefilewatcher](https://code.google.com/p/simplefilewatcher/)
+a simple node wrapper rewrite for [simplefilewatcher](https://code.google.com/p/simplefilewatcher/)
 
 ```js
 var simple = require('node-simple-file-watcher');
@@ -12,5 +12,5 @@ watcherTwo.on('add', function doAddHandling(filePath) {
 });
 ```
 
-A watcher is a simple event emitter watching a single directory or file. 
-There are 3 events fired: 'add', 'delete', and 'modify'. 
+A watcher is a simple event emitter watching a single directory or file.
+There are 3 events fired: 'add', 'delete', and 'modify'.

@@ -7,13 +7,13 @@
         "src/FileWatcherLinux.cpp",
         "src/FileWatcherOSX.cpp",
         "src/FileWatcherWin32.cpp",
-        "src/NodeFileWatcher.cpp",
+        "src/NodeSentinelFileWatcher.cpp",
         "includes/FileWatcher.h",
         "includes/FileWatcherImpl.h",
         "includes/FileWatcherLinux.h",
         "includes/FileWatcherOSX.h",
         "includes/FileWatcherWin32.h",
-        "includes/NodeFileWatcher.h"
+        "includes/NodeSentinelFileWatcher.h"
       ],
       "include_dirs": [
         "<!(node -e \"require('nan')\")",

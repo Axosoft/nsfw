@@ -22,7 +22,7 @@
   James Wynn james@jameswynn.com
 */
 
-#include <includes/FileWatcherOSX.h>
+#include "../includes/FileWatcherOSX.h"
 
 #if FILEWATCHER_PLATFORM == FILEWATCHER_PLATFORM_KQUEUE
 

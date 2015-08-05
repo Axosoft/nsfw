@@ -25,7 +25,7 @@ namespace NSFW
 
   private:
     // Constructors
-    NodeSentinelFileWatcher(Callback *pCallback, std::string path);
+    NodeSentinelFileWatcher(std::string path, Callback *pCallback);
     ~NodeSentinelFileWatcher();
 
     // Internal methods

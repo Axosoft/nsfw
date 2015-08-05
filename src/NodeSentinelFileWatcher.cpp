@@ -4,7 +4,7 @@ namespace NSFW {
 
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
 
-  NodeSentinelFileWatcher::NodeSentinelFileWatcher(Callback *pCallback, std::string path) {
+  NodeSentinelFileWatcher::NodeSentinelFileWatcher(std::string path, Callback *pCallback) {
     mFileWatcher = new FileWatcher();
     mCallback = pCallback;
   }
@@ -34,18 +34,18 @@ namespace NSFW {
       return;
     }
 
-    if (info.Length() < 1 || !info[0]->IsFunction()) {
-      return ThrowError("First argument of constructor must be a callback.");
+    if (info.Length() < 1 || !info[0]->IsString()) {
+      return ThrowError("First argument of constructor must be a path.");
     }
-    if (info.Length() < 2 || !info[1]->IsString()) {
-      return ThrowError("Second argument of constructor must be a path.");
+    if (info.Length() < 2 || !info[1]->IsFunction()) {
+      return ThrowError("Second argument of constructor must be a callback.");
     }
     // prepare the arguments to pass to the constructor
-    Callback *callback = new Callback(info[0].As<v8::Function>());
-    v8::String::Utf8Value utf8Value(info[1]->ToString());
+    v8::String::Utf8Value utf8Value(info[0]->ToString());
     std::string path = std::string(*utf8Value);
+    Callback *callback = new Callback(info[1].As<v8::Function>());
 
-    NodeSentinelFileWatcher *nsfw = new NodeSentinelFileWatcher(callback, path);
+    NodeSentinelFileWatcher *nsfw = new NodeSentinelFileWatcher(path, callback);
     nsfw->Wrap(info.This());
     info.GetReturnValue().Set(info.This());
   }
@@ -77,8 +77,6 @@ namespace NSFW {
     std::queue<Event> events(mEventQueue);
     std::queue<Event> empty;
     std::swap(mEventQueue, empty);
-
-    std::cout << events.size() << std::endl;
 
     while(!events.empty()) {
       Event event = events.front();

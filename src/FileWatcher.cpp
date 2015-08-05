@@ -1,6 +1,8 @@
 #include "FileWatcher.h"
 
-using namespace NSFW;
+namespace NSFW {
 
-FileWatcher::FileWatcher() {}
-FileWatcher::~FileWatcher() {}
+  FileWatcher::FileWatcher() {}
+  FileWatcher::~FileWatcher() {}
+
+}

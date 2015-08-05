@@ -1,11 +1,12 @@
 #include "../includes/NodeSentinelFileWatcher.h"
 #include <iostream>
 
+using namespace NSFW;
+
 Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
 
 NodeSentinelFileWatcher::NodeSentinelFileWatcher(Callback *pCallback, std::string path) {
-  mFileWatcher = new FW::FileWatcher();
-  mFileWatcher->addWatch(path, new NodeSentinelFileWatcher::UpdateListener(this));
+  mFileWatcher = new FileWatcher();
   mCallback = pCallback;
 }
 
@@ -45,6 +46,8 @@ NAN_METHOD(NodeSentinelFileWatcher::JSNew) {
   v8::String::Utf8Value utf8Value(info[1]->ToString());
   std::string path = std::string(*utf8Value);
 
+  std::cout << path << std::endl;
+
   NodeSentinelFileWatcher *nsfw = new NodeSentinelFileWatcher(callback, path);
   nsfw->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
@@ -57,48 +60,41 @@ NAN_METHOD(NodeSentinelFileWatcher::Update) {
 
 // NodeSentinelFileWatcher::UpdateWorker ---------------------------------------
 
-NodeSentinelFileWatcher::UpdateWorker::UpdateWorker(FW::FileWatcher * const fw, std::queue<NSFWEvent> &eventQueue, Callback *callback)
+NodeSentinelFileWatcher::UpdateWorker::UpdateWorker(FileWatcher * const fw, std::queue<Event> &eventQueue, Callback *callback)
   : AsyncWorker(callback), mCallerFileWatcher(fw), mEventQueue(eventQueue) {}
 
-void NodeSentinelFileWatcher::enqueueEvent(const std::string &dir, const std::string &filename, FW::Actions::Action action) {
-  NSFWEvent event;
-  event.dir = dir;
-  event.filename = filename;
+void NodeSentinelFileWatcher::enqueueEvent(const std::string &directory, const std::string &file, const std::string &action) {
+  Event event;
+  event.directory = directory;
+  event.file = file;
   event.action = action;
   mEventQueue.push(event);
 }
 
 void NodeSentinelFileWatcher::UpdateWorker::Execute() {
-  mCallerFileWatcher->update();
 }
 
 void NodeSentinelFileWatcher::UpdateWorker::HandleOKCallback() {
   HandleScope();
 
-  std::queue<NSFWEvent> events(mEventQueue);
-  std::queue<NSFWEvent> empty;
+  std::queue<Event> events(mEventQueue);
+  std::queue<Event> empty;
   std::swap(mEventQueue, empty);
 
+  std::cout << events.size() << std::endl;
+
   while(!events.empty()) {
-    NSFWEvent event = events.front();
+    Event event = events.front();
     events.pop();
 
     v8::Local<v8::Value> argv[] = {
-      New<v8::Number>((int)event.action),
-      New<v8::String>(event.dir).ToLocalChecked(),
-      New<v8::String>(event.filename).ToLocalChecked()
+      New<v8::String>(event.action).ToLocalChecked(),
+      New<v8::String>(event.directory).ToLocalChecked(),
+      New<v8::String>(event.file).ToLocalChecked()
     };
 
     callback->Call(3, argv);
   }
-}
-
-// NodeSentinelFileWatcher::UpdateListener -------------------------------------
-NodeSentinelFileWatcher::UpdateListener::UpdateListener(NodeSentinelFileWatcher * const parent)
- : mParent(parent) {}
-
-void NodeSentinelFileWatcher::UpdateListener::handleFileAction(FW::WatchID watchid, const std::string &dir, const std::string &filename, FW::Actions::Action action) {
-  mParent->enqueueEvent(dir, filename, action);
 }
 
 NODE_MODULE(FileWatcher, NodeSentinelFileWatcher::Init)

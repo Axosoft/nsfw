@@ -51,9 +51,9 @@ namespace FW
   }
 
   //--------
-  WatchID FileWatcher::addWatch(const String& directory, FileWatchListener* watcher)
+  WatchID FileWatcher::addWatch(const String& directory)
   {
-    return mImpl->addWatch(directory, watcher);
+    return mImpl->addWatch(directory);
   }
 
   //--------
@@ -69,9 +69,9 @@ namespace FW
   }
 
   //--------
-  void FileWatcher::update()
+  void FileWatcher::update(FileWatchListener* watcher)
   {
-    mImpl->update();
+    mImpl->update(watcher);
   }
 
 };//namespace FW

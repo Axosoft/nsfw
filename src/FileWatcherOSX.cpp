@@ -80,8 +80,8 @@ namespace FW
     KEvent mChangeList[MAX_CHANGE_EVENT_SIZE];
     size_t mChangeListCount;
 
-    WatchStruct(WatchID watchid, const String& dirname, FileWatchListener* listener)
-    : mWatchID(watchid), mDirName(dirname), mListener(listener)
+    WatchStruct(WatchID watchid, const String& dirname)
+    : mWatchID(watchid), mDirName(dirname)
     {
       mChangeListCount = 0;
       addAll();
@@ -273,7 +273,7 @@ namespace FW
     }
   };
 
-  void FileWatcherOSX::update()
+  void FileWatcherOSX::update(FileWatchListener* watcher)
   {
     int nev = 0;
     struct kevent event;
@@ -283,6 +283,7 @@ namespace FW
     for(; iter != end; ++iter)
     {
       WatchStruct* watch = iter->second;
+      watch->mListener = watcher;
 
       while((nev = kevent(mDescriptor, (KEvent*)&(watch->mChangeList), watch->mChangeListCount + 1, &event, 1, &mTimeOut)) != 0)
       {
@@ -320,6 +321,8 @@ namespace FW
           }
         }
       }
+      delete watch->mListener;
+      watch->mListener = 0;
     }
   }
 
@@ -346,7 +349,7 @@ namespace FW
   }
 
   //--------
-  WatchID FileWatcherOSX::addWatch(const String& directory, FileWatchListener* watcher)
+  WatchID FileWatcherOSX::addWatch(const String& directory)
   {
 /*    int fd = open(directory.c_str(), O_RDONLY);
     if(fd == -1)
@@ -358,7 +361,7 @@ namespace FW
          0, (void*)"testing");
 */
 
-    WatchStruct* watch = new WatchStruct(++mLastWatchID, directory, watcher);
+    WatchStruct* watch = new WatchStruct(++mLastWatchID, directory);
     mWatches.insert(std::make_pair(mLastWatchID, watch));
     return mLastWatchID;
   }

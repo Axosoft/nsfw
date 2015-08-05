@@ -56,7 +56,7 @@ namespace FW
 
     /// Add a directory watch
     /// @exception FileNotFoundException Thrown when the requested directory does not exist
-    WatchID addWatch(const String& directory, FileWatchListener* watcher);
+    WatchID addWatch(const String& directory);
 
     /// Remove a directory watch. This is a brute force lazy search O(nlogn).
     void removeWatch(const String& directory);
@@ -65,7 +65,7 @@ namespace FW
     void removeWatch(WatchID watchid);
 
     /// Updates the watcher. Must be called often.
-    void update();
+    void update(FileWatchListener* watcher);
 
     /// Handles the action
     void handleAction(WatchStruct* watch, const String& filename, unsigned long action);

@@ -71,7 +71,7 @@ namespace FW
   }
 
   //--------
-  WatchID FileWatcherLinux::addWatch(const String& directory)
+  WatchID FileWatcherLinux::addWatch(const String& directory, FileWatchListener* watcher)
   {
     int wd = inotify_add_watch (mFD, directory.c_str(),
       IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_MOVED_FROM | IN_DELETE);
@@ -87,6 +87,7 @@ namespace FW
     }
 
     WatchStruct* pWatch = new WatchStruct();
+    pWatch->mListener = watcher;
     pWatch->mWatchID = wd;
     pWatch->mDirName = directory;
 
@@ -128,7 +129,7 @@ namespace FW
   }
 
   //--------
-  void FileWatcherLinux::update(FileWatchListener* watcher)
+  void FileWatcherLinux::update()
   {
     FD_SET(mFD, &mDescriptorSet);
 
@@ -150,11 +151,8 @@ namespace FW
         struct inotify_event *pevent = (struct inotify_event *)&buff[i];
 
         WatchStruct* watch = mWatches[pevent->wd];
-        watch->mListener = watcher;
         handleAction(watch, pevent->name, pevent->mask);
         i += sizeof(struct inotify_event) + pevent->len;
-        delete watch->mListener;
-        watch->mListener = 0;
       }
     }
   }

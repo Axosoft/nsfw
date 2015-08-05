@@ -167,7 +167,7 @@ namespace FW
 
   //--------
   FileWatcherWin32::FileWatcherWin32()
-    : mLastWatchID(0), mFileWatchListener(0)
+    : mLastWatchID(0)
   {
   }
 
@@ -184,7 +184,7 @@ namespace FW
   }
 
   //--------
-  WatchID FileWatcherWin32::addWatch(const String& directory)
+  WatchID FileWatcherWin32::addWatch(const String& directory, FileWatchListener* watcher)
   {
     WatchID watchid = ++mLastWatchID;
 
@@ -196,6 +196,7 @@ namespace FW
 
     watch->mWatchid = watchid;
     watch->mFileWatcher = this;
+    watch->mFileWatchListener = watcher;
     watch->mDirName = new char[directory.length()+1];
     strcpy(watch->mDirName, directory.c_str());
 
@@ -234,17 +235,8 @@ namespace FW
   }
 
   //--------
-  void FileWatcherWin32::update(FileWatchListener* fileWatchListener)
+  void FileWatcherWin32::update()
   {
-    if (mFileWatchListener) {
-      FileWatchListener *swap = mFileWatchListener;
-      mFileWatchListener = fileWatchListener;
-      delete swap;
-      swap = 0;
-    } else {
-      mFileWatchListener = fileWatchListener;
-    }
-
     MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, MWMO_ALERTABLE);
   }
 
@@ -268,7 +260,7 @@ namespace FW
       break;
     };
 
-    mFileWatchListener->handleFileAction(watch->mWatchid, watch->mDirName, filename, fwAction);
+    watch->mFileWatchListener->handleFileAction(watch->mWatchid, watch->mDirName, filename, fwAction);
   }
 
 };//namespace FW

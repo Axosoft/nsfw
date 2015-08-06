@@ -2,9 +2,6 @@
 #define FILEWATCHER32_H
 
 #include "FileWatcherInterface.h"
-#include <vcclr.h>
-#include <atlstr.h>
-#include <stdio.h>
 #include <string>
 #include <msclr\marshal_cppstd.h>
 #using <mscorlib.dll>

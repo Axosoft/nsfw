@@ -20,6 +20,10 @@ namespace NSFW {
   }
 
   // Public methods
+  bool FileWatcher::running() {
+    return mWatchFiles;
+  }
+
   bool FileWatcher::start() {
     if (!mWatchFiles) {
       mWatchFiles = true;
@@ -35,7 +39,7 @@ namespace NSFW {
   }
 
   bool FileWatcher::stop() {
-    if (mWatchFiles) {
+    if (!mWatchFiles) {
       return false;
     } else {
       mWatchFiles = false;

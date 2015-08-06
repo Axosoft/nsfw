@@ -13,6 +13,7 @@ namespace NSFW {
     // Public methods
     void pushEvent(Event event);
     std::queue<Event> *pollEvents();
+    bool running();
     bool start();
     bool stop();
 

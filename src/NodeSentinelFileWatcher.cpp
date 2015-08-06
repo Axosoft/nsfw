@@ -54,7 +54,9 @@ namespace NSFW {
 
   NAN_METHOD(NodeSentinelFileWatcher::Poll) {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
-    // AsyncQueueWorker(new PollWorker(nsfw->mFileWatcher, new Callback(nsfw->mCallback->GetFunction())));
+    // if it's not running, don't try polling
+    if (!nsfw->mFileWatcher->running()) return;
+
     std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
     while(!events->empty()) {
       Event event = events->front();
@@ -72,12 +74,15 @@ namespace NSFW {
 
   NAN_METHOD(NodeSentinelFileWatcher::Start) {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
-    nsfw->mFileWatcher->start();
-  }
+    if (!nsfw->mFileWatcher->start()) {
+      return ThrowError("Cannot start an already running NSFW.");
+    }  }
 
   NAN_METHOD(NodeSentinelFileWatcher::Stop) {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
-    nsfw->mFileWatcher->stop();
+    if (!nsfw->mFileWatcher->stop()) {
+      return ThrowError("Cannot stop an already stopped NSFW.");
+    }
   }
 
   // NodeSentinelFileWatcher::PollWorker ---------------------------------------

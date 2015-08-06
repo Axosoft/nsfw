@@ -1,5 +1,5 @@
 #include "../includes/NodeSentinelFileWatcher.h"
-
+#include <iostream>
 namespace NSFW {
 
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
@@ -22,6 +22,8 @@ namespace NSFW {
     v8::Local<v8::ObjectTemplate> proto = tpl->PrototypeTemplate();
 
     SetPrototypeMethod(tpl, "poll", Poll);
+    SetPrototypeMethod(tpl, "start", Start);
+    SetPrototypeMethod(tpl, "stop", Stop);
 
     constructor.Reset(tpl->GetFunction());
     Set(target, New<v8::String>("NSFW").ToLocalChecked(), tpl->GetFunction());
@@ -52,7 +54,30 @@ namespace NSFW {
 
   NAN_METHOD(NodeSentinelFileWatcher::Poll) {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
-    AsyncQueueWorker(new PollWorker(nsfw->mFileWatcher, new Callback(nsfw->mCallback->GetFunction())));
+    // AsyncQueueWorker(new PollWorker(nsfw->mFileWatcher, new Callback(nsfw->mCallback->GetFunction())));
+    std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
+    while(!events->empty()) {
+      Event event = events->front();
+      events->pop();
+
+      v8::Local<v8::Value> argv[] = {
+        New<v8::String>(event.action).ToLocalChecked(),
+        New<v8::String>(event.directory).ToLocalChecked(),
+        New<v8::String>(event.file).ToLocalChecked()
+      };
+
+      nsfw->mCallback->Call(3, argv);
+    }
+  }
+
+  NAN_METHOD(NodeSentinelFileWatcher::Start) {
+    NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
+    nsfw->mFileWatcher->start();
+  }
+
+  NAN_METHOD(NodeSentinelFileWatcher::Stop) {
+    NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
+    nsfw->mFileWatcher->stop();
   }
 
   // NodeSentinelFileWatcher::PollWorker ---------------------------------------
@@ -66,22 +91,19 @@ namespace NSFW {
   void NodeSentinelFileWatcher::PollWorker::HandleOKCallback() {
     HandleScope();
 
-    // std::queue<Event> events(*(mCallerFileWatcher->pollEvents()));
-    // std::queue<Event> empty;
-    // std::swap(mEventQueue, empty);
+    std::queue<Event> *events = mCallerFileWatcher->pollEvents();
+    while(!events->empty()) {
+      Event event = events->front();
+      events->pop();
 
-    // while(!events.empty()) {
-      // Event event = events.front();
-      // events.pop();
-      //
-      // v8::Local<v8::Value> argv[] = {
-      //   New<v8::String>(event.action).ToLocalChecked(),
-      //   New<v8::String>(event.directory).ToLocalChecked(),
-      //   New<v8::String>(event.oldDirectory).ToLocalChecked()
-      // };
+      v8::Local<v8::Value> argv[] = {
+        New<v8::String>(event.action).ToLocalChecked(),
+        New<v8::String>(event.directory).ToLocalChecked(),
+        New<v8::String>(event.file).ToLocalChecked()
+      };
 
       callback->Call(3, argv);
-    // }
+    }
   }
 
   NODE_MODULE(FileWatcher, NodeSentinelFileWatcher::Init)

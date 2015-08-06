@@ -1,11 +1,7 @@
 #ifndef FILEWATCHER_H
 #define FILEWATCHER_H
 
-struct Event {
-  std::string action;
-  std::string directory;
-  std::string file;
-};
+#include "FileWatcherInterface.h"
 
 namespace NSFW {
   class FileWatcher {
@@ -17,10 +13,14 @@ namespace NSFW {
     // Public methods
     void pushEvent(Event event);
     std::queue<Event> *pollEvents();
+    bool start();
+    bool stop();
 
   private:
-    std::queue<Event> mEventsQueue;
     FileWatcherInterface *fwInterface;
+    std::queue<Event> mEventsQueue;
+    std::string mPath;
+    bool mWatchFiles;
   };
 }
 

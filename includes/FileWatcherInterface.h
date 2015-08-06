@@ -1,13 +1,20 @@
 #ifndef FILEWATCHERINTERFACE_H
 #define FILEWATCHERINTERFACE_H
 
-#include "FileWatcher.h";
+#include <string>
+#include <queue>
+
+struct Event {
+  std::string action;
+  std::string directory;
+  std::string file;
+};
 
 namespace NSFW {
   class FileWatcherInterface {
   public:
-    FileWatcherInterface(std::string path, std::queue<Event> &eventsQueue);
-    virtual ~FileWatcherInterface();
+    FileWatcherInterface(){}
+    FileWatcherInterface(std::string path, std::queue<Event> &eventsQueue){}
   };
 }
 

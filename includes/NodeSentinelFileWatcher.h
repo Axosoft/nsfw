@@ -25,6 +25,8 @@ namespace NSFW
     // Javascript methods
     static NAN_METHOD(JSNew);
     static NAN_METHOD(Poll);
+    static NAN_METHOD(Start);
+    static NAN_METHOD(Stop);
     // Poll worker
     class PollWorker : public AsyncWorker {
     public:

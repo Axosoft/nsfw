@@ -5,7 +5,7 @@ namespace NSFW {
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
 
   NodeSentinelFileWatcher::NodeSentinelFileWatcher(std::string path, Callback *pCallback) {
-    mFileWatcher = new FileWatcher();
+    mFileWatcher = new FileWatcher(path);
     mCallback = pCallback;
   }
 
@@ -21,7 +21,7 @@ namespace NSFW {
 
     v8::Local<v8::ObjectTemplate> proto = tpl->PrototypeTemplate();
 
-    SetPrototypeMethod(tpl, "update", Update);
+    SetPrototypeMethod(tpl, "poll", Poll);
 
     constructor.Reset(tpl->GetFunction());
     Set(target, New<v8::String>("NSFW").ToLocalChecked(), tpl->GetFunction());
@@ -50,46 +50,38 @@ namespace NSFW {
     info.GetReturnValue().Set(info.This());
   }
 
-  NAN_METHOD(NodeSentinelFileWatcher::Update) {
+  NAN_METHOD(NodeSentinelFileWatcher::Poll) {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
-    AsyncQueueWorker(new UpdateWorker(nsfw->mFileWatcher, nsfw->mEventQueue, new Callback(nsfw->mCallback->GetFunction())));
+    AsyncQueueWorker(new PollWorker(nsfw->mFileWatcher, new Callback(nsfw->mCallback->GetFunction())));
   }
 
-  // NodeSentinelFileWatcher::UpdateWorker ---------------------------------------
+  // NodeSentinelFileWatcher::PollWorker ---------------------------------------
 
-  NodeSentinelFileWatcher::UpdateWorker::UpdateWorker(FileWatcher * const fw, std::queue<Event> &eventQueue, Callback *callback)
-    : AsyncWorker(callback), mCallerFileWatcher(fw), mEventQueue(eventQueue) {}
+  NodeSentinelFileWatcher::PollWorker::PollWorker(FileWatcher * const fw, Callback *callback)
+    : AsyncWorker(callback), mCallerFileWatcher(fw) {}
 
-  void NodeSentinelFileWatcher::enqueueEvent(const std::string &directory, const std::string &file, const std::string &action) {
-    Event event;
-    event.directory = directory;
-    event.file = file;
-    event.action = action;
-    mEventQueue.push(event);
+  void NodeSentinelFileWatcher::PollWorker::Execute() {
   }
 
-  void NodeSentinelFileWatcher::UpdateWorker::Execute() {
-  }
-
-  void NodeSentinelFileWatcher::UpdateWorker::HandleOKCallback() {
+  void NodeSentinelFileWatcher::PollWorker::HandleOKCallback() {
     HandleScope();
 
-    std::queue<Event> events(mEventQueue);
-    std::queue<Event> empty;
-    std::swap(mEventQueue, empty);
+    // std::queue<Event> events(*(mCallerFileWatcher->pollEvents()));
+    // std::queue<Event> empty;
+    // std::swap(mEventQueue, empty);
 
-    while(!events.empty()) {
-      Event event = events.front();
-      events.pop();
-
-      v8::Local<v8::Value> argv[] = {
-        New<v8::String>(event.action).ToLocalChecked(),
-        New<v8::String>(event.directory).ToLocalChecked(),
-        New<v8::String>(event.file).ToLocalChecked()
-      };
+    // while(!events.empty()) {
+      // Event event = events.front();
+      // events.pop();
+      //
+      // v8::Local<v8::Value> argv[] = {
+      //   New<v8::String>(event.action).ToLocalChecked(),
+      //   New<v8::String>(event.directory).ToLocalChecked(),
+      //   New<v8::String>(event.oldDirectory).ToLocalChecked()
+      // };
 
       callback->Call(3, argv);
-    }
+    // }
   }
 
   NODE_MODULE(FileWatcher, NodeSentinelFileWatcher::Init)

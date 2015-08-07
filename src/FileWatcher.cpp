@@ -1,22 +1,15 @@
 #include "../includes/FileWatcher.h"
 #include "../includes/FileWatcherInterface.h"
 
-#if defined(_WIN32)
-#include "../includes/FileWatcher32.h"
-#define USE_WINDOWS_INIT
-#elif defined(__APPLE_CC__) || defined(BSD)
-#define FILE_WATCHER_INTERFACE FileWatcherOSX
-#elif defined(__linux__)
-#define FILE_WATCHER_INTERFACE FileWatcherLinux
-#endif
-
 namespace NSFW {
 
   FileWatcher::FileWatcher(std::string path)
    : mPath(path), mWatchFiles(false) {}
 
   FileWatcher::~FileWatcher() {
-    //delete fwInterface;
+    #ifndef USE_WINDOWS_INIT
+    delete fwInterface;
+    #endif
   }
 
   // Public methods
@@ -30,7 +23,7 @@ namespace NSFW {
       #if defined(USE_WINDOWS_INIT)
       createFileWatcher(mPath, mEventsQueue, mWatchFiles);
       #else
-      fwInterface = new FILE_WATCHER_INTERFACE(mPath, mEventsQueue)
+      fwInterface = new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
       #endif
       return true;
     } else {

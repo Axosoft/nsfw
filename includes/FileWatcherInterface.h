@@ -14,7 +14,7 @@ namespace NSFW {
   class FileWatcherInterface {
   public:
     FileWatcherInterface(){}
-    FileWatcherInterface(std::string path, std::queue<Event> &eventsQueue){}
+    FileWatcherInterface(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles){}
   };
 }
 

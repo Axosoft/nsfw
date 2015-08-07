@@ -19,8 +19,6 @@ namespace NSFW {
     tpl->SetClassName(New<v8::String>("NSFW").ToLocalChecked());
     tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
-    v8::Local<v8::ObjectTemplate> proto = tpl->PrototypeTemplate();
-
     SetPrototypeMethod(tpl, "poll", Poll);
     SetPrototypeMethod(tpl, "start", Start);
     SetPrototypeMethod(tpl, "stop", Stop);

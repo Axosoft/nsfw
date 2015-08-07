@@ -24,6 +24,7 @@ namespace NSFW {
       createFileWatcher(mPath, mEventsQueue, mWatchFiles);
       #else
       fwInterface = new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
+      fwInterface->start();
       #endif
       return true;
     } else {

@@ -2,6 +2,7 @@
 #define FILEWATCHEROSX_H
 
 #include "FileWatcherInterface.h"
+#include <CoreServices/CoreServices.h>
 
 namespace NSFW {
 

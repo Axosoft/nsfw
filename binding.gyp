@@ -55,7 +55,14 @@
             "sources": [
                 "src/FileWatcherOSX.cpp",
                 "includes/FileWatcherOSX.h"
-            ]
+            ],
+            "link_settings": {
+                "xcode_settings": {
+                    "OTHER_LDFLAGS": [
+                        "-framework CoreServices"
+                    ]
+                }
+            }
         }]
       ]
     }

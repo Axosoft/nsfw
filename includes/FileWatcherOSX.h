@@ -4,8 +4,24 @@
 #include "FileWatcherInterface.h"
 #include <CoreServices/CoreServices.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <search.h>
 
 namespace NSFW {
+
+  struct Directory {
+    dirent *entry;
+    dirent **entries;
+    size_t numEntries;
+    Directory *childDirectories;
+    size_t numChildren;
+    std::string path;
+  };
 
   class FileWatcherOSX : public FileWatcherInterface {
   public:
@@ -20,6 +36,7 @@ namespace NSFW {
     );
     std::string getPath();
     static void *mainLoop(void *params);
+    void snapshotDir();
     bool start();
   private:
     std::queue<Event> &mEventsQueue;

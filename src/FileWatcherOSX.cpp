@@ -17,6 +17,49 @@ namespace NSFW {
     }
   }
 
+  void FileWatcherOSX::snapshotDir() {
+    std::queue<Directory *> dirQueue;
+    struct dirent ** namelist = NULL;
+    int n = scandir(mPath.c_str(), &namelist, NULL, alphasort);
+
+    if (n < 0) {
+      // kill mainloop
+      return;
+    }
+
+    // create root of snapshot
+    struct Directory *root = new Directory;
+    root->entry = NULL;
+    root->entries = namelist;
+    root->numEntries = n;
+    root->path = "";
+    root->numChildren = 0;
+
+    // find all the directories within this directory
+    std::queue<int> childLocation;
+    for (int i = 0; i < n; ++i) {
+      if (root->entries[i]->d_type == DT_DIR
+        && strcmp(root->entries[i]->d_name, ".")
+        && strcmp(root->entries[i]->d_name, "..")) {
+        root->numChildren++;
+        childLocation.push(i);
+      }
+    }
+
+    // create the container array for childDirectories
+    root->childDirectories = new Directory[root->numChildren];
+
+    // enqueue directories for snapshot
+    while (!childLocation.empty()) {
+      Directory *dir = &(root->childDirectories[childLocation.size() - 1]);
+      dir->entry = root->entries[childLocation.front()];
+      childLocation.pop();
+      dir->path = root->path + "/" + dir->entry->d_name;
+      dirQueue.push(dir);
+    }
+
+  }
+
   void FileWatcherOSX::callback(
       ConstFSEventStreamRef streamRef,
       void *clientCallBackInfo,
@@ -26,14 +69,7 @@ namespace NSFW {
       const FSEventStreamEventId eventIds[])
   {
       int i;
-      char **paths = (char **)eventPaths;
-
       FileWatcherOSX *fwOSX = (FileWatcherOSX *)clientCallBackInfo;
-
-      for (i=0; i<numEvents; i++) {
-          int count;
-          printf("Change %llu in %s, flags %lu\n", eventIds[i], paths[i], eventFlags[i]);
-     }
   }
 
   void *FileWatcherOSX::mainLoop(void *params) {

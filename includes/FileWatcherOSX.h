@@ -11,13 +11,19 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <search.h>
+#include <map>
 
 namespace NSFW {
 
+  struct FileDescriptor {
+    dirent *entry;
+    struct stat meta;
+    std::string path;
+  };
+
   struct Directory {
     dirent *entry;
-    dirent **entries;
-    size_t numEntries;
+    std::map<ino_t, FileDescriptor> fileMap;
     Directory *childDirectories;
     size_t numChildren;
     std::string path;
@@ -36,10 +42,14 @@ namespace NSFW {
     );
     std::string getPath();
     static void *mainLoop(void *params);
-    void snapshotDir();
+    void processCallback();
+    Directory *snapshotDir();
     bool start();
+    Directory *mDirTree;
+
   private:
     std::queue<Event> &mEventsQueue;
+    int mNumEvents;
     std::string mPath;
     pthread_t mThread;
     bool &mWatchFiles;

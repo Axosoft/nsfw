@@ -12,6 +12,7 @@
 #include <string.h>
 #include <search.h>
 #include <map>
+#include <time.h>
 
 namespace NSFW {
 
@@ -24,9 +25,12 @@ namespace NSFW {
   struct Directory {
     dirent *entry;
     std::map<ino_t, FileDescriptor> fileMap;
-    Directory *childDirectories;
-    size_t numChildren;
+    std::map<ino_t, Directory *> childDirectories;
     std::string path;
+  };
+
+  struct DirectoryPair {
+    Directory *prev, *current;
   };
 
   class FileWatcherOSX : public FileWatcherInterface {
@@ -40,14 +44,20 @@ namespace NSFW {
       const FSEventStreamEventFlags eventFlags[],
       const FSEventStreamEventId eventIds[]
     );
+    static bool checkTimeValEquality(struct timespec *x, struct timespec *y);
     std::string getPath();
+    void handleTraversingDirectoryChange(std::string action, Directory *directory);
     static void *mainLoop(void *params);
     void processCallback();
     Directory *snapshotDir();
     bool start();
+
+
     Directory *mDirTree;
 
   private:
+    void deleteDirTree();
+
     std::queue<Event> &mEventsQueue;
     int mNumEvents;
     std::string mPath;

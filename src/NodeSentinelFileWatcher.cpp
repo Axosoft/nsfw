@@ -60,13 +60,24 @@ namespace NSFW {
       Event event = events->front();
       events->pop();
 
-      v8::Local<v8::Value> argv[] = {
-        New<v8::String>(event.action).ToLocalChecked(),
-        New<v8::String>(event.directory).ToLocalChecked(),
-        New<v8::String>(event.file).ToLocalChecked()
-      };
+      if (event.action == "RENAMED") {
+        v8::Local<v8::Value> argv[] = {
+          New<v8::String>(event.action).ToLocalChecked(),
+          New<v8::String>(event.directory).ToLocalChecked(),
+          New<v8::String>(event.file[0]).ToLocalChecked(),
+          New<v8::String>(event.file[1]).ToLocalChecked()
+        };
 
-      nsfw->mCallback->Call(3, argv);
+        nsfw->mCallback->Call(4, argv);
+      } else {
+        v8::Local<v8::Value> argv[] = {
+          New<v8::String>(event.action).ToLocalChecked(),
+          New<v8::String>(event.directory).ToLocalChecked(),
+          New<v8::String>(*event.file).ToLocalChecked()
+        };
+
+        nsfw->mCallback->Call(3, argv);
+      }
     }
   }
 
@@ -99,13 +110,24 @@ namespace NSFW {
       Event event = events->front();
       events->pop();
 
-      v8::Local<v8::Value> argv[] = {
-        New<v8::String>(event.action).ToLocalChecked(),
-        New<v8::String>(event.directory).ToLocalChecked(),
-        New<v8::String>(event.file).ToLocalChecked()
-      };
+      if (event.action == "RENAMED") {
+        v8::Local<v8::Value> argv[] = {
+          New<v8::String>(event.action).ToLocalChecked(),
+          New<v8::String>(event.directory).ToLocalChecked(),
+          New<v8::String>(event.file[0]).ToLocalChecked(),
+          New<v8::String>(event.file[1]).ToLocalChecked()
+        };
 
-      callback->Call(3, argv);
+        callback->Call(4, argv);
+      } else {
+        v8::Local<v8::Value> argv[] = {
+          New<v8::String>(event.action).ToLocalChecked(),
+          New<v8::String>(event.directory).ToLocalChecked(),
+          New<v8::String>(*event.file).ToLocalChecked()
+        };
+
+        callback->Call(3, argv);
+      }
     }
   }
 

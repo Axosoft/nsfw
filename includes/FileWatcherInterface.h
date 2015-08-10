@@ -7,7 +7,7 @@
 struct Event {
   std::string action;
   std::string directory;
-  std::string file;
+  std::string *file;
 };
 
 namespace NSFW {

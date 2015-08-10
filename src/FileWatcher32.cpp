@@ -13,7 +13,7 @@ namespace NSFW {
     }
     Event event;
     event.directory = (char*)(void*)Marshal::StringToHGlobalAnsi(e->FullPath);
-    event.file = (char*)(void*)Marshal::StringToHGlobalAnsi(e->Name);
+    event.file = new std::string((char*)(void*)Marshal::StringToHGlobalAnsi(e->Name));
     event.action = (char*)(void*)Marshal::StringToHGlobalAnsi(action);
     mEventsQueue.push(event);
   }
@@ -39,7 +39,9 @@ namespace NSFW {
     }
     Event event;
     event.directory = (char*)(void*)Marshal::StringToHGlobalAnsi(e->FullPath);
-    event.file = (char*)(void*)Marshal::StringToHGlobalAnsi(e->Name);
+    event.file = new std::string[2];
+    event.file[0] = (char*)(void*)Marshal::StringToHGlobalAnsi(e->OldName);
+    event.file[1] = (char*)(void*)Marshal::StringToHGlobalAnsi(e->Name);
     event.action = "RENAMED";
     mEventsQueue.push(event);
   }

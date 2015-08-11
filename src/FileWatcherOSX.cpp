@@ -1,5 +1,4 @@
 #include "../includes/FileWatcherOSX.h"
-#include <iostream>
 
 namespace NSFW {
 

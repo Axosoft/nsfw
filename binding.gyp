@@ -63,6 +63,12 @@
                     ]
                 }
             }
+        }],
+        ["OS=='linux'", {
+            "sources": [
+            "src/FileWatcherLinux.cpp",
+            "includes/FileWatcherLinux.h"
+            ]
         }]
       ]
     }

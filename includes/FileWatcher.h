@@ -10,6 +10,7 @@
 #include "FileWatcherOSX.h"
 #define FILE_WATCHER_INTERFACE FileWatcherOSX
 #elif defined(__linux__)
+#include "FileWatcherLinux.h"
 #define FILE_WATCHER_INTERFACE FileWatcherLinux
 #endif
 

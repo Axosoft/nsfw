@@ -4,7 +4,18 @@
 namespace NSFW {
 
   FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles)
-    : mEventsQueue(eventsQueue), mPath(path), mWatchFiles(watchFiles) {}
+    : mEventsQueue(eventsQueue), mPath(path), mWatchFiles(watchFiles)
+  {
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr) == 0)
+    {
+      pthread_mutex_init(&mCallbackSynch, &attr);
+    }
+  }
+
+  FileWatcherOSX::~FileWatcherOSX() {
+    pthread_mutex_destroy(&mCallbackSynch);
+  }
 
   void FileWatcherOSX::callback(
       ConstFSEventStreamRef streamRef,
@@ -23,19 +34,24 @@ namespace NSFW {
     return x->tv_sec == y->tv_sec && x->tv_nsec == y->tv_nsec;
   }
 
-  void FileWatcherOSX::deleteDirTree() {
+  void FileWatcherOSX::deleteDirTree(Directory *tree) {
     std::queue<Directory *> dirQueue;
 
-    dirQueue.push(mDirTree);
+    dirQueue.push(tree);
 
     while (!dirQueue.empty()) {
       Directory *root = dirQueue.front();
+
+      if (!root) {
+        dirQueue.pop();
+      }
 
       // delete all file entries
       for (std::map<ino_t, FileDescriptor>::iterator fileIter = root->fileMap.begin();
         fileIter != root->fileMap.end(); ++fileIter)
       {
-        delete fileIter->second.entry;
+        if (fileIter->second.entry)
+          delete fileIter->second.entry;
       }
 
       // Add directories to the queue to continue deleting directories/files
@@ -47,10 +63,11 @@ namespace NSFW {
 
       dirQueue.pop();
 
-      delete root->entry;
+      if (root->entry)
+        delete root->entry;
+
       delete root;
     }
-    mDirTree = NULL;
   }
 
   std::string FileWatcherOSX::getPath() {
@@ -105,7 +122,7 @@ namespace NSFW {
       kCFStringEncodingUTF8);
     CFArrayRef pathsToWatch = CFArrayCreate(NULL, (const void **)&mypath, 1, NULL);
     FSEventStreamRef stream;
-    CFAbsoluteTime latency = 1.0;
+    CFAbsoluteTime latency = 0.5;
 
     FSEventStreamContext callbackInfo;
     callbackInfo.version = 0;
@@ -118,20 +135,28 @@ namespace NSFW {
         pathsToWatch,
         kFSEventStreamEventIdSinceNow,
         latency,
-        kFSEventStreamCreateFlagNone
+        kFSEventStreamCreateFlagFileEvents
     );
 
     FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
     FSEventStreamStart(stream);
     CFRunLoopRun();
+    return NULL;
   }
 
   void FileWatcherOSX::processCallback() {
+    // only run this process if mWatchFiles is true, and we can get a lock on the mutex
+    if (mWatchFiles && pthread_mutex_lock(&mCallbackSynch) != 0) {
+      return;
+    }
+
     Directory *currentTree = snapshotDir();
     std::queue<DirectoryPair> dirPairQueue;
 
+    // in case a directory/file was deleted while a scan was active
     if (currentTree == NULL) {
-      // handle errors
+      // try to free the lock
+      pthread_mutex_unlock(&mCallbackSynch);
       return;
     }
 
@@ -255,10 +280,12 @@ namespace NSFW {
     }
 
     // delete mDirTree
-    deleteDirTree();
+    deleteDirTree(mDirTree);
 
     // assign currentTree to mDirTree
     mDirTree = currentTree;
+
+    pthread_mutex_unlock(&mCallbackSynch);
   }
 
   Directory *FileWatcherOSX::snapshotDir() {
@@ -277,7 +304,7 @@ namespace NSFW {
       int n = scandir(root->path.c_str(), &directoryContents, NULL, alphasort);
 
       if (n < 0) {
-        return NULL; // add error handling
+        return NULL;
       }
 
       // find all the directories within this directory
@@ -305,7 +332,9 @@ namespace NSFW {
           int error = stat(fd.path.c_str(), &fd.meta);
 
           if (error < 0) {
-            return NULL; // add error handling
+            delete[] directoryContents;
+            deleteDirTree(topRoot);
+            return NULL;
           }
 
           root->fileMap[inode] = fd;
@@ -320,11 +349,28 @@ namespace NSFW {
   }
 
   bool FileWatcherOSX::start() {
-    if (pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this)) {
+    // test mutex for init
+    if (pthread_mutex_lock(&mCallbackSynch) != 0) {
+      return false; // if it fails, let caller know that this is not started
+    } else {
+      pthread_mutex_unlock(&mCallbackSynch);
+    }
+
+    if (mWatchFiles && pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this)) {
       return true;
     } else {
       return false;
     }
+  }
+
+  void FileWatcherOSX::stop() {
+    pthread_mutex_lock(&mCallbackSynch);
+
+    // safely kill the thread
+    pthread_cancel(mThread);
+    deleteDirTree(mDirTree);
+
+    pthread_mutex_unlock(&mCallbackSynch);
   }
 
 }

@@ -37,6 +37,10 @@ namespace NSFW {
       return false;
     } else {
       mWatchFiles = false;
+      #ifndef USE_WINDOWS_INIT
+      fwInterface->stop();
+      delete fwInterface;
+      #endif
       return true;
     }
   }

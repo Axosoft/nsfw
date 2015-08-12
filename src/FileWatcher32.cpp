@@ -73,10 +73,12 @@ namespace NSFW {
     fsWatcher = gcnew FileSystemWatcher();
     fsWatcher->Path = gcnew System::String(path.c_str());
 
+    fsWatcher->IncludeSubdirectories = true;
+
     fsWatcher->NotifyFilter = static_cast<NotifyFilters>(
       NotifyFilters::FileName |
+      NotifyFilters::DirectoryName |
       NotifyFilters::Attributes |
-      NotifyFilters::LastAccess |
       NotifyFilters::LastWrite |
       NotifyFilters::Security |
       NotifyFilters::Size

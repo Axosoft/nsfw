@@ -1,6 +1,17 @@
 #include "../includes/FileWatcher.h"
 #include "../includes/FileWatcherInterface.h"
 
+#if defined(_WIN32)
+#include "../includes/FileWatcher32.h"
+#define USE_WINDOWS_INIT
+#elif defined(__APPLE_CC__) || defined(BSD)
+#include "../includes/FileWatcherOSX.h"
+#define FILE_WATCHER_INTERFACE FileWatcherOSX
+#elif defined(__linux__)
+#include "../includes/FileWatcherLinux.h"
+#define FILE_WATCHER_INTERFACE FileWatcherLinux
+#endif
+
 namespace NSFW {
 
   FileWatcher::FileWatcher(std::string path)
@@ -20,7 +31,7 @@ namespace NSFW {
   bool FileWatcher::start() {
     if (!mWatchFiles) {
       mWatchFiles = true;
-      
+
       // normalization
       if (mPath[mPath.length() - 1] == '/' || mPath[mPath.length() - 1] == '\\') {
         mPath = mPath.substr(0, mPath.length() - 2);

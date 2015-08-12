@@ -73,43 +73,6 @@ namespace NSFW {
     return mPath;
   }
 
-  // traverses the tree under a directory and adds every item as an event of type action
-  void FileWatcherOSX::handleTraversingDirectoryChange(std::string action, Directory *directory) {
-    std::queue<Directory *> dirQueue;
-
-    dirQueue.push(directory);
-
-    while (!dirQueue.empty()) {
-      Directory *root = dirQueue.front();
-
-      // Events for all files in this 'root' directory
-      for (std::map<ino_t, FileDescriptor>::iterator fileIter = root->fileMap.begin();
-        fileIter != root->fileMap.end(); ++fileIter)
-      {
-        Event event;
-        event.directory = root->path;
-        event.file = new std::string(fileIter->second.entry->d_name);
-        event.action = action;
-        mEventsQueue.push(event);
-      }
-
-      // Add directories to the queue to continue listing events
-      for (std::map<ino_t, Directory *>::iterator dirIter = root->childDirectories.begin();
-        dirIter != root->childDirectories.end(); ++dirIter)
-      {
-        dirQueue.push(dirIter->second);
-      }
-
-      Event event;
-      event.directory = root->path;
-      event.file = new std::string(root->entry->d_name);
-      event.action = action;
-      mEventsQueue.push(event);
-
-      dirQueue.pop();
-    }
-  }
-
   void *FileWatcherOSX::mainLoop(void *params) {
     // load initial dir tree
     FileWatcherOSX *fwOSX = (FileWatcherOSX *)params;
@@ -238,9 +201,11 @@ namespace NSFW {
 
         // deleted event
         if (currentComparableDirPtr == currentChildDirectories.end()) {
-          // add all associated delete events for this directory deletion
-          handleTraversingDirectoryChange("DELETED", dirIter->second);
-
+          Event event;
+          event.directory = snapshot.current->path;
+          event.file = new std::string(fileIter->second.entry->d_name);
+          event.action = "DELETED";
+          mEventsQueue.push(event);
           continue;
         }
 
@@ -270,8 +235,12 @@ namespace NSFW {
       for (std::map<ino_t, Directory *>::iterator dirIter = currentChildDirectories.begin();
         dirIter != currentChildDirectories.end(); ++dirIter)
       {
-        // add all associated created events for this directory deletion
-        handleTraversingDirectoryChange("CREATED", dirIter->second);
+        // created event
+        Event event;
+        event.directory = snapshot.current->path;
+        event.file = new std::string(dirIter->second.entry->d_name);
+        event.action = "CREATED";
+        mEventsQueue.push(event);
       }
 
       // remove the snapshot from the queue

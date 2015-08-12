@@ -1,5 +1,4 @@
 #include "../includes/NodeSentinelFileWatcher.h"
-#include <iostream>
 namespace NSFW {
 
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;

@@ -112,9 +112,9 @@ namespace NSFW {
 
   void *FileWatcherOSX::mainLoop(void *params) {
     // load initial dir tree
-    ((FileWatcherOSX *)params)->mDirTree = ((FileWatcherOSX *)params)->snapshotDir();
-
     FileWatcherOSX *fwOSX = (FileWatcherOSX *)params;
+    fwOSX->mDirTree = fwOSX->snapshotDir();
+
     CFStringRef mypath = CFStringCreateWithCString(
       NULL,
       (char *)(fwOSX->getPath().c_str()), // the path that the file watcher should watch

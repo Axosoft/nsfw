@@ -20,6 +20,12 @@ namespace NSFW {
   bool FileWatcher::start() {
     if (!mWatchFiles) {
       mWatchFiles = true;
+      
+      // normalization
+      if (mPath[mPath.length() - 1] == '/' || mPath[mPath.length() - 1] == '\\') {
+        mPath = mPath.substr(0, mPath.length() - 2);
+      }
+
       #if defined(USE_WINDOWS_INIT)
       createFileWatcher(mPath, mEventsQueue, mWatchFiles);
       #else

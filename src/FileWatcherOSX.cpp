@@ -202,7 +202,9 @@ namespace NSFW {
         }
 
         // changed event
-        if (!checkTimeValEquality(&fileIter->second.meta.st_mtimespec, &currentComparableFilePtr->second.meta.st_mtimespec)) {
+        if (!checkTimeValEquality(&fileIter->second.meta.st_mtimespec, &currentComparableFilePtr->second.meta.st_mtimespec)
+         || !checkTimeValEquality(&fileIter->second.meta.st_ctimespec, &currentComparableFilePtr->second.meta.st_ctimespec))
+        {
           Event event;
           event.directory = snapshot.current->path;
           event.file = new std::string(fileIter->second.entry->d_name);

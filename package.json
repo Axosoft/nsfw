@@ -20,7 +20,9 @@
     "install": "node-gyp rebuild"
   },
   "gypfile": true,
-  "devDependencies": {},
+  "devDependencies": {
+    "mocha": "^2.2.5"
+  },
   "keywords": [
     "FileWatcher"
   ]

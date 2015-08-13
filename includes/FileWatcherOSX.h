@@ -47,6 +47,7 @@ namespace NSFW {
     );
     static bool checkTimeValEquality(struct timespec *x, struct timespec *y);
     std::string getPath();
+    void handleTraversingDirectoryChange(std::string action, Directory *directory);
     static void *mainLoop(void *params);
     void processCallback();
     Directory *snapshotDir();

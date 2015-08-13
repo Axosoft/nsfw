@@ -12,12 +12,13 @@
 #include <iostream>
 #include <sys/select.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 
 namespace NSFW {
 
   struct Directory {
-    std::map<ino_t, Directory *> childDirectories;
-    ino_t inode;
+    std::map<std::string, Directory *> childDirectories;
     std::string name, path;
     int watchDescriptor;
   };
@@ -28,7 +29,9 @@ namespace NSFW {
     ~FileWatcherLinux();
     void addEvent(std::string action, inotify_event *inEvent);
     void addEvent(std::string action, std::string directory, std::string *file);
-    Directory *buildDirTree(std::string path, bool queueCreateEvents);
+    Directory *buildDirTree(std::string path);
+    void destroyDirTree(Directory *tree);
+    void destroyWatchTree(Directory *tree);
     std::string getPath();
     static void *mainLoop(void *params);
     void processEvents();

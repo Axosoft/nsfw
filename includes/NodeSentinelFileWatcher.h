@@ -4,6 +4,7 @@
 #include "FileWatcher.h"
 #include <nan.h>
 #include <queue>
+#include <vector>
 
 namespace NSFW
 {
@@ -27,19 +28,6 @@ namespace NSFW
     static NAN_METHOD(Poll);
     static NAN_METHOD(Start);
     static NAN_METHOD(Stop);
-    // Poll worker
-    class PollWorker : public AsyncWorker {
-    public:
-      // constructors
-      PollWorker(FileWatcher * const fw, Callback *callback);
-      // Internal methods
-      void Execute();
-      void HandleOKCallback();
-
-    private:
-      // Internal members
-      FileWatcher *mCallerFileWatcher;
-    };
 
     // Nan necessary
     static Persistent<v8::Function> constructor;

@@ -55,29 +55,75 @@ namespace NSFW {
     if (!nsfw->mFileWatcher->running()) return;
 
     std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
+
+    v8::Local<v8::Object> parsedEvents = New<v8::Object>();
+
+    std::vector< v8::Local<v8::Object> > changedEvents, createdEvents, deletedEvents,  renamedEvents;
+
     while(!events->empty()) {
       Event event = events->front();
       events->pop();
 
       if (event.action == "RENAMED") {
-        v8::Local<v8::Value> argv[] = {
-          New<v8::String>(event.action).ToLocalChecked(),
-          New<v8::String>(event.directory).ToLocalChecked(),
-          New<v8::String>(event.file[0]).ToLocalChecked(),
-          New<v8::String>(event.file[1]).ToLocalChecked()
-        };
 
-        nsfw->mCallback->Call(4, argv);
+        v8::Local<v8::Object> renamedEvent = New<v8::Object>();
+
+        renamedEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event.directory).ToLocalChecked());
+        renamedEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>(event.file[0]).ToLocalChecked());
+        renamedEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>(event.file[1]).ToLocalChecked());
+
+        renamedEvents.push_back(renamedEvent);
+
+        delete[] event.file;
       } else {
-        v8::Local<v8::Value> argv[] = {
-          New<v8::String>(event.action).ToLocalChecked(),
-          New<v8::String>(event.directory).ToLocalChecked(),
-          New<v8::String>(*event.file).ToLocalChecked()
-        };
 
-        nsfw->mCallback->Call(3, argv);
+        v8::Local<v8::Object> anEvent = New<v8::Object>();
+
+        anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event.directory).ToLocalChecked());
+        anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>(*event.file).ToLocalChecked());
+
+        if (event.action == "CHANGED")
+          changedEvents.push_back(anEvent);
+        else if (event.action == "CREATED")
+          createdEvents.push_back(anEvent);
+        else
+          deletedEvents.push_back(anEvent);
+
+        delete event.file;
       }
     }
+
+    v8::Local<v8::Array> changedArray = New<v8::Array>(changedEvents.size());
+    v8::Local<v8::Array> createdArray = New<v8::Array>(createdEvents.size());
+    v8::Local<v8::Array> deletedArray = New<v8::Array>(deletedEvents.size());
+    v8::Local<v8::Array> renamedArray = New<v8::Array>(renamedEvents.size());
+
+    for (int i = 0; i < changedEvents.size(); ++i) {
+      changedArray->Set(i, changedEvents[i]);
+    }
+
+    for (int i = 0; i < createdEvents.size(); ++i) {
+      createdArray->Set(i, createdEvents[i]);
+    }
+
+    for (int i = 0; i < deletedEvents.size(); ++i) {
+      deletedArray->Set(i, deletedEvents[i]);
+    }
+
+    for (int i = 0; i < renamedEvents.size(); ++i) {
+      renamedArray->Set(i, renamedEvents[i]);
+    }
+
+    parsedEvents->Set(New<v8::String>("changed").ToLocalChecked(), changedArray);
+    parsedEvents->Set(New<v8::String>("created").ToLocalChecked(), createdArray);
+    parsedEvents->Set(New<v8::String>("deleted").ToLocalChecked(), deletedArray);
+    parsedEvents->Set(New<v8::String>("renamed").ToLocalChecked(), renamedArray);
+
+    v8::Local<v8::Value> argv[] = {
+      parsedEvents
+    };
+
+    nsfw->mCallback->Call(1, argv);
   }
 
   NAN_METHOD(NodeSentinelFileWatcher::Start) {
@@ -90,43 +136,6 @@ namespace NSFW {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
     if (!nsfw->mFileWatcher->stop()) {
       return ThrowError("Cannot stop an already stopped NSFW.");
-    }
-  }
-
-  // NodeSentinelFileWatcher::PollWorker ---------------------------------------
-
-  NodeSentinelFileWatcher::PollWorker::PollWorker(FileWatcher * const fw, Callback *callback)
-    : AsyncWorker(callback), mCallerFileWatcher(fw) {}
-
-  void NodeSentinelFileWatcher::PollWorker::Execute() {
-  }
-
-  void NodeSentinelFileWatcher::PollWorker::HandleOKCallback() {
-    HandleScope();
-
-    std::queue<Event> *events = mCallerFileWatcher->pollEvents();
-    while(!events->empty()) {
-      Event event = events->front();
-      events->pop();
-
-      if (event.action == "RENAMED") {
-        v8::Local<v8::Value> argv[] = {
-          New<v8::String>(event.action).ToLocalChecked(),
-          New<v8::String>(event.directory).ToLocalChecked(),
-          New<v8::String>(event.file[0]).ToLocalChecked(),
-          New<v8::String>(event.file[1]).ToLocalChecked()
-        };
-
-        callback->Call(4, argv);
-      } else {
-        v8::Local<v8::Value> argv[] = {
-          New<v8::String>(event.action).ToLocalChecked(),
-          New<v8::String>(event.directory).ToLocalChecked(),
-          New<v8::String>(*event.file).ToLocalChecked()
-        };
-
-        callback->Call(3, argv);
-      }
     }
   }
 

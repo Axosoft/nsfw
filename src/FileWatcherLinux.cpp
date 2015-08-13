@@ -223,7 +223,7 @@ namespace NSFW {
               break;
             }
 
-            if (parent->files.find(inEvent->name) == parent->files.end()) {
+            if (!isDir && parent->files.find(inEvent->name) == parent->files.end()) {
               parent->files.insert(inEvent->name);
               addEvent("CREATED", inEvent);
             }

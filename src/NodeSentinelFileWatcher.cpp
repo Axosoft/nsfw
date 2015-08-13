@@ -98,19 +98,19 @@ namespace NSFW {
     v8::Local<v8::Array> deletedArray = New<v8::Array>(deletedEvents.size());
     v8::Local<v8::Array> renamedArray = New<v8::Array>(renamedEvents.size());
 
-    for (int i = 0; i < changedEvents.size(); ++i) {
+    for (unsigned int i = 0; i < changedEvents.size(); ++i) {
       changedArray->Set(i, changedEvents[i]);
     }
 
-    for (int i = 0; i < createdEvents.size(); ++i) {
+    for (unsigned int i = 0; i < createdEvents.size(); ++i) {
       createdArray->Set(i, createdEvents[i]);
     }
 
-    for (int i = 0; i < deletedEvents.size(); ++i) {
+    for (unsigned int i = 0; i < deletedEvents.size(); ++i) {
       deletedArray->Set(i, deletedEvents[i]);
     }
 
-    for (int i = 0; i < renamedEvents.size(); ++i) {
+    for (unsigned int i = 0; i < renamedEvents.size(); ++i) {
       renamedArray->Set(i, renamedEvents[i]);
     }
 

@@ -202,7 +202,8 @@ namespace NSFW {
         switch(inEvent->mask) {
           case IN_ATTRIB:
           case IN_MODIFY:
-            addEvent("CHANGED", inEvent);
+            if (*inEvent->name > 31) // ignore control characters
+              addEvent("CHANGED", inEvent);
             break;
           case IN_CREATE:
           {

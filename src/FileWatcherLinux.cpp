@@ -12,7 +12,6 @@ namespace NSFW {
   }
 
   void FileWatcherLinux::addEvent(std::string action, std::string directory, std::string *file) {
-    std::cout << action << ":" << directory << ":" << *file << std::endl;
     Event event;
     event.action = action;
     event.directory = directory;
@@ -171,15 +170,11 @@ namespace NSFW {
     // build the directory tree before listening for events
     Directory *dirTree = fwLinux->buildDirTree(fwLinux->getPath());
 
-    std::cout << "i finished building" << std::endl;
-
     // check that the directory can be watched before trying to watch it
     if (dirTree == NULL) {
       // throw error if the directory didn't exists
       return NULL;
     }
-
-    std::cout << "start watching" << std::endl;
 
     fwLinux->setDirTree(dirTree);
     fwLinux->startWatchTree(dirTree);
@@ -197,8 +192,6 @@ namespace NSFW {
     Event lastMovedFromEvent;
 
     while(mWatchFiles && (bytesRead = read(mInotify, buffer, count)) > 0) {
-      std::cout << "finish read" << std::endl;
-      std::cout << position << std::endl << bytesRead << std::endl;
       inotify_event *inEvent;
       do {
         inEvent = (inotify_event *)(buffer + position);
@@ -211,19 +204,16 @@ namespace NSFW {
           watchDescriptor = -1;
           mEventsQueue.push(lastMovedFromEvent);
         }
-        std::cout << inEvent->mask << std::endl;
         bool isDir = inEvent->mask & IN_ISDIR;
         inEvent->mask = isDir ? inEvent->mask ^ IN_ISDIR : inEvent->mask;
 
         switch(inEvent->mask) {
           case IN_ATTRIB:
           case IN_MODIFY:
-            std::cout << "changed" <<std::endl;
             addEvent("CHANGED", inEvent);
             break;
           case IN_CREATE:
           {
-            std::cout << "created" <<std::endl;
             // check stats on the item CREATED
             // if it is a dir, create a watch for all of its directories
             if (isDir) {
@@ -244,8 +234,6 @@ namespace NSFW {
             break;
           }
           case IN_DELETE:
-            std::cout << "deleted" <<std::endl;
-
             if (isDir) {
               Directory *parent = mWDtoDirNode[inEvent->wd];
               Directory *child = parent->childDirectories[inEvent->name];
@@ -257,8 +245,6 @@ namespace NSFW {
             addEvent("DELETED", inEvent);
             break;
           case IN_MOVED_FROM:
-          std::cout << "moved from" <<std::endl;
-
             fd_set checkWD;
             FD_ZERO(&checkWD);
             FD_SET(mInotify, &checkWD);
@@ -277,8 +263,6 @@ namespace NSFW {
             }
             break;
           case IN_MOVED_TO:
-          std::cout << "moved to" <<std::endl;
-
             // check if this is a move event
             if (cookie != 0 && inEvent->cookie == cookie && inEvent->wd == watchDescriptor) {
               cookie = 0;
@@ -290,16 +274,12 @@ namespace NSFW {
               event.file[1] = inEvent->name;
               delete lastMovedFromEvent.file;
               mEventsQueue.push(event);
-              std::cout << "renamed" <<std::endl;
             } else {
               addEvent("CREATED", inEvent);
             }
             break;
         }
-        std::cout << "finished one parse" << std::endl;
       } while ((position += sizeof(struct inotify_event) + inEvent->len) < bytesRead);
-      std::cout << "finish parse events" << std::endl;
-      std::cout << position << std::endl << bytesRead << std::endl;
       position = 0;
     }
   }

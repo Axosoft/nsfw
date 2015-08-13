@@ -93,10 +93,10 @@ namespace NSFW {
       }
     }
 
-    v8::Local<v8::Array> changedArray = New<v8::Array>(changedEvents.size());
-    v8::Local<v8::Array> createdArray = New<v8::Array>(createdEvents.size());
-    v8::Local<v8::Array> deletedArray = New<v8::Array>(deletedEvents.size());
-    v8::Local<v8::Array> renamedArray = New<v8::Array>(renamedEvents.size());
+    v8::Local<v8::Array> changedArray = New<v8::Array>((int)changedEvents.size());
+    v8::Local<v8::Array> createdArray = New<v8::Array>((int)createdEvents.size());
+    v8::Local<v8::Array> deletedArray = New<v8::Array>((int)deletedEvents.size());
+    v8::Local<v8::Array> renamedArray = New<v8::Array>((int)renamedEvents.size());
 
     for (unsigned int i = 0; i < changedEvents.size(); ++i) {
       changedArray->Set(i, changedEvents[i]);

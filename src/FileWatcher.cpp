@@ -64,6 +64,9 @@ namespace NSFW {
 
   // Internal methods
   std::queue<Event> *FileWatcher::pollEvents() {
+    if (mEventsQueue.empty) {
+      return NULL;
+    }
     std::queue<Event> *out = new std::queue<Event>();
     std::swap(mEventsQueue, *out);
     return out;

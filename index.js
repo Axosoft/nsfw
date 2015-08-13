@@ -1,13 +1,26 @@
-var objectAssign = require('object-assign');
-var EventEmitter = require('events').EventEmitter;
-var NodeSentinelFileWatcher = require('../build/Release/sentinel.node');
-var _ = require('lodash');
+var FileWatcher = require('./build/Release/FileWatcher.node');
 
+var nsfw = module.exports = function(path, callback, pInterval) {
+  var poll;
+  var interval = pInterval || 1000;
+  var watcher = new FileWatcher.NSFW(path, callback);
 
-var sentinel = module.exports = function(path, time) {
-  this.path = path;
-  this.time == time || 60;
-  this.watcher = new NodeSentinelFileWatcher.NSFW(this.path, this.emit);
-});
+  // methods
+  this.start = function() {
+    watcher.start();
+    poll = setInterval(function() {
+      try {
+        watcher.poll();
+      } catch(error) {
+        clearInterval(poll);
+        throw error;
+      }
+    }, interval);
+  };
 
-assign(sentinel, EventEmitter.prototype);
+  this.stop = function() {
+    clearInterval(poll);
+    watcher.stop();
+  };
+
+}

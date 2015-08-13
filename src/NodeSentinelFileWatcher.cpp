@@ -56,7 +56,19 @@ namespace NSFW {
 
     std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
 
+    if (events == NULL) {
+      v8::Local<v8::Array> emptyArray = New<v8::Array>(0);
+
+      v8::Local<v8::Value> argv[] = {
+        emptyArray
+      };
+
+      nsfw->mCallback->Call(1, argv);
+      return;
+    }
+
     std::vector< v8::Local<v8::Object> > jsEventObjects;
+
 
     while(!events->empty()) {
       Event event = events->front();

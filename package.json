@@ -1,11 +1,11 @@
 {
-  "name": "node-simple-file-watcher",
-  "version": "0.0.1",
+  "name": "node-sentinel-file-watcher",
+  "version": "0.1.0",
   "description": "Node wrapper for simplefilewatcher",
   "main": "index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/axosoft/node-simple-file-watcher"
+    "url": "git+https://github.com/axosoft/node-simple-file-watcher.git"
   },
   "author": "Axosoft, LLC",
   "license": "MIT",
@@ -15,5 +15,13 @@
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
     "nan": "^2.0.0"
-  }
+  },
+  "scripts": {
+    "install": "node-gyp rebuild"
+  },
+  "gypfile": true,
+  "devDependencies": {},
+  "keywords": [
+    "FileWatcher"
+  ]
 }

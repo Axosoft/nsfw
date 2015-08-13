@@ -56,71 +56,37 @@ namespace NSFW {
 
     std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
 
-    v8::Local<v8::Object> parsedEvents = New<v8::Object>();
-
-    std::vector< v8::Local<v8::Object> > changedEvents, createdEvents, deletedEvents,  renamedEvents;
+    std::vector< v8::Local<v8::Object> > jsEventObjects;
 
     while(!events->empty()) {
       Event event = events->front();
       events->pop();
 
+      v8::Local<v8::Object> anEvent = New<v8::Object>();
+
+      anEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::String>(event.action).ToLocalChecked());
+      anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event.directory).ToLocalChecked());
+
       if (event.action == "RENAMED") {
-
-        v8::Local<v8::Object> renamedEvent = New<v8::Object>();
-
-        renamedEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event.directory).ToLocalChecked());
-        renamedEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>(event.file[0]).ToLocalChecked());
-        renamedEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>(event.file[1]).ToLocalChecked());
-
-        renamedEvents.push_back(renamedEvent);
-
+        anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>(event.file[0]).ToLocalChecked());
+        anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>(event.file[1]).ToLocalChecked());
         delete[] event.file;
       } else {
-
-        v8::Local<v8::Object> anEvent = New<v8::Object>();
-
-        anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event.directory).ToLocalChecked());
         anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>(*event.file).ToLocalChecked());
-
-        if (event.action == "CHANGED")
-          changedEvents.push_back(anEvent);
-        else if (event.action == "CREATED")
-          createdEvents.push_back(anEvent);
-        else
-          deletedEvents.push_back(anEvent);
-
         delete event.file;
       }
+
+      jsEventObjects.push_back(anEvent);
     }
 
-    v8::Local<v8::Array> changedArray = New<v8::Array>((int)changedEvents.size());
-    v8::Local<v8::Array> createdArray = New<v8::Array>((int)createdEvents.size());
-    v8::Local<v8::Array> deletedArray = New<v8::Array>((int)deletedEvents.size());
-    v8::Local<v8::Array> renamedArray = New<v8::Array>((int)renamedEvents.size());
+    v8::Local<v8::Array> eventArray = New<v8::Array>((int)jsEventObjects.size());
 
-    for (unsigned int i = 0; i < changedEvents.size(); ++i) {
-      changedArray->Set(i, changedEvents[i]);
+    for (unsigned int i = 0; i < jsEventObjects.size(); ++i) {
+      eventArray->Set(i, jsEventObjects[i]);
     }
-
-    for (unsigned int i = 0; i < createdEvents.size(); ++i) {
-      createdArray->Set(i, createdEvents[i]);
-    }
-
-    for (unsigned int i = 0; i < deletedEvents.size(); ++i) {
-      deletedArray->Set(i, deletedEvents[i]);
-    }
-
-    for (unsigned int i = 0; i < renamedEvents.size(); ++i) {
-      renamedArray->Set(i, renamedEvents[i]);
-    }
-
-    parsedEvents->Set(New<v8::String>("changed").ToLocalChecked(), changedArray);
-    parsedEvents->Set(New<v8::String>("created").ToLocalChecked(), createdArray);
-    parsedEvents->Set(New<v8::String>("deleted").ToLocalChecked(), deletedArray);
-    parsedEvents->Set(New<v8::String>("renamed").ToLocalChecked(), renamedArray);
 
     v8::Local<v8::Value> argv[] = {
-      parsedEvents
+      eventArray
     };
 
     nsfw->mCallback->Call(1, argv);

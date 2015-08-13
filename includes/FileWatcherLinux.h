@@ -9,7 +9,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <map>
-#include <iostream>
+#include <set>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -19,6 +19,7 @@ namespace NSFW {
 
   struct Directory {
     std::map<std::string, Directory *> childDirectories;
+    std::set<std::string> files;
     std::string name, path;
     int watchDescriptor;
   };
@@ -29,15 +30,13 @@ namespace NSFW {
     ~FileWatcherLinux();
     void addEvent(std::string action, inotify_event *inEvent);
     void addEvent(std::string action, std::string directory, std::string *file);
-    Directory *buildDirTree(std::string path);
-    void destroyDirTree(Directory *tree);
+    Directory *buildDirTree(std::string path, bool queueFileEvents);
     void destroyWatchTree(Directory *tree);
     std::string getPath();
     static void *mainLoop(void *params);
     void processEvents();
     void setDirTree(Directory *tree);
     bool start();
-    void startWatchTree(Directory *tree);
     void stop();
 
   private:

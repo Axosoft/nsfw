@@ -19,7 +19,7 @@ namespace NSFW {
     mEventsQueue.push(event);
   }
 
-  Directory *FileWatcherLinux::buildDirTree(std::string path) {
+  Directory *FileWatcherLinux::buildDirTree(std::string path, bool queueFileEvents = false) {
     std::queue<Directory *> dirQueue;
     Directory *topRoot = new Directory;
 
@@ -46,9 +46,16 @@ namespace NSFW {
       Directory *root = dirQueue.front();
       dirent ** directoryContents = NULL;
       std::string fullPath = root->path + "/" + root->name;
+
+      root->watchDescriptor = inotify_add_watch(
+        mInotify,
+        fullPath.c_str(),
+        IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO
+      );
+
       int n = scandir(fullPath.c_str(), &directoryContents, NULL, alphasort);
 
-      if (n < 0) {
+      if (n < 0 || root->watchDescriptor < 0) {
         if (topRoot == root)
         {
           return NULL; // top directory no longer exists
@@ -59,6 +66,8 @@ namespace NSFW {
           continue;
         }
       }
+
+      mWDtoDirNode[root->watchDescriptor] = root;
 
       // find all the directories within this directory
       // this breaks the alphabetical sorting of directories
@@ -86,6 +95,12 @@ namespace NSFW {
           dir->watchDescriptor = -1;
           root->childDirectories[dir->name] = dir;
           dirQueue.push(dir);
+        } else {
+          root->files.insert(directoryContents[i]->d_name);
+        }
+
+        if (queueFileEvents) {
+          addEvent("CREATED", root->path + "/" + root->name, new std::string(directoryContents[i]->d_name));
         }
       }
 
@@ -102,34 +117,12 @@ namespace NSFW {
       struct stat rootStat;
       if (!stat((topRoot->path + "/" + topRoot->name).c_str(), &rootStat) || !S_ISDIR(rootStat.st_mode)) {
         // delete tree as far as we can go
-        destroyDirTree(topRoot);
+        destroyWatchTree(topRoot);
         return NULL;
       }
     }
 
     return topRoot;
-  }
-
-  void FileWatcherLinux::destroyDirTree(Directory *tree) {
-    if (tree == NULL) return;
-
-    std::queue<Directory *> dirQueue;
-    dirQueue.push(tree);
-
-    while (!dirQueue.empty()) {
-      Directory *root = dirQueue.front();
-
-      // Add directories to the queue to continue listing events
-      for (std::map<std::string, Directory *>::iterator dirIter = root->childDirectories.begin();
-        dirIter != root->childDirectories.end(); ++dirIter)
-      {
-        dirQueue.push(dirIter->second);
-      }
-
-      dirQueue.pop();
-
-      delete root;
-    }
   }
 
   void FileWatcherLinux::destroyWatchTree(Directory *tree) {
@@ -177,7 +170,6 @@ namespace NSFW {
     }
 
     fwLinux->setDirTree(dirTree);
-    fwLinux->startWatchTree(dirTree);
     fwLinux->processEvents();
 
     return NULL;
@@ -200,9 +192,9 @@ namespace NSFW {
         // if the event is not a moved to event and the cookie exists
         // we should reset the cookie and push the last moved from event
         if (cookie != 0 && inEvent->mask != IN_MOVED_TO) {
+          mEventsQueue.push(lastMovedFromEvent);
           cookie = 0;
           watchDescriptor = -1;
-          mEventsQueue.push(lastMovedFromEvent);
         }
         bool isDir = inEvent->mask & IN_ISDIR;
         inEvent->mask = isDir ? inEvent->mask ^ IN_ISDIR : inEvent->mask;
@@ -214,36 +206,47 @@ namespace NSFW {
             break;
           case IN_CREATE:
           {
+            Directory *parent = mWDtoDirNode[inEvent->wd];
             // check stats on the item CREATED
             // if it is a dir, create a watch for all of its directories
-            if (isDir) {
-              Directory *parent = mWDtoDirNode[inEvent->wd];
-              std::string newPath = parent->path + "/" + parent->name + "/" + inEvent->name;
+            if (isDir && parent->childDirectories.find(inEvent->name) == parent->childDirectories.end()) {
 
+              std::string newPath = parent->path + "/" + parent->name + "/" + inEvent->name;
               // add the directory tree
-              Directory *child = buildDirTree(newPath);
+              Directory *child = buildDirTree(newPath, true);
 
               if (child == NULL)
                 break;
 
               parent->childDirectories[child->name] = child;
-              startWatchTree(child);
+              addEvent("CREATED", inEvent);
+              break;
             }
 
-            addEvent("CREATED", inEvent);
+            if (parent->files.find(inEvent->name) == parent->files.end()) {
+              parent->files.insert(inEvent->name);
+              addEvent("CREATED", inEvent);
+            }
             break;
           }
           case IN_DELETE:
+          {
+            Directory *parent = mWDtoDirNode[inEvent->wd];
             if (isDir) {
-              Directory *parent = mWDtoDirNode[inEvent->wd];
+              if (parent->childDirectories.find(inEvent->name) == parent->childDirectories.end()) {
+                continue;
+              }
               Directory *child = parent->childDirectories[inEvent->name];
               parent->childDirectories.erase(child->name);
               destroyWatchTree(child);
               child = NULL;
+            } else {
+              parent->files.erase(inEvent->name);
             }
 
             addEvent("DELETED", inEvent);
             break;
+          }
           case IN_MOVED_FROM:
             fd_set checkWD;
             FD_ZERO(&checkWD);
@@ -251,6 +254,10 @@ namespace NSFW {
             timeval timeout;
             timeout.tv_sec = 0;
             timeout.tv_usec = 250000;
+
+            if (!isDir) {
+              mWDtoDirNode[inEvent->wd]->files.erase(inEvent->name);
+            }
 
             if (position + sizeof(struct inotify_event) + inEvent->len < bytesRead || select(mInotify+1, &checkWD, 0, 0, &timeout) > 0) {
               lastMovedFromEvent.action = "DELETED";
@@ -263,6 +270,9 @@ namespace NSFW {
             }
             break;
           case IN_MOVED_TO:
+            if (!isDir) {
+              mWDtoDirNode[inEvent->wd]->files.insert(inEvent->name);
+            }
             // check if this is a move event
             if (cookie != 0 && inEvent->cookie == cookie && inEvent->wd == watchDescriptor) {
               cookie = 0;
@@ -294,39 +304,6 @@ namespace NSFW {
       return true;
     } else {
       return false;
-    }
-  }
-
-  void FileWatcherLinux::startWatchTree(Directory *tree) {
-    std::queue<Directory *> dirQueue;
-
-    dirQueue.push(tree);
-
-    while (!dirQueue.empty()) {
-      Directory *root = dirQueue.front();
-
-      root->watchDescriptor = inotify_add_watch(
-        mInotify,
-        (root->path + "/" + root->name).c_str(),
-        IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO
-      );
-
-      if (root->watchDescriptor < 0) {
-        // error
-        return; // ?
-      }
-
-      mWDtoDirNode[root->watchDescriptor] = root;
-
-      // find all the directories within this directory
-      // this breaks the alphabetical sorting of directories
-      for (std::map<std::string, Directory *>::iterator dirIter = root->childDirectories.begin();
-        dirIter != root->childDirectories.end(); ++dirIter)
-      {
-        dirQueue.push(dirIter->second);
-      }
-
-      dirQueue.pop();
     }
   }
 

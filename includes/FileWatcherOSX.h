@@ -1,7 +1,6 @@
 #ifndef FILEWATCHEROSX_H
 #define FILEWATCHEROSX_H
 
-#include "FileWatcherInterface.h"
 #include <CoreServices/CoreServices.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -33,7 +32,7 @@ namespace NSFW {
     Directory *prev, *current;
   };
 
-  class FileWatcherOSX : public FileWatcherInterface {
+  class FileWatcherOSX {
   public:
     FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles);
     ~FileWatcherOSX();

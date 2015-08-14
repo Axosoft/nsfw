@@ -368,6 +368,7 @@ namespace NSFW {
     pthread_mutex_lock(&mCallbackSynch);
 
     // safely kill the thread
+    pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
     pthread_cancel(mThread);
     deleteDirTree(mDirTree);
 

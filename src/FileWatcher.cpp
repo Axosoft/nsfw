@@ -61,6 +61,7 @@ namespace NSFW {
       #ifndef USE_WINDOWS_INIT
       fwInterface->stop();
       delete fwInterface;
+      mStopFlag = true;
       #endif
       return true;
     }

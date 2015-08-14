@@ -18,6 +18,12 @@
 
 namespace NSFW {
 
+  struct Event {
+    std::string action;
+    std::string directory;
+    std::string *file;
+  };
+
   struct Directory {
     std::map<std::string, Directory *> childDirectories;
     std::set<std::string> files;

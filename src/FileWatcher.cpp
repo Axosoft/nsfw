@@ -3,13 +3,10 @@
 
 #if defined(_WIN32)
 #include "../includes/FileWatcher32.h"
-#define USE_WINDOWS_INIT
 #elif defined(__APPLE_CC__) || defined(BSD)
 #include "../includes/FileWatcherOSX.h"
-#define FILE_WATCHER_INTERFACE FileWatcherOSX
 #elif defined(__linux__)
 #include "../includes/FileWatcherLinux.h"
-#define FILE_WATCHER_INTERFACE FileWatcherLinux
 #endif
 
 namespace NSFW {

@@ -3,6 +3,18 @@
 
 #include "FileWatcherInterface.h"
 
+#if defined(_WIN32)
+#define USE_WINDOWS_INIT
+#include "FileWatcher32.h"
+#elif defined(__APPLE_CC__) || defined(BSD)
+#define FILE_WATCHER_INTERFACE FileWatcherOSX
+#include "FileWatcherOSX.h"
+#elif defined(__linux__)
+#define FILE_WATCHER_INTERFACE FileWatcherLinux
+#include "FileWatcherLinux.h"
+#endif
+
+
 namespace NSFW {
   class FileWatcher {
   public:
@@ -19,7 +31,7 @@ namespace NSFW {
     bool stop();
 
   private:
-    FileWatcherInterface *fwInterface;
+    FILE_WATCHER_INTERFACE *fwInterface;
     std::queue<Event> mEventsQueue;
     std::string mPath;
     bool mStopFlag;

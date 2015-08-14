@@ -15,7 +15,7 @@ namespace NSFW {
   public:
     FileWatcherInterface(){}
     FileWatcherInterface(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles){}
-    virtual ~FileWatcherInterface();
+    virtual ~FileWatcherInterface() = 0;
     virtual bool start() = 0;
     virtual void stop() = 0;
   };

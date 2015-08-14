@@ -1,19 +1,17 @@
 #ifndef FILEWATCHER_H
 #define FILEWATCHER_H
 
-#if defined(_WIN32)
-#define USE_WINDOWS_INIT
-#include "FileWatcher32.h"
-#elif defined(__APPLE_CC__) || defined(BSD)
-#define FILE_WATCHER_INTERFACE FileWatcherOSX
-#include "FileWatcherOSX.h"
-#elif defined(__linux__)
-#define FILE_WATCHER_INTERFACE FileWatcherLinux
-#include "FileWatcherLinux.h"
-#endif
-
+#include <string>
+#include <queue>
 
 namespace NSFW {
+
+  struct Event {
+    std::string action;
+    std::string directory;
+    std::string *file;
+  };
+
   class FileWatcher {
   public:
     // Constructor
@@ -29,7 +27,7 @@ namespace NSFW {
     bool stop();
 
   private:
-    FILE_WATCHER_INTERFACE *fwInterface;
+    void *fwInterface;
     std::queue<Event> mEventsQueue;
     std::string mPath;
     bool mStopFlag;

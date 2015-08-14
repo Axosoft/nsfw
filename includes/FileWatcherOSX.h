@@ -1,6 +1,7 @@
 #ifndef FILEWATCHEROSX_H
 #define FILEWATCHEROSX_H
 
+#include "FileWatcher.h"
 #include <CoreServices/CoreServices.h>
 #include <pthread.h>
 #include <unistd.h>

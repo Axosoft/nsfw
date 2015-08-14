@@ -1,6 +1,7 @@
 #ifndef FILEWATCHERLINUX_H
 #define FILEWATCHERLINUX_H
 
+#include "FileWatcher.h"
 #include <sys/inotify.h>
 #include <dirent.h>
 #include <stdlib.h>
@@ -13,16 +14,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <string>
-#include <queue>
 
 namespace NSFW {
-
-  struct Event {
-    std::string action;
-    std::string directory;
-    std::string *file;
-  };
 
   struct Directory {
     std::map<std::string, Directory *> childDirectories;

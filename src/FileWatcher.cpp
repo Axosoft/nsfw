@@ -1,10 +1,13 @@
 #include "../includes/FileWatcher.h"
 
 #if defined(_WIN32)
+#define USE_WINDOWS_INIT
 #include "../includes/FileWatcher32.h"
 #elif defined(__APPLE_CC__) || defined(BSD)
+#define FILE_WATCHER_INTERFACE FileWatcherOSX
 #include "../includes/FileWatcherOSX.h"
 #elif defined(__linux__)
+#define FILE_WATCHER_INTERFACE FileWatcherLinux
 #include "../includes/FileWatcherLinux.h"
 #endif
 
@@ -14,9 +17,6 @@ namespace NSFW {
    : mPath(path), mStopFlag(false), mWatchFiles(false) {}
 
   FileWatcher::~FileWatcher() {
-    #ifndef USE_WINDOWS_INIT
-    delete fwInterface;
-    #endif
   }
 
   // Public methods
@@ -40,8 +40,8 @@ namespace NSFW {
       #if defined(USE_WINDOWS_INIT)
       createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopFlag);
       #else
-      fwInterface = new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
-      fwInterface->start();
+      fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
+      ((FILE_WATCHER_INTERFACE *)fwInterface)->start();
       #endif
       return true;
     } else {
@@ -55,7 +55,7 @@ namespace NSFW {
     } else {
       mWatchFiles = false;
       #ifndef USE_WINDOWS_INIT
-      fwInterface->stop();
+      ((FILE_WATCHER_INTERFACE *)fwInterface)->stop();
       delete fwInterface;
       mStopFlag = true;
       #endif

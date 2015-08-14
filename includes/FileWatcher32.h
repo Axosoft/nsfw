@@ -1,7 +1,7 @@
 #ifndef FILEWATCHER32_H
 #define FILEWATCHER32_H
 
-#include "FileWatcherInterface.h"
+#include "FileWatcher.h"
 #include <string>
 #include <msclr\marshal_cppstd.h>
 #using <mscorlib.dll>

@@ -22,7 +22,8 @@
   },
   "gypfile": true,
   "devDependencies": {
-    "make": "0.0.0",
+    "bluebird": "^2.9.34",
+    "fs-extra": "^0.23.1",
     "mocha": "^2.2.5"
   },
   "keywords": [

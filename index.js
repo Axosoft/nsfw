@@ -1,9 +1,11 @@
 var FileWatcher = require('./build/Release/FileWatcher.node');
+var path = require("path");
 
-var nsfw = module.exports = function(path, callback, pInterval) {
+var nsfw = module.exports = function(watchPath, callback, pInterval) {
   var poll;
+  watchPath = path.resolve(watchPath);
   var interval = pInterval || 1000;
-  var watcher = new FileWatcher.NSFW(path, callback);
+  var watcher = new FileWatcher.NSFW(watchPath, callback);
 
   // methods
   this.start = function() {

@@ -17,10 +17,12 @@
     "nan": "^2.0.0"
   },
   "scripts": {
-    "install": "node-gyp rebuild"
+    "install": "node-gyp rebuild",
+    "test": "mocha"
   },
   "gypfile": true,
   "devDependencies": {
+    "make": "0.0.0",
     "mocha": "^2.2.5"
   },
   "keywords": [

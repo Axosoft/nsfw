@@ -13,6 +13,8 @@
 
 namespace NSFW {
 
+  #pragma unmanaged
+
   FileWatcher::FileWatcher(std::string path)
    : mPath(path), mStopFlag(false), mWatchFiles(false) {}
 

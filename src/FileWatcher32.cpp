@@ -1,6 +1,7 @@
 #include "../includes/FileWatcher32.h"
 
 namespace NSFW {
+  #pragma managed
   FSEventHandler::FSEventHandler(FileSystemWatcher^ parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag)
    : mParentFW(parentFW), mEventsQueue(eventsQueue), mWatchFiles(watchFiles), mStopFlag(stopFlag) {}
 
@@ -16,7 +17,6 @@ namespace NSFW {
     event.action = (char*)(void*)Marshal::StringToHGlobalAnsi(action);
     mEventsQueue.push(event);
   }
-
   FileSystemWatcher ^FSEventHandler::getParent() {
     return mParentFW;
   }

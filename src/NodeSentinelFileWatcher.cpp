@@ -7,7 +7,9 @@
 
 namespace NSFW {
 
+  #pragma unmanaged
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
+
 
   NodeSentinelFileWatcher::NodeSentinelFileWatcher(std::string path, Callback *pCallback) {
     mFileWatcher = new FileWatcher(path);

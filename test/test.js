@@ -8,6 +8,10 @@ describe('Node Sentinel File Watcher', function() {
   var workDir = path.resolve("./mockfs");
 
   beforeEach(function() {
+    if (fse.existsSync(workDir)) {
+      fse.removeSync(workDir);
+    }
+
     function makeDir(identifier) {
       fse.mkdirSync(path.join(workDir, "test" + identifier));
       fse.mkdirSync(path.join(workDir, "test" + identifier, "folder" + identifier));

@@ -8,7 +8,6 @@ namespace NSFW {
   void FSEventHandler::eventHandlerHelper(FileSystemEventArgs^ e, System::String^ action) {
     if (!mWatchFiles) {
       // Remove these handlers if the object is no longer listening (stop is called)
-      removeHandlers();
       return;
     }
     Event event;
@@ -16,6 +15,14 @@ namespace NSFW {
     event.file = new std::string((char*)(void*)Marshal::StringToHGlobalAnsi(Path::GetFileName(e->Name)));
     event.action = (char*)(void*)Marshal::StringToHGlobalAnsi(action);
     mEventsQueue.push(event);
+  }
+
+  bool &FSEventHandler::getWatchFiles() {
+    return mWatchFiles;
+  }
+
+  FileSystemWatcher ^FSEventHandler::getParent() {
+    return mParentFW;
   }
 
   void FSEventHandler::onChanged(Object^ source, FileSystemEventArgs^ e) {
@@ -34,7 +41,6 @@ namespace NSFW {
   void FSEventHandler::onRenamed(Object^ source, RenamedEventArgs^ e) {
     if (!mWatchFiles) {
       // Remove these handlers if the object is no longer listening (stop is called)
-      removeHandlers();
       return;
     }
     Event event;
@@ -63,6 +69,18 @@ namespace NSFW {
     mParentFW->Created -= mCreated;
     mParentFW->Deleted -= mDeleted;
     mParentFW->Renamed -= mRenamed;
+  }
+
+  static void fileWatcherControl(Object^ data) {
+    FSEventHandler^ handler = (FSEventHandler^)data;
+    bool &watchFiles = handler->getWatchFiles();
+    FileSystemWatcher^ fsWatcher = handler->getParent();
+    while(watchFiles) {
+      Thread::Sleep(50);
+    }
+    fsWatcher->EnableRaisingEvents = false;
+    handler->removeHandlers();
+    delete fsWatcher;
   }
 
   // Creates the filewatcher and initializes the handlers.
@@ -104,6 +122,9 @@ namespace NSFW {
     fsWatcher->Created += created;
     fsWatcher->Deleted += deleted;
     fsWatcher->Renamed += renamed;
+
+    Thread^ oThread = gcnew Thread(gcnew ParameterizedThreadStart(&fileWatcherControl));
+    oThread->Start(handler);
 
     fsWatcher->EnableRaisingEvents = true;
   }

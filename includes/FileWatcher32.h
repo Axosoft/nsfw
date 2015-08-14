@@ -12,6 +12,7 @@ using namespace System;
 using namespace System::IO;
 using namespace System::Runtime::InteropServices;
 using namespace System::Collections::Generic;
+using namespace System::Threading;
 
 namespace NSFW {
 
@@ -22,6 +23,8 @@ namespace NSFW {
       std::queue<Event> &eventsQueue,
       bool &watchFiles
     );
+    bool &getWatchFiles();
+    FileSystemWatcher ^getParent();
     void onChanged(Object^ source, FileSystemEventArgs^ e);
     void onCreated(Object^ source, FileSystemEventArgs^ e);
     void onDeleted(Object^ source, FileSystemEventArgs^ e);

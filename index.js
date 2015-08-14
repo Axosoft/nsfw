@@ -20,9 +20,9 @@ var nsfw = module.exports = function(watchPath, callback, pInterval) {
     }, interval);
   };
 
-  this.stop = function() {
+  this.stop = function(callback) {
     clearInterval(poll);
-    watcher.stop();
+    watcher.stop(callback);
   };
 
 }

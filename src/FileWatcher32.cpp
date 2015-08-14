@@ -1,8 +1,8 @@
 #include "../includes/FileWatcher32.h"
 
 namespace NSFW {
-  FSEventHandler::FSEventHandler(FileSystemWatcher^ parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopped)
-   : mParentFW(parentFW), mEventsQueue(eventsQueue), mWatchFiles(watchFiles), mStopped(stopped) {}
+  FSEventHandler::FSEventHandler(FileSystemWatcher^ parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag)
+   : mParentFW(parentFW), mEventsQueue(eventsQueue), mWatchFiles(watchFiles), mStopFlag(stopFlag) {}
 
   // Handles the generalized change event for changed/created/deleted and pushes event to queue
   void FSEventHandler::eventHandlerHelper(FileSystemEventArgs^ e, System::String^ action) {
@@ -17,12 +17,16 @@ namespace NSFW {
     mEventsQueue.push(event);
   }
 
-  bool &FSEventHandler::getWatchFiles() {
-    return mWatchFiles;
-  }
-
   FileSystemWatcher ^FSEventHandler::getParent() {
     return mParentFW;
+  }
+
+  bool &FSEventHandler::getStopFlag() {
+    return mStopFlag;
+  }
+
+  bool &FSEventHandler::getWatchFiles() {
+    return mWatchFiles;
   }
 
   void FSEventHandler::onChanged(Object^ source, FileSystemEventArgs^ e) {
@@ -74,6 +78,7 @@ namespace NSFW {
   static void fileWatcherControl(Object^ data) {
     FSEventHandler^ handler = (FSEventHandler^)data;
     bool &watchFiles = handler->getWatchFiles();
+    bool &stopFlag = handler->getStopFlag();
     FileSystemWatcher^ fsWatcher = handler->getParent();
     while(watchFiles) {
       Thread::Sleep(50);
@@ -81,11 +86,11 @@ namespace NSFW {
     fsWatcher->EnableRaisingEvents = false;
     handler->removeHandlers();
     delete fsWatcher;
-    Console::WriteLine("I am no longer listening for events.\n\n\n\n\n");
+    stopFlag = true;
   }
 
   // Creates the filewatcher and initializes the handlers.
-  void createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopped) {
+  void createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag) {
     FileSystemWatcher^ fsWatcher;
     FSEventHandler^ handler;
 
@@ -102,7 +107,7 @@ namespace NSFW {
       NotifyFilters::Security |
       NotifyFilters::Size
     );
-    handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopped);
+    handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopFlag);
 
     // We want to remember the handler delegates we create, since we don't have a reference to this object in
     // unmanaged land we'll pass the handlers to the FSEventHandler to remove from itself when it posts an event

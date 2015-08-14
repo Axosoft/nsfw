@@ -15,7 +15,7 @@
 namespace NSFW {
 
   FileWatcher::FileWatcher(std::string path)
-   : mPath(path), mStopped(false), mWatchFiles(false) {}
+   : mPath(path), mStopFlag(false), mWatchFiles(false) {}
 
   FileWatcher::~FileWatcher() {
     #ifndef USE_WINDOWS_INIT
@@ -29,7 +29,7 @@ namespace NSFW {
   }
 
   bool FileWatcher::hasStopped() {
-    return mStopped;
+    return mStopFlag;
   }
 
   bool FileWatcher::start() {
@@ -42,7 +42,7 @@ namespace NSFW {
       }
 
       #if defined(USE_WINDOWS_INIT)
-      createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopped);
+      createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopFlag);
       #else
       fwInterface = new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
       fwInterface->start();

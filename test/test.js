@@ -56,14 +56,13 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(createEventFound, true, "NSFW did not hear the create event.");
-          watch.stop();
+          return Promise.promisify(watch.stop, watch)();
         })
-        .delay(2000)
-        .then(function() {
-          console.log("it may be that i need to make this async\n\n\n\n\n");
-        })
-        .catch(function() {
-          watch.stop();
+        .catch(function(error) {
+          return Promise.promisfy(watch.stop, watch)()
+          .then(function() {
+            Promise.reject(error);
+          });
         });
     });
 
@@ -94,10 +93,13 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(deleteEventFound, true, "NSFW did not hear the delete event.");
-          watch.stop();
+          return Promise.promisify(watch.stop, watch)();
         })
-        .catch(function() {
-          watch.stop();
+        .catch(function(error) {
+          return Promise.promisfy(watch.stop, watch)()
+          .then(function() {
+            Promise.reject(error);
+          });
         });
     });
 
@@ -131,10 +133,13 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(changeEventFound, true, "NSFW did not hear the change event.");
-          watch.stop();
+          return Promise.promisify(watch.stop, watch)();
         })
-        .catch(function() {
-          watch.stop();
+        .catch(function(error) {
+          return Promise.promisfy(watch.stop, watch)()
+          .then(function() {
+            Promise.reject(error);
+          });
         });
     });
   });
@@ -172,10 +177,13 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(createdCount, 3, "NSFW did not hear all 3 delete events.");
-          watch.stop();
+          return Promise.promisify(watch.stop, watch)();
         })
-        .catch(function() {
-          watch.stop();
+        .catch(function(error) {
+          return Promise.promisfy(watch.stop, watch)()
+          .then(function() {
+            Promise.reject(error);
+          });
         });
     });
 
@@ -211,10 +219,13 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(deletionCount, 3, "NSFW did not hear all 3 delete events.");
-          watch.stop();
+          return Promise.promisify(watch.stop, watch)();
         })
-        .catch(function() {
-          watch.stop();
+        .catch(function(error) {
+          return Promise.promisfy(watch.stop, watch)()
+          .then(function() {
+            Promise.reject(error);
+          });
         });
     });
   });

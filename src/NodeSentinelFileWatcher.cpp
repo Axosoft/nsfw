@@ -1,4 +1,10 @@
 #include "../includes/NodeSentinelFileWatcher.h"
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__APPLE_CC__) || defined(BSD) || defined(__linux__)
+#include <unistd.h>
+#endif
+
 namespace NSFW {
 
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
@@ -108,13 +114,38 @@ namespace NSFW {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
     if (!nsfw->mFileWatcher->start()) {
       return ThrowError("Cannot start an already running NSFW.");
-    }  }
+    }
+  }
 
   NAN_METHOD(NodeSentinelFileWatcher::Stop) {
+    if (info.Length() < 1 || !info[0]->IsFunction()) {
+      return ThrowError("Must provide a callback to stop.");
+    }
+    Callback *callback = new Callback(info[0].As<v8::Function>());
+
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
     if (!nsfw->mFileWatcher->stop()) {
       return ThrowError("Cannot stop an already stopped NSFW.");
     }
+    AsyncQueueWorker(new StopWorker(nsfw->mFileWatcher, callback));
+  }
+
+  NodeSentinelFileWatcher::StopWorker::StopWorker(FileWatcher * const fw, Callback *callback)
+    : AsyncWorker(callback), mCallerFileWatcher(fw) {}
+
+  void NodeSentinelFileWatcher::StopWorker::Execute() {
+    while(!mCallerFileWatcher->hasStopped()) {
+      #if defined(_WIN32)
+      Sleep(50);
+      #elif defined(__APPLE_CC__) || defined(BSD) || defined(__linux__)
+      usleep(50);
+      #endif
+    }
+  }
+
+  void NodeSentinelFileWatcher::StopWorker::HandleOKCallback() {
+    HandleScope();
+    callback->Call(0, NULL);
   }
 
   NODE_MODULE(FileWatcher, NodeSentinelFileWatcher::Init)

@@ -22,7 +22,7 @@ namespace NSFW {
     FileWatcherInterface *fwInterface;
     std::queue<Event> mEventsQueue;
     std::string mPath;
-    bool mStopped;
+    bool mStopFlag;
     bool mWatchFiles;
   };
 }

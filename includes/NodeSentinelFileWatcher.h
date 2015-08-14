@@ -28,6 +28,15 @@ namespace NSFW
     static NAN_METHOD(Poll);
     static NAN_METHOD(Start);
     static NAN_METHOD(Stop);
+    // Stop worker
+    class StopWorker : public AsyncWorker {
+    public:
+      StopWorker(FileWatcher * const fw, Callback *callback);
+      void Execute();
+      void HandleOKCallback();
+    private:
+      FileWatcher * const mCallerFileWatcher;
+    };
 
     // Nan necessary
     static Persistent<v8::Function> constructor;

@@ -24,8 +24,9 @@ namespace NSFW {
       bool &watchFiles,
       bool &mStopped
     );
-    bool &getWatchFiles();
     FileSystemWatcher ^getParent();
+    bool &getStopFlag();
+    bool &getWatchFiles();
     void onChanged(Object^ source, FileSystemEventArgs^ e);
     void onCreated(Object^ source, FileSystemEventArgs^ e);
     void onDeleted(Object^ source, FileSystemEventArgs^ e);
@@ -42,7 +43,7 @@ namespace NSFW {
     std::queue<Event> &mEventsQueue;
     FileSystemWatcher^ mParentFW;
     bool &mWatchFiles;
-    bool &mStopped;
+    bool &mStopFlag;
     FileSystemEventHandler^ mChanged;
     FileSystemEventHandler^ mCreated;
     FileSystemEventHandler^ mDeleted;

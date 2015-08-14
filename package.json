@@ -1,5 +1,5 @@
 {
-  "name": "node-sentinel-file-watcher",
+  "name": "nsfw",
   "version": "0.1.0",
   "description": "A simple file watcher for Node",
   "main": "index.js",

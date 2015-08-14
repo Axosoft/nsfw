@@ -77,6 +77,7 @@ namespace NSFW {
     FileSystemWatcher^ fsWatcher = handler->getParent();
     while(watchFiles) {
       Thread::Sleep(50);
+      Console::WriteLine("I am listening for events.\n\n\n\n\n");
     }
     fsWatcher->EnableRaisingEvents = false;
     handler->removeHandlers();

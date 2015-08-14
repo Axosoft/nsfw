@@ -8,10 +8,6 @@ describe('Node Sentinel File Watcher', function() {
   var workDir = path.resolve("./mockfs");
 
   beforeEach(function() {
-    if (fse.existsSync(workDir)) {
-      fse.removeSync(workDir);
-    }
-
     function makeDir(identifier) {
       fse.mkdirSync(path.join(workDir, "test" + identifier));
       fse.mkdirSync(path.join(workDir, "test" + identifier, "folder" + identifier));
@@ -60,6 +56,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(createEventFound, true, "NSFW did not hear the create event.");
+          watch.stop();
+        })
+        .catch(function() {
+          watch.stop();
         });
     });
 
@@ -90,6 +90,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(deleteEventFound, true, "NSFW did not hear the delete event.");
+          watch.stop();
+        })
+        .catch(function() {
+          watch.stop();
         });
     });
 
@@ -123,6 +127,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(changeEventFound, true, "NSFW did not hear the change event.");
+          watch.stop();
+        })
+        .catch(function() {
+          watch.stop();
         });
     });
   });
@@ -160,6 +168,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(createdCount, 3, "NSFW did not hear all 3 delete events.");
+          watch.stop();
+        })
+        .catch(function() {
+          watch.stop();
         });
     });
 
@@ -195,6 +207,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(deletionCount, 3, "NSFW did not hear all 3 delete events.");
+          watch.stop();
+        })
+        .catch(function() {
+          watch.stop();
         });
     });
   });

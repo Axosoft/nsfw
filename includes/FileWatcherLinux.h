@@ -13,6 +13,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <string>
+#include <queue>
 
 namespace NSFW {
 

@@ -81,6 +81,7 @@ namespace NSFW {
     fsWatcher->EnableRaisingEvents = false;
     handler->removeHandlers();
     delete fsWatcher;
+    Console::WriteLine("I am no longer listening for events.\n\n\n\n\n");
   }
 
   // Creates the filewatcher and initializes the handlers.

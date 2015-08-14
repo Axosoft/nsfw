@@ -58,6 +58,10 @@ describe('Node Sentinel File Watcher', function() {
           assert.equal(createEventFound, true, "NSFW did not hear the create event.");
           watch.stop();
         })
+        .delay(2000)
+        .then(function() {
+          console.log("it may be that i need to make this async\n\n\n\n\n");
+        })
         .catch(function() {
           watch.stop();
         });

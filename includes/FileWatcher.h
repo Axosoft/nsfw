@@ -11,6 +11,7 @@ namespace NSFW {
     ~FileWatcher();
 
     // Public methods
+    bool hasStopped();
     void pushEvent(Event event);
     std::queue<Event> *pollEvents();
     bool running();
@@ -21,6 +22,7 @@ namespace NSFW {
     FileWatcherInterface *fwInterface;
     std::queue<Event> mEventsQueue;
     std::string mPath;
+    bool mStopped;
     bool mWatchFiles;
   };
 }

@@ -1,8 +1,6 @@
 #ifndef FILEWATCHER_H
 #define FILEWATCHER_H
 
-#include "FileWatcherInterface.h"
-
 #if defined(_WIN32)
 #define USE_WINDOWS_INIT
 #include "FileWatcher32.h"

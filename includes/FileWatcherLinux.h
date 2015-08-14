@@ -1,7 +1,6 @@
 #ifndef FILEWATCHERLINUX_H
 #define FILEWATCHERLINUX_H
 
-#include "FileWatcherInterface.h"
 #include <sys/inotify.h>
 #include <dirent.h>
 #include <stdlib.h>
@@ -24,7 +23,7 @@ namespace NSFW {
     int watchDescriptor;
   };
 
-  class FileWatcherLinux : public FileWatcherInterface {
+  class FileWatcherLinux {
   public:
     FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles);
     ~FileWatcherLinux();

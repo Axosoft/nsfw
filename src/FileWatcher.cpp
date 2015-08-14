@@ -1,5 +1,4 @@
 #include "../includes/FileWatcher.h"
-#include "../includes/FileWatcherInterface.h"
 
 #if defined(_WIN32)
 #include "../includes/FileWatcher32.h"

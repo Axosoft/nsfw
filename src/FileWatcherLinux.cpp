@@ -308,7 +308,12 @@ namespace NSFW {
     }
   }
 
-  void FileWatcherLinux::stop() {}
+  void FileWatcherLinux::stop() {
+    int t;
+    pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
+    pthread_cancel(mThread);
+    destroyWatchTree(mDirTree);
+  }
 
   void FileWatcherLinux::setDirTree(Directory *tree) {
     mDirTree = tree;

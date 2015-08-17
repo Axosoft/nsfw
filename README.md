@@ -32,3 +32,32 @@ var watcherTwo = new nsfw("dir2", function(events) {
 }, 5000); // every 5 seconds
 
 ```
+
+## Callback Argument
+
+An array of events as they have happened in a directory, it's children, or to a file.
+```js
+[
+  {
+    "action": "CHANGED",
+    "directory": "/home/nsfw/watchDir",
+    "file": "file1.ext"
+  },
+  {
+    "action": "CREATED",
+    "directory": "/home/nsfw/watchDir",
+    "file": "folder"
+  },
+  {
+    "action": "DELETED",
+    "directory": "home/nsfw/watchDir/testFolder",
+    "file": "test.ext"
+  },
+  {
+    "action": "RENAMED",
+    "directory": "home/nsfw/watchDir",
+    "oldFile": "oldname.ext",
+    "newFile": "newname.ext"
+  }
+]
+```

@@ -4,6 +4,7 @@ environment:
     # Node.js
     - nodejs_version: "0.10"
     - nodejs_version: "0.12"
+    - nodejs_version: "2.5"
 
 # Install scripts. (runs after repo cloning)
 install:
@@ -22,3 +23,7 @@ test_script:
 
 # Don't actually build.
 build: off
+
+matrix:
+  allow_failures:
+    - nodejs_version: "2.5"

@@ -1,7 +1,3 @@
-os:
-  - linux
-  - osx
-
 language: node_js
 node_js:
   - "0.12"
@@ -9,3 +5,7 @@ node_js:
 
 install:
   - npm install
+
+os:
+  - linux
+  - osx

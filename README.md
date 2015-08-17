@@ -10,6 +10,7 @@
   <tbody>
     <tr>
       <td colspan="2" align="center">
+      <a href="https://travis-ci.org/Axosoft/node-sentinel-file-watcher"><img src="https://travis-ci.org/Axosoft/node-sentinel-file-watcher.svg?branch=master"></a>
       </td>
       <td align="center">
         <a href="https://ci.appveyor.com/project/implausible/node-simple-file-watcher"><img src="https://ci.appveyor.com/api/projects/status/79ejlq7e60kjmbl6?svg=true"></a>

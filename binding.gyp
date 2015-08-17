@@ -6,8 +6,7 @@
         "src/FileWatcher.cpp",
         "src/NodeSentinelFileWatcher.cpp",
         "includes/FileWatcher.h",
-        "includes/NodeSentinelFileWatcher.h",
-        "includes/FileWatcherInterface.h"
+        "includes/NodeSentinelFileWatcher.h"
       ],
       "include_dirs": [
         "<!(node -e \"require('nan')\")",

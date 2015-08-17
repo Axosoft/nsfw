@@ -14,13 +14,13 @@
   },
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
-    "nan": "^2.0.0"
+    "nan": "^2.0.0",
+    "pangyp": "^2.3.0"
   },
   "scripts": {
-    "install": "node-gyp rebuild",
+    "install": "pangyp rebuild",
     "test": "mocha"
   },
-  "gypfile": true,
   "devDependencies": {
     "bluebird": "^2.9.34",
     "fs-extra": "^0.23.1",

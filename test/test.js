@@ -27,6 +27,71 @@ describe('Node Sentinel File Watcher', function() {
   });
 
   describe('Basic Functions', function() {
+    it('can watch a single file', function() {
+      this.timeout(10000);
+      var file = "testing1.file";
+      var inPath = path.resolve(workDir, "test1");
+      var filePath = path.join(inPath, file);
+      var changeEvents = 0;
+      var createEvents = 0;
+      var deleteEvents = 0;
+
+      function findEvents(element, index, array) {
+        if (element.action === "CHANGED"
+          && element.directory === path.resolve(inPath)
+          && element.file === file)
+        {
+            changeEvents++;
+        }
+        else if (element.action === "CREATED"
+          && element.directory === path.resolve(inPath)
+          && element.file === file)
+        {
+            createEvents++;
+        }
+        else if (element.action === "DELETED"
+          && element.directory === path.resolve(inPath)
+          && element.file === file)
+        {
+            deleteEvents++;
+        }
+      }
+
+      var watch = new nsfw(filePath, function(events) {
+        events.forEach(findEvents);
+      });
+      watch.start();
+
+      return Promise
+        .delay(1000)
+        .then(function() {
+          var fd = fse.openSync(filePath, "w");
+          fse.writeSync(fd, "Bean bag video games at noon.");
+          fse.closeSync(fd);
+
+          fse.removeSync(filePath);
+
+          fd = fse.openSync(filePath, "w");
+          fse.writeSync(fd, "His watch has ended.");
+          fse.closeSync(fd);
+
+          fse.renameSync(filePath, path.join(inPath, "not_test.file"));
+          fse.renameSync(path.join(inPath, "not_test.file"), filePath);
+        })
+        .delay(1500)
+        .then(function() {
+          assert(changeEvents >= 1, "NSFW did not hear the change event.");
+          assert(createEvents == 2, "NSFW did not hear the create event.");
+          assert(deleteEvents == 2, "NSFW did not hear the delete event.");
+          return Promise.promisify(watch.stop, watch)();
+        })
+        .catch(function(error) {
+          return Promise.promisify(watch.stop, watch)()
+          .then(function() {
+            Promise.reject(error);
+          });
+        });
+    });
     it('can listen for a create event', function() {
       this.timeout(5000);
       var createEventFound = false;

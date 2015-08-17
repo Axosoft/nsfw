@@ -24,6 +24,13 @@ namespace NSFW {
       bool &watchFiles,
       bool &mStopped
     );
+    FSEventHandler(
+      FileSystemWatcher^ parentFW,
+      std::queue<Event> &eventsQueue,
+      bool &watchFiles,
+      bool &mStopped,
+      System::String^ fileName
+    );
     FileSystemWatcher ^getParent();
     bool &getStopFlag();
     bool &getWatchFiles();
@@ -41,6 +48,7 @@ namespace NSFW {
     void removeHandlers();
   private:
     std::queue<Event> &mEventsQueue;
+    System::String^ mFileName;
     FileSystemWatcher^ mParentFW;
     bool &mWatchFiles;
     bool &mStopFlag;
@@ -50,7 +58,7 @@ namespace NSFW {
     RenamedEventHandler^ mRenamed;
   };
 
-  void createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &mStopped);
+  bool createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &mStopped);
 
 }
 

@@ -133,7 +133,7 @@ describe('Node Sentinel File Watcher', function() {
           return Promise.promisify(watch.stop, watch)();
         })
         .catch(function(error) {
-          return Promise.promisfy(watch.stop, watch)()
+          return Promise.promisify(watch.stop, watch)()
           .then(function() {
             Promise.reject(error);
           });
@@ -170,7 +170,7 @@ describe('Node Sentinel File Watcher', function() {
           return Promise.promisify(watch.stop, watch)();
         })
         .catch(function(error) {
-          return Promise.promisfy(watch.stop, watch)()
+          return Promise.promisify(watch.stop, watch)()
           .then(function() {
             Promise.reject(error);
           });
@@ -184,7 +184,7 @@ describe('Node Sentinel File Watcher', function() {
       var file = "testing0.file";
       var inPath = path.resolve(workDir, "test0");
 
-      function findDeleteEvent(element, index, array) {
+      function findChangeEvent(element, index, array) {
         if (element.action === "CHANGED"
           && element.directory === path.resolve(inPath)
           && element.file === file)
@@ -193,7 +193,7 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
       var watch = new nsfw("./mockfs", function(events) {
-        events.forEach(findDeleteEvent);
+        events.forEach(findChangeEvent);
       });
       watch.start();
 
@@ -210,10 +210,63 @@ describe('Node Sentinel File Watcher', function() {
           return Promise.promisify(watch.stop, watch)();
         })
         .catch(function(error) {
-          return Promise.promisfy(watch.stop, watch)()
+          return Promise.promisify(watch.stop, watch)()
           .then(function() {
             Promise.reject(error);
           });
+        });
+    });
+
+    it.only('can run multiple watchers at once', function() {
+      this.timeout(5000);
+      var deleteEvents = 0;
+      var dirA = path.resolve(workDir, "test0");
+      var fileA = "testing0.file";
+      var dirB = path.resolve(workDir, "test1");
+      var fileB = "testing1.file";
+
+      function registerDeleteEvents(element, index, array) {
+        if (element.action === "DELETED") {
+          if (element.directory === dirA && element.file === fileA) {
+            deleteEvents++;
+          } else if (element.directory === dirB && element.file === fileB) {
+            deleteEvents++;
+          }
+        }
+      }
+
+      function eventHandler(events) {
+        events.forEach(registerDeleteEvents);
+      }
+
+      var watchA = new nsfw(dirA, eventHandler);
+      var watchB = new nsfw(dirB, eventHandler);
+
+      watchA.start();
+      watchB.start();
+
+      return Promise
+        .delay(1000)
+        .then(function() {
+          fse.removeSync(path.join(dirA, fileA));
+          fse.removeSync(path.join(dirB, fileB));
+        })
+        .delay(2000)
+        .then(function() {
+          assert.equal(deleteEvents, 2, "Failed to hear both delete events.");
+          return Promise.promisify(watchA.stop, watchA);
+        })
+        .then(function() {
+          return Promise.promisify(watchB.stop, watchB);
+        })
+        .catch(function(error) {
+          return Promise.promisify(watchA.stop, watchA)()
+            .then(function() {
+              return Promise.promisify(watchB.stop, watchB)()
+            })
+            .then(function() {
+              Promise.reject(error);
+            });
         });
     });
   });
@@ -254,8 +307,8 @@ describe('Node Sentinel File Watcher', function() {
           return Promise.promisify(watch.stop, watch)();
         })
         .catch(function(error) {
-          return Promise.promisfy(watch.stop, watch)()
-          .then(function() {
+          return Promise.promisify(watch.stop, watch)()
+          .then(function(error) {
             Promise.reject(error);
           });
         });
@@ -296,7 +349,7 @@ describe('Node Sentinel File Watcher', function() {
           return Promise.promisify(watch.stop, watch)();
         })
         .catch(function(error) {
-          return Promise.promisfy(watch.stop, watch)()
+          return Promise.promisify(watch.stop, watch)()
           .then(function() {
             Promise.reject(error);
           });

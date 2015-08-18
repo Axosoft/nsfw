@@ -65,8 +65,11 @@
         }],
         ["OS=='linux'", {
             "sources": [
-            "src/FileWatcherLinux.cpp",
-            "includes/FileWatcherLinux.h"
+                "src/FileWatcherLinux.cpp",
+                "includes/FileWatcherLinux.h"
+            ],
+            "cflags": [
+                "-Wno-unknown-pragmas"
             ]
         }]
       ]

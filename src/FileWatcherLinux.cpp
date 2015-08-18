@@ -355,7 +355,6 @@ namespace NSFW {
         if (strcmp(inEvent->name, mDirTree->name.c_str())) {
           continue;
         }
-        inotify_event *outEvent;
         switch(inEvent->mask) {
           case IN_ATTRIB:
           case IN_MODIFY:

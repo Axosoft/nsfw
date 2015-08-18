@@ -58,7 +58,7 @@ namespace NSFW {
       mWatchFiles = false;
       #ifndef USE_WINDOWS_INIT
       ((FILE_WATCHER_INTERFACE *)fwInterface)->stop();
-      delete fwInterface;
+      delete (FILE_WATCHER_INTERFACE *)fwInterface;
       mStopFlag = true;
       #endif
       return true;

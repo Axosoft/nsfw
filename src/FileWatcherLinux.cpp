@@ -1,9 +1,15 @@
 #include "../includes/FileWatcherLinux.h"
+#include <iostream>
 
 namespace NSFW {
 
   FileWatcherLinux::FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles)
-    : mEventsQueue(eventsQueue), mInotify(0), mPath(path), mWatchFiles(watchFiles) {}
+    : mEventsQueue(eventsQueue), mInotify(0), mPath(path), mWatchFiles(watchFiles) {
+      // strip trailing slash
+      if (mPath[mPath.length() - 1] == '/') {
+        mPath = mPath.substr(0, mPath.length() - 1);
+      }
+    }
   FileWatcherLinux::~FileWatcherLinux() {}
 
   void FileWatcherLinux::addEvent(std::string action, inotify_event *inEvent) {
@@ -22,11 +28,6 @@ namespace NSFW {
   Directory *FileWatcherLinux::buildDirTree(std::string path, bool queueFileEvents = false) {
     std::queue<Directory *> dirQueue;
     Directory *topRoot = new Directory;
-
-    // create root of snapshot
-    if (path[path.length() - 1] == '/') {
-      path = path.substr(0, path.length() - 1);
-    }
 
     size_t lastSlash = path.find_last_of("/");
     if (lastSlash != std::string::npos) {
@@ -125,6 +126,34 @@ namespace NSFW {
     return topRoot;
   }
 
+  Directory *FileWatcherLinux::buildWatchDirectory() {
+    Directory *watchDir = new Directory;
+    // strip name from path
+    size_t lastSlash = mPath.find_last_of("/");
+    if (lastSlash != std::string::npos) {
+      watchDir->name = mPath.substr(lastSlash + 1);
+      watchDir->path = mPath.substr(0, lastSlash);
+    } else {
+      // throw errors
+      return NULL;
+    }
+
+    // set watch descriptor for the parent directory of the file
+    watchDir->watchDescriptor = inotify_add_watch(
+      mInotify,
+      watchDir->path.c_str(),
+      IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO
+    );
+
+    // if it fails, we'll return an error
+    if (watchDir->watchDescriptor < 0) {
+      // throw errors
+      return NULL;
+    }
+
+    return watchDir;
+  }
+
   void FileWatcherLinux::destroyWatchTree(Directory *tree) {
     std::queue<Directory *> dirQueue;
     dirQueue.push(tree);
@@ -160,23 +189,41 @@ namespace NSFW {
   void *FileWatcherLinux::mainLoop(void *params) {
     FileWatcherLinux *fwLinux = (FileWatcherLinux *)params;
 
-    // build the directory tree before listening for events
-    Directory *dirTree = fwLinux->buildDirTree(fwLinux->getPath());
+    struct stat file;
 
-    // check that the directory can be watched before trying to watch it
-    if (dirTree == NULL) {
-      // throw error if the directory didn't exists
+    if (stat(fwLinux->getPath().c_str(), &file) < 0) {
+      // throw errors
       return NULL;
     }
 
-    fwLinux->setDirTree(dirTree);
-    fwLinux->processEvents();
+    if (S_ISDIR(file.st_mode)) {
+      // build the directory tree before listening for events
+      Directory *dirTree = fwLinux->buildDirTree(fwLinux->getPath());
 
+      // check that the directory can be watched before trying to watch it
+      if (dirTree == NULL) {
+        // throw error if the directory didn't exists
+        return NULL;
+      }
+
+      fwLinux->setDirTree(dirTree);
+      fwLinux->processDirectoryEvents();
+    } else if (S_ISREG(file.st_mode)) {
+      Directory *watchDir = fwLinux->buildWatchDirectory();
+      if (watchDir == NULL) {
+        // throw errors
+        return NULL;
+      }
+
+      fwLinux->setDirTree(watchDir);
+      fwLinux->processFileEvents();
+    }
+
+    // throw error because the path is neither a directory or a file
     return NULL;
   }
 
-
-  void FileWatcherLinux::processEvents() {
+  void FileWatcherLinux::processDirectoryEvents() {
     size_t count = sizeof(struct inotify_event) + NAME_MAX + 1;
     char *buffer = new char[1024*count];
     int watchDescriptor = -1;
@@ -288,6 +335,39 @@ namespace NSFW {
             } else {
               addEvent("CREATED", inEvent);
             }
+            break;
+        }
+      } while ((position += sizeof(struct inotify_event) + inEvent->len) < bytesRead);
+      position = 0;
+    }
+  }
+
+  void FileWatcherLinux::processFileEvents() {
+    size_t count = sizeof(struct inotify_event) + NAME_MAX + 1;
+    char *buffer = new char[128*count];
+    unsigned int bytesRead, position = 0;
+
+    while(mWatchFiles && (bytesRead = read(mInotify, buffer, count)) > 0) {
+      inotify_event *inEvent;
+      do {
+        inEvent = (inotify_event *)(buffer + position);
+        Event event;
+        if (strcmp(inEvent->name, mDirTree->name.c_str())) {
+          continue;
+        }
+        inotify_event *outEvent;
+        switch(inEvent->mask) {
+          case IN_ATTRIB:
+          case IN_MODIFY:
+            addEvent("CHANGED", mDirTree->path, new std::string(mDirTree->name));
+            break;
+          case IN_MOVED_TO:
+          case IN_CREATE:
+            addEvent("CREATED", mDirTree->path, new std::string(mDirTree->name));
+            break;
+          case IN_MOVED_FROM:
+          case IN_DELETE:
+            addEvent("DELETED", mDirTree->path, new std::string(mDirTree->name));
             break;
         }
       } while ((position += sizeof(struct inotify_event) + inEvent->len) < bytesRead);

@@ -28,18 +28,20 @@ namespace NSFW {
   public:
     FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles);
     ~FileWatcherLinux();
-    void addEvent(std::string action, inotify_event *inEvent);
-    void addEvent(std::string action, std::string directory, std::string *file);
     Directory *buildDirTree(std::string path, bool queueFileEvents);
+    Directory *buildWatchDirectory();
     void destroyWatchTree(Directory *tree);
     std::string getPath();
     static void *mainLoop(void *params);
-    void processEvents();
+    void processDirectoryEvents();
+    void processFileEvents();
     void setDirTree(Directory *tree);
     bool start();
     void stop();
 
   private:
+    void addEvent(std::string action, inotify_event *inEvent);
+    void addEvent(std::string action, std::string directory, std::string *file);
     Directory *mDirTree;
     std::queue<Event> &mEventsQueue;
     int mInotify;

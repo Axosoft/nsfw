@@ -217,7 +217,7 @@ describe('Node Sentinel File Watcher', function() {
         });
     });
 
-    it.only('can run multiple watchers at once', function() {
+    it('can run multiple watchers at once', function() {
       this.timeout(5000);
       var deleteEvents = 0;
       var dirA = path.resolve(workDir, "test0");

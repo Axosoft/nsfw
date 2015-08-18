@@ -3,7 +3,7 @@
 
 namespace NSFW {
 
-  FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool *watchFiles)
+  FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles)
     : mDirTree(NULL), mEventsQueue(eventsQueue), mPath(path), mWatchFiles(watchFiles)
   {
     pthread_mutexattr_t attr;
@@ -79,7 +79,7 @@ namespace NSFW {
       name = mPath;
       path = "/";
     }
-    while (*mWatchFiles) {
+    while (mWatchFiles) {
       FilePoll snapshot;
       int error = stat(mPath.c_str(), &snapshot.file);
       if (error < 0) {
@@ -229,7 +229,7 @@ namespace NSFW {
 
   void FileWatcherOSX::processDirCallback() {
     // only run this process if mWatchFiles is true, and we can get a lock on the mutex
-    if (*mWatchFiles && pthread_mutex_lock(&mCallbackSynch) != 0) {
+    if (mWatchFiles && pthread_mutex_lock(&mCallbackSynch) != 0) {
       return;
     }
 
@@ -452,7 +452,7 @@ namespace NSFW {
       pthread_mutex_unlock(&mCallbackSynch);
     }
 
-    if (*mWatchFiles && pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this) == 0) {
+    if (mWatchFiles && pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this) == 0) {
       return true;
     } else {
       return false;

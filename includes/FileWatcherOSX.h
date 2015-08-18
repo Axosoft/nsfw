@@ -41,7 +41,7 @@ namespace NSFW {
 
   class FileWatcherOSX {
   public:
-    FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool *watchFiles);
+    FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles);
     ~FileWatcherOSX();
     static void callback(
       ConstFSEventStreamRef streamRef,
@@ -71,7 +71,7 @@ namespace NSFW {
     std::queue<Event> &mEventsQueue;
     std::string mPath;
     pthread_t mThread;
-    bool *mWatchFiles;
+    bool &mWatchFiles;
 
   };
 

@@ -13,6 +13,7 @@
 #include <search.h>
 #include <map>
 #include <time.h>
+#include <sys/errno.h>
 
 namespace NSFW {
 
@@ -22,11 +23,16 @@ namespace NSFW {
     std::string path;
   };
 
+  struct FilePoll {
+    struct stat file;
+    bool exists;
+  };
+
   struct Directory {
     dirent *entry;
     std::map<ino_t, FileDescriptor> fileMap;
     std::map<ino_t, Directory *> childDirectories;
-    std::string path;
+    std::string path, name;
   };
 
   struct DirectoryPair {
@@ -35,7 +41,7 @@ namespace NSFW {
 
   class FileWatcherOSX {
   public:
-    FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles);
+    FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool *watchFiles);
     ~FileWatcherOSX();
     static void callback(
       ConstFSEventStreamRef streamRef,
@@ -48,13 +54,16 @@ namespace NSFW {
     static bool checkTimeValEquality(struct timespec *x, struct timespec *y);
     std::string getPath();
     void handleTraversingDirectoryChange(std::string action, Directory *directory);
+    bool isSingleFileWatch();
     static void *mainLoop(void *params);
-    void processCallback();
+    Directory *mDirTree;
+    FilePoll mFile;
+    void processDirCallback();
+    void filePoller();
     Directory *snapshotDir();
     bool start();
     void stop();
-
-    Directory *mDirTree;
+    FSEventStreamRef mStream;
 
   private:
     void deleteDirTree(Directory *tree);
@@ -62,7 +71,8 @@ namespace NSFW {
     std::queue<Event> &mEventsQueue;
     std::string mPath;
     pthread_t mThread;
-    bool &mWatchFiles;
+    bool *mWatchFiles;
+
   };
 
 }

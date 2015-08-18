@@ -4,6 +4,7 @@
 #elif defined(__APPLE_CC__) || defined(BSD) || defined(__linux__)
 #include <unistd.h>
 #endif
+#include <iostream>
 
 namespace NSFW {
 
@@ -77,7 +78,6 @@ namespace NSFW {
 
     std::vector< v8::Local<v8::Object> > jsEventObjects;
 
-
     while(!events->empty()) {
       Event event = events->front();
       events->pop();
@@ -140,7 +140,7 @@ namespace NSFW {
       #if defined(_WIN32)
       Sleep(50);
       #elif defined(__APPLE_CC__) || defined(BSD) || defined(__linux__)
-      usleep(50);
+      usleep(50000);
       #endif
     }
   }

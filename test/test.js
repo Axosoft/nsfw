@@ -68,14 +68,23 @@ describe('Node Sentinel File Watcher', function() {
           var fd = fse.openSync(filePath, "w");
           fse.writeSync(fd, "Bean bag video games at noon.");
           fse.closeSync(fd);
-
+        })
+        .delay(500)
+        .then(function(){
           fse.removeSync(filePath);
-
+        })
+        .delay(500)
+        .then(function(){
           fd = fse.openSync(filePath, "w");
           fse.writeSync(fd, "His watch has ended.");
           fse.closeSync(fd);
-
+        })
+        .delay(500)
+        .then(function(){
           fse.renameSync(filePath, path.join(inPath, "not_test.file"));
+        })
+        .delay(500)
+        .then(function(){
           fse.renameSync(path.join(inPath, "not_test.file"), filePath);
         })
         .delay(1500)

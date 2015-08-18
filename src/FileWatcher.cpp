@@ -1,5 +1,5 @@
 #include "../includes/FileWatcher.h"
-
+#include <iostream>
 #if defined(_WIN32)
 #define USE_WINDOWS_INIT
 #include "../includes/FileWatcher32.h"
@@ -33,7 +33,6 @@ namespace NSFW {
   bool FileWatcher::start() {
     if (!mWatchFiles) {
       mWatchFiles = true;
-
       // normalization
       if (mPath[mPath.length() - 1] == '/' || mPath[mPath.length() - 1] == '\\') {
         mPath = mPath.substr(0, mPath.length() - 2);
@@ -42,7 +41,7 @@ namespace NSFW {
       #if defined(USE_WINDOWS_INIT)
       createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopFlag);
       #else
-      fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
+      fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, &mWatchFiles);
       ((FILE_WATCHER_INTERFACE *)fwInterface)->start();
       #endif
       return true;
@@ -59,6 +58,7 @@ namespace NSFW {
       #ifndef USE_WINDOWS_INIT
       ((FILE_WATCHER_INTERFACE *)fwInterface)->stop();
       delete (FILE_WATCHER_INTERFACE *)fwInterface;
+      fwInterface = NULL;
       mStopFlag = true;
       #endif
       return true;

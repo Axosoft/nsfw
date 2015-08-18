@@ -367,8 +367,9 @@ namespace NSFW {
   void FileWatcherOSX::stop() {
     pthread_mutex_lock(&mCallbackSynch);
 
+    int t;
     // safely kill the thread
-    pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &mThread);
+    pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
     pthread_cancel(mThread);
     deleteDirTree(mDirTree);
 

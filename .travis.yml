@@ -1,8 +1,14 @@
-language: node_js
-node_js:
-  - "0.12"
-  - "0.10"
-  - "iojs-v2.5.0"
+env:
+  matrix:
+    - export NODE_VERSION="0.10"
+    - export NODE_VERSION="0.12"
+    - export NODE_VERSION="iojs-v2.5.0"
+
+before_install:
+  - git clone https://github.com/creationix/nvm.git ./.nvm
+  - source ./.nvm/nvm.sh
+  - nvm install $NODE_VERSION
+  - nvm use $NODE_VERSION
 
 install:
   - npm install

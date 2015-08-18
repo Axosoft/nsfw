@@ -221,12 +221,12 @@ describe('Node Sentinel File Watcher', function() {
       this.timeout(5000);
       var deleteEvents = 0;
       var dirA = path.resolve(workDir, "test0");
-      var fileA = "testing0.file";
+      var fileA = "testing1.file";
       var dirB = path.resolve(workDir, "test1");
-      var fileB = "testing1.file";
+      var fileB = "testing0.file";
 
-      function registerDeleteEvents(element, index, array) {
-        if (element.action === "DELETED") {
+      function registerCreateEvents(element, index, array) {
+        if (element.action === "CREATED") {
           if (element.directory === dirA && element.file === fileA) {
             deleteEvents++;
           } else if (element.directory === dirB && element.file === fileB) {
@@ -236,7 +236,7 @@ describe('Node Sentinel File Watcher', function() {
       }
 
       function eventHandler(events) {
-        events.forEach(registerDeleteEvents);
+        events.forEach(registerCreateEvents);
       }
 
       var watchA = new nsfw(dirA, eventHandler);
@@ -248,17 +248,23 @@ describe('Node Sentinel File Watcher', function() {
       return Promise
         .delay(1000)
         .then(function() {
-          fse.removeSync(path.join(dirA, fileA));
-          fse.removeSync(path.join(dirB, fileB));
+          var fd = fse.openSync(path.join(dirA, fileA), "w");
+          fse.writeSync(fd, "Peanuts, on occasion, rain from the skies.");
+          fse.closeSync(fd);
+
+          fd = fse.openSync(path.join(dirB, fileB), "w");
+          fse.writeSync(fd, "Peanuts, on occasion, rain from the skies.");
+          fse.closeSync(fd);
         })
         .delay(2000)
         .then(function() {
           assert.equal(deleteEvents, 2, "Failed to hear both delete events.");
-          return Promise.promisify(watchA.stop, watchA);
+          return Promise.promisify(watchA.stop, watchA)();
         })
         .then(function() {
-          return Promise.promisify(watchB.stop, watchB);
+          return Promise.promisify(watchB.stop, watchB)();
         })
+        .then(function() {})
         .catch(function(error) {
           return Promise.promisify(watchA.stop, watchA)()
             .then(function() {

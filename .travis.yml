@@ -3,11 +3,7 @@ node_js:
   - "0.12"
   - "0.10"
   - "iojs-v2.5.0"
-  
-before_install:
-  - git clone https://github.com/creationix/nvm.git ./.nvm
-  - source ./.nvm/nvm.sh
-  
+
 install:
   - npm install
 

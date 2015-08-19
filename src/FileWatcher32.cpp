@@ -2,15 +2,15 @@
 
 namespace NSFW {
   #pragma managed
-  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag)
-    : mParentFW(parentFW), mEventsQueue(eventsQueue), mWatchFiles(watchFiles), mStopFlag(stopFlag) {}
+  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag, Error &error)
+    : mParentFW(parentFW), mEventsQueue(eventsQueue), mWatchFiles(watchFiles), mStopFlag(stopFlag), mError(error) {}
 
-  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag, System::String ^fileName)
-    : mParentFW(parentFW), mEventsQueue(eventsQueue), mFileName(fileName), mWatchFiles(watchFiles), mStopFlag(stopFlag) {}
+  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag, Error &error, System::String ^fileName)
+    : mParentFW(parentFW), mEventsQueue(eventsQueue), mFileName(fileName), mWatchFiles(watchFiles), mStopFlag(stopFlag), mError(error) {}
 
   // Handles the generalized change event for changed/created/deleted and pushes event to queue
   void FSEventHandler::eventHandlerHelper(FileSystemEventArgs ^e, System::String ^action) {
-    if (!mWatchFiles) {
+    if (!mWatchFiles || mError.status) {
       // Remove these handlers if the object is no longer listening (stop is called)
       return;
     }
@@ -26,6 +26,10 @@ namespace NSFW {
   }
   FileSystemWatcher ^FSEventHandler::getParent() {
     return mParentFW;
+  }
+
+  Error &FSEventHandler::getErrorStruct() {
+    return mError;
   }
 
   bool &FSEventHandler::getStopFlag() {
@@ -48,9 +52,15 @@ namespace NSFW {
     eventHandlerHelper(e, "DELETED");
   }
 
+  void FSEventHandler::onError(Object ^source, ErrorEventArgs ^e) {
+    Exception ^exception = e->GetException();
+    mError.status = true;
+    mError.message = (char*)(void*)Marshal::StringToHGlobalAnsi(exception->Message);
+  }
+
   // Specialized handler for renamed events, pushes to event queue
   void FSEventHandler::onRenamed(Object ^source, RenamedEventArgs ^e) {
-    if (!mWatchFiles) {
+    if (!mWatchFiles || mError.status) {
       // Remove these handlers if the object is no longer listening (stop is called)
       return;
     }
@@ -89,30 +99,34 @@ namespace NSFW {
   }
 
   void FSEventHandler::rememberHandlers(
-    FileSystemEventHandler ^changed,
-    FileSystemEventHandler ^created,
-    FileSystemEventHandler ^deleted,
-    RenamedEventHandler ^renamed
+    FileSystemEventHandler ^changedHandler,
+    FileSystemEventHandler ^createdHandler,
+    FileSystemEventHandler ^deletedHandler,
+    ErrorEventHandler ^errorHandler,
+    RenamedEventHandler ^renamedHandler
   ) {
-    mChanged = changed;
-    mCreated = created;
-    mDeleted = deleted;
-    mRenamed = renamed;
+    mChangedHandler = changedHandler;
+    mCreatedHandler = createdHandler;
+    mDeletedHandler = deletedHandler;
+    mErrorHandler = errorHandler;
+    mRenamedHandler = renamedHandler;
   }
 
   void FSEventHandler::removeHandlers() {
-    mParentFW->Changed -= mChanged;
-    mParentFW->Created -= mCreated;
-    mParentFW->Deleted -= mDeleted;
-    mParentFW->Renamed -= mRenamed;
+    mParentFW->Changed -= mChangedHandler;
+    mParentFW->Created -= mCreatedHandler;
+    mParentFW->Deleted -= mDeletedHandler;
+    mParentFW->Error -= mErrorHandler;
+    mParentFW->Renamed -= mRenamedHandler;
   }
 
   static void fileWatcherControl(Object ^data) {
     FSEventHandler ^handler = (FSEventHandler^)data;
-    bool &watchFiles = handler->getWatchFiles();
+    Error &error = handler->getErrorStruct();
     bool &stopFlag = handler->getStopFlag();
+    bool &watchFiles = handler->getWatchFiles();
     FileSystemWatcher ^fsWatcher = handler->getParent();
-    while(watchFiles) {
+    while(watchFiles && !error.status) {
       Thread::Sleep(50);
     }
     fsWatcher->EnableRaisingEvents = false;
@@ -122,11 +136,12 @@ namespace NSFW {
   }
 
   // Creates the filewatcher and initializes the handlers.
-  bool createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag) {
+  bool createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag, Error &error) {
     FileSystemWatcher ^fsWatcher;
     FSEventHandler ^handler;
-    FileSystemEventHandler ^changed, ^created, ^deleted;
-    RenamedEventHandler ^renamed;
+    FileSystemEventHandler ^changedHandler, ^createdHandler, ^deletedHandler;
+    ErrorEventHandler ^errorHandler;
+    RenamedEventHandler ^renamedHandler;
 
     System::String ^gcPath = gcnew System::String(path.c_str());
 
@@ -144,7 +159,7 @@ namespace NSFW {
         NotifyFilters::Size
       );
 
-      handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopFlag);
+      handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopFlag, error);
 
     } else if (System::IO::File::Exists(gcPath)) {
       System::String ^gcFileName = Path::GetFileName(gcPath);
@@ -162,24 +177,26 @@ namespace NSFW {
         NotifyFilters::Size
       );
 
-      handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopFlag, gcFileName);
+      handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopFlag, error, gcFileName);
 
     } else {
       return false;
     }
 
-    changed = gcnew FileSystemEventHandler(handler, &FSEventHandler::onChanged);
-    created = gcnew FileSystemEventHandler(handler, &FSEventHandler::onCreated);
-    deleted = gcnew FileSystemEventHandler(handler, &FSEventHandler::onDeleted);
-    renamed = gcnew RenamedEventHandler(handler, &FSEventHandler::onRenamed);
+    changedHandler = gcnew FileSystemEventHandler(handler, &FSEventHandler::onChanged);
+    createdHandler = gcnew FileSystemEventHandler(handler, &FSEventHandler::onCreated);
+    deletedHandler = gcnew FileSystemEventHandler(handler, &FSEventHandler::onDeleted);
+    errorHandler = gcnew ErrorEventHandler(handler, &FSEventHandler::onError);
+    renamedHandler = gcnew RenamedEventHandler(handler, &FSEventHandler::onRenamed);
 
     // pass the handler delegates to the handler so that it can destroy them at a later time
-    handler->rememberHandlers(changed, created, deleted, renamed);
+    handler->rememberHandlers(changedHandler, createdHandler, deletedHandler, errorHandler, renamedHandler);
 
-    fsWatcher->Changed += changed;
-    fsWatcher->Created += created;
-    fsWatcher->Deleted += deleted;
-    fsWatcher->Renamed += renamed;
+    fsWatcher->Changed += changedHandler;
+    fsWatcher->Created += createdHandler;
+    fsWatcher->Deleted += deletedHandler;
+    fsWatcher->Error += errorHandler;
+    fsWatcher->Renamed += renamedHandler;
 
     Thread ^oThread = gcnew Thread(gcnew ParameterizedThreadStart(&fileWatcherControl));
     oThread->Start(handler);

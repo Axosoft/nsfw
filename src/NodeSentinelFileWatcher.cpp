@@ -4,7 +4,6 @@
 #elif defined(__APPLE_CC__) || defined(BSD) || defined(__linux__)
 #include <unistd.h>
 #endif
-#include <iostream>
 
 namespace NSFW {
 
@@ -62,6 +61,12 @@ namespace NSFW {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
     // if it's not running, don't try polling
     if (!nsfw->mFileWatcher->running()) return;
+
+    if (nsfw->mFileWatcher->errors()) {
+      return ThrowError(
+        New<v8::String>(nsfw->mFileWatcher->errorMessage()).ToLocalChecked()
+      );
+    }
 
     std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
 

@@ -21,13 +21,29 @@ namespace NSFW {
   FileWatcher::~FileWatcher() {
   }
 
-  // Public methods
-  bool FileWatcher::running() {
-    return mWatchFiles;
+  std::string FileWatcher::errorMessage() {
+    return mError.message;
+  }
+
+  bool FileWatcher::errors() {
+    return mError.status;
   }
 
   bool FileWatcher::hasStopped() {
     return mStopFlag;
+  }
+
+  std::queue<Event> *FileWatcher::pollEvents() {
+    if (mEventsQueue.empty()) {
+      return NULL;
+    }
+    std::queue<Event> *out = new std::queue<Event>();
+    std::swap(mEventsQueue, *out);
+    return out;
+  }
+
+  bool FileWatcher::running() {
+    return mWatchFiles;
   }
 
   bool FileWatcher::start() {
@@ -39,7 +55,7 @@ namespace NSFW {
       }
 
       #if defined(USE_WINDOWS_INIT)
-      createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopFlag);
+      createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopFlag, mError);
       #else
       fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
       ((FILE_WATCHER_INTERFACE *)fwInterface)->start();
@@ -63,16 +79,6 @@ namespace NSFW {
       #endif
       return true;
     }
-  }
-
-  // Internal methods
-  std::queue<Event> *FileWatcher::pollEvents() {
-    if (mEventsQueue.empty()) {
-      return NULL;
-    }
-    std::queue<Event> *out = new std::queue<Event>();
-    std::swap(mEventsQueue, *out);
-    return out;
   }
 
 }

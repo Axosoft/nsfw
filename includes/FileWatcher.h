@@ -12,6 +12,11 @@ namespace NSFW {
     std::string *file;
   };
 
+  struct Error {
+    std::string message;
+    bool status;
+  };
+
   class FileWatcher {
   public:
     // Constructor
@@ -19,8 +24,9 @@ namespace NSFW {
     ~FileWatcher();
 
     // Public methods
+    std::string errorMessage();
+    bool errors();
     bool hasStopped();
-    void pushEvent(Event event);
     std::queue<Event> *pollEvents();
     bool running();
     bool start();
@@ -28,6 +34,7 @@ namespace NSFW {
 
   private:
     void *fwInterface;
+    Error mError;
     std::queue<Event> mEventsQueue;
     std::string mPath;
     bool mStopFlag;

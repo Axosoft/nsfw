@@ -3,6 +3,7 @@ var assert = require("assert");
 var fse = require("fs-extra");
 var path = require("path");
 var Promise = require("bluebird");
+nsfw.prototype.stop = Promise.promisify(nsfw.prototype.stop);
 
 describe('Node Sentinel File Watcher', function() {
   var workDir = path.resolve("./mockfs");
@@ -92,10 +93,10 @@ describe('Node Sentinel File Watcher', function() {
           assert(changeEvents >= 1, "NSFW did not hear the change event.");
           assert(createEvents == 2, "NSFW did not hear the create event.");
           assert(deleteEvents == 2, "NSFW did not hear the delete event.");
-          return Promise.promisify(watch.stop, watch)();
+          return watch.stop();
         })
         .catch(function(error) {
-          return Promise.promisify(watch.stop, watch)()
+          return watch.stop()
           .then(function() {
             Promise.reject(error);
           });
@@ -130,10 +131,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(createEventFound, true, "NSFW did not hear the create event.");
-          return Promise.promisify(watch.stop, watch)();
+          return watch.stop();
         })
         .catch(function(error) {
-          return Promise.promisify(watch.stop, watch)()
+          return watch.stop()
           .then(function() {
             Promise.reject(error);
           });
@@ -167,10 +168,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(deleteEventFound, true, "NSFW did not hear the delete event.");
-          return Promise.promisify(watch.stop, watch)();
+          return watch.stop();
         })
         .catch(function(error) {
-          return Promise.promisify(watch.stop, watch)()
+          return watch.stop()
           .then(function() {
             Promise.reject(error);
           });
@@ -207,10 +208,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(changeEventFound, true, "NSFW did not hear the change event.");
-          return Promise.promisify(watch.stop, watch)();
+          return watch.stop();
         })
         .catch(function(error) {
-          return Promise.promisify(watch.stop, watch)()
+          return watch.stop()
           .then(function() {
             Promise.reject(error);
           });
@@ -259,16 +260,16 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(deleteEvents, 2, "Failed to hear both delete events.");
-          return Promise.promisify(watchA.stop, watchA)();
+          return watchA.stop();
         })
         .then(function() {
-          return Promise.promisify(watchB.stop, watchB)();
+          return watchB.stop();
         })
-        .then(function() {})
+        //.then(function() {})
         .catch(function(error) {
-          return Promise.promisify(watchA.stop, watchA)()
+          return watchA.stop()
             .then(function() {
-              return Promise.promisify(watchB.stop, watchB)()
+              return watchB.stop()
             })
             .then(function() {
               Promise.reject(error);
@@ -310,10 +311,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(createdCount, 3, "NSFW did not hear all 3 delete events.");
-          return Promise.promisify(watch.stop, watch)();
+          return watch.stop();
         })
         .catch(function(error) {
-          return Promise.promisify(watch.stop, watch)()
+          return watch.stop()
           .then(function(error) {
             Promise.reject(error);
           });
@@ -352,10 +353,10 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert.equal(deletionCount, 3, "NSFW did not hear all 3 delete events.");
-          return Promise.promisify(watch.stop, watch)();
+          return watch.stop();
         })
         .catch(function(error) {
-          return Promise.promisify(watch.stop, watch)()
+          return watch.stop()
           .then(function() {
             Promise.reject(error);
           });

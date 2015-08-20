@@ -3,8 +3,8 @@
 
 namespace NSFW {
 
-  FileWatcherLinux::FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles)
-    : mEventsQueue(eventsQueue), mInotify(0), mPath(path), mWatchFiles(watchFiles) {
+  FileWatcherLinux::FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error)
+    : mError(error), mEventsQueue(eventsQueue), mInotify(0), mPath(path), mWatchFiles(watchFiles) {
       // strip trailing slash
       if (mPath[mPath.length() - 1] == '/') {
         mPath = mPath.substr(0, mPath.length() - 1);
@@ -48,10 +48,17 @@ namespace NSFW {
       dirent ** directoryContents = NULL;
       std::string fullPath = root->path + "/" + root->name;
 
+      int attributes;
+      if (root == topRoot) {
+        attributes = IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF;
+      } else {
+        attributes = IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO;
+      }
+      
       root->watchDescriptor = inotify_add_watch(
         mInotify,
         fullPath.c_str(),
-        IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO
+        attributes
       );
 
       int n = scandir(fullPath.c_str(), &directoryContents, NULL, alphasort);
@@ -188,11 +195,10 @@ namespace NSFW {
 
   void *FileWatcherLinux::mainLoop(void *params) {
     FileWatcherLinux *fwLinux = (FileWatcherLinux *)params;
-
     struct stat file;
 
     if (stat(fwLinux->getPath().c_str(), &file) < 0) {
-      // throw errors
+      fwLinux->setErrorMessage("Access is denied");
       return NULL;
     }
 
@@ -202,7 +208,7 @@ namespace NSFW {
 
       // check that the directory can be watched before trying to watch it
       if (dirTree == NULL) {
-        // throw error if the directory didn't exists
+        fwLinux->setErrorMessage("Access is denied");
         return NULL;
       }
 
@@ -211,7 +217,7 @@ namespace NSFW {
     } else if (S_ISREG(file.st_mode)) {
       Directory *watchDir = fwLinux->buildWatchDirectory();
       if (watchDir == NULL) {
-        // throw errors
+        fwLinux->setErrorMessage("Access is denied");
         return NULL;
       }
 
@@ -219,18 +225,17 @@ namespace NSFW {
       fwLinux->processFileEvents();
     }
 
-    // throw error because the path is neither a directory or a file
+    fwLinux->setErrorMessage("Access is denied");
     return NULL;
   }
 
   void FileWatcherLinux::processDirectoryEvents() {
-    size_t count = sizeof(struct inotify_event) + NAME_MAX + 1;
-    char *buffer = new char[1024*count];
+    char buffer[4096];
     int watchDescriptor = -1;
     unsigned int bytesRead, position = 0, cookie = 0;
     Event lastMovedFromEvent;
 
-    while(mWatchFiles && (bytesRead = read(mInotify, buffer, count)) > 0) {
+    while(mWatchFiles && (bytesRead = read(mInotify, &buffer, 4096)) > 0) {
       inotify_event *inEvent;
       do {
         inEvent = (inotify_event *)(buffer + position);
@@ -336,6 +341,9 @@ namespace NSFW {
               addEvent("CREATED", inEvent);
             }
             break;
+          case IN_DELETE_SELF:
+            setErrorMessage("Access is denied");
+            return;
         }
       } while ((position += sizeof(struct inotify_event) + inEvent->len) < bytesRead);
       position = 0;
@@ -343,11 +351,10 @@ namespace NSFW {
   }
 
   void FileWatcherLinux::processFileEvents() {
-    size_t count = sizeof(struct inotify_event) + NAME_MAX + 1;
-    char *buffer = new char[128*count];
+    char buffer[4096];
     unsigned int bytesRead, position = 0;
 
-    while(mWatchFiles && (bytesRead = read(mInotify, buffer, count)) > 0) {
+    while(mWatchFiles && (bytesRead = read(mInotify, &buffer, 4096)) > 0) {
       inotify_event *inEvent;
       do {
         inEvent = (inotify_event *)(buffer + position);
@@ -372,6 +379,11 @@ namespace NSFW {
       } while ((position += sizeof(struct inotify_event) + inEvent->len) < bytesRead);
       position = 0;
     }
+  }
+
+  void FileWatcherLinux::setErrorMessage(std::string message) {
+    mError.status = true;
+    mError.message = message;
   }
 
   bool FileWatcherLinux::start() {

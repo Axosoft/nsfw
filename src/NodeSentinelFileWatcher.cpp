@@ -63,6 +63,7 @@ namespace NSFW {
     if (!nsfw->mFileWatcher->running()) return;
 
     if (nsfw->mFileWatcher->errors()) {
+      nsfw->mFileWatcher->stop();
       return ThrowError(
         New<v8::String>(nsfw->mFileWatcher->errorMessage()).ToLocalChecked()
       );

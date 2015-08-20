@@ -58,7 +58,7 @@ namespace NSFW {
       #if defined(USE_WINDOWS_INIT)
       createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopFlag, mError);
       #else
-      fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles);
+      fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles, mError);
       ((FILE_WATCHER_INTERFACE *)fwInterface)->start();
       #endif
       return true;

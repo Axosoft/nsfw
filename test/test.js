@@ -363,4 +363,37 @@ describe('Node Sentinel File Watcher', function() {
         });
     });
   });
+
+  describe('Error Handling', function() {
+    it.only('can gracefully recover when the watch folder is deleted', function() {
+      this.timeout(5000);
+      var inPath = path.resolve(workDir, "test4");
+      var watch = new nsfw(inPath, function(){});
+      var errorFound = false;
+
+      var exceptionHandler = process.listeners('uncaughtException').pop();
+      var newExceptionHandler = function(error) {
+        console.log(error.message);
+        if (error.message === "Access is denied") {
+          process.removeListener('uncaughtException', newExceptionHandler);
+          process.listeners('uncaughtException').push(exceptionHandler);
+          errorFound = true;
+        }
+      };
+
+      process.removeListener('uncaughtException', exceptionHandler);
+      process.listeners('uncaughtException').push(newExceptionHandler);
+      watch.start();
+
+      return Promise
+        .delay(500)
+        .then(function() {
+          fse.removeSync(inPath);
+        })
+        .delay(3000)
+        .then(function() {
+          assert.equal(errorFound, true, "NSFW did not throw an exception when the watch folder was deleted.");
+        });
+    });
+  });
 });

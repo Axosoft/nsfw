@@ -402,76 +402,26 @@ describe('Node Sentinel File Watcher', function() {
       this.timeout(21000);
       var watch = new nsfw(workDir, function(){});
 
-      watch.start();
+      var counter = 10;
 
-      return Promise
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      })
-      .then(function() {
-        watch.start();
-      })
-      .delay(Math.floor((Math.random() * 2000) + 1))
-      .then(function() {
-        return watch.stop();
-      });
+      function startAndStop() {
+        return Promise.resolve()
+          .then(function() {
+            watch.start();
+          })
+          .delay(Math.floor((Math.random() * 2000) + 1))
+          .then(function() {
+            return watch.stop();
+          })
+          .then(function() {
+            if (counter > 0) {
+              counter--;
+              return startAndStop();
+            }
+          });
+      };
+
+      return startAndStop();
     });
   });
 });

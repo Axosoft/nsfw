@@ -364,7 +364,7 @@ describe('Node Sentinel File Watcher', function() {
     });
   });
 
-  describe('Error Handling', function() {
+  describe('Errors', function() {
     it('can gracefully recover when the watch folder is deleted', function() {
       this.timeout(5000);
       var inPath = path.resolve(workDir, "test4");
@@ -396,6 +396,82 @@ describe('Node Sentinel File Watcher', function() {
           process.listeners('uncaughtException').push(exceptionHandler);
           return Promise.reject(error);
         })
+    });
+
+    it.only('does not segfault after creating/destroying watches repeatedly', function() {
+      this.timeout(21000);
+      var watch = new nsfw(workDir, function(){});
+
+      watch.start();
+
+      return Promise
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      })
+      .then(function() {
+        watch.start();
+      })
+      .delay(Math.floor((Math.random() * 2000) + 1))
+      .then(function() {
+        return watch.stop();
+      });
     });
   });
 });

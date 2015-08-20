@@ -398,7 +398,7 @@ describe('Node Sentinel File Watcher', function() {
         })
     });
 
-    it.only('does not segfault after creating/destroying watches repeatedly', function() {
+    it('does not segfault after creating/destroying watches repeatedly', function() {
       this.timeout(21000);
       var watch = new nsfw(workDir, function(){});
 

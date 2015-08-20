@@ -59,6 +59,9 @@
                 "xcode_settings": {
                     "OTHER_LDFLAGS": [
                         "-framework CoreServices"
+                    ],
+                    "OTHER_CFLAGS": [
+                        "-Wno-unknown-pragmas"
                     ]
                 }
             }

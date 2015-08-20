@@ -3,8 +3,8 @@
 
 namespace NSFW {
 
-  FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles)
-    : mDirTree(NULL), mEventsQueue(eventsQueue), mPath(path), mWatchFiles(watchFiles)
+  FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error)
+    : mDirTree(NULL), mError(error), mEventsQueue(eventsQueue), mPath(path), mWatchFiles(watchFiles)
   {
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) == 0)
@@ -175,8 +175,6 @@ namespace NSFW {
     }
   }
 
-  void releaseNothing(const void *) {}
-
   void *FileWatcherOSX::mainLoop(void *params) {
     // load initial dir tree
     FileWatcherOSX *fwOSX = (FileWatcherOSX *)params;
@@ -187,9 +185,10 @@ namespace NSFW {
     int error = stat(path.c_str(), &fileInfo);
 
     if (error < 0) {
-      // handle errors
+      fwOSX->setErrorMessage("Access is denied");
       return NULL;
     }
+
     if (S_ISDIR(fileInfo.st_mode)) {
       fwOSX->mDirTree = fwOSX->snapshotDir();
       CFStringRef mypath = CFStringCreateWithCString(
@@ -222,6 +221,7 @@ namespace NSFW {
       fwOSX->mFile.exists = true;
       fwOSX->filePoller();
     } else {
+      fwOSX->setErrorMessage("Access is denied");
       return NULL;
     }
     return NULL;
@@ -239,6 +239,7 @@ namespace NSFW {
     // in case a directory/file was deleted while a scan was active
     if (currentTree == NULL) {
       // try to free the lock
+      setErrorMessage("Access is denied");
       pthread_mutex_unlock(&mCallbackSynch);
       return;
     }
@@ -442,6 +443,11 @@ namespace NSFW {
     }
 
     return topRoot;
+  }
+
+  void FileWatcherOSX::setErrorMessage(std::string message) {
+    mError.status = true;
+    mError.message = message;
   }
 
   bool FileWatcherOSX::start() {

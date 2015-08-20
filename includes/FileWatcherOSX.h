@@ -41,7 +41,7 @@ namespace NSFW {
 
   class FileWatcherOSX {
   public:
-    FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles);
+    FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error);
     ~FileWatcherOSX();
     static void callback(
       ConstFSEventStreamRef streamRef,
@@ -60,6 +60,7 @@ namespace NSFW {
     FilePoll mFile;
     void processDirCallback();
     void filePoller();
+    void setErrorMessage(std::string message);
     Directory *snapshotDir();
     bool start();
     void stop();
@@ -68,6 +69,7 @@ namespace NSFW {
   private:
     void deleteDirTree(Directory *tree);
     pthread_mutex_t mCallbackSynch;
+    Error &mError;
     std::queue<Event> &mEventsQueue;
     std::string mPath;
     pthread_t mThread;

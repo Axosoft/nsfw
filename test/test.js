@@ -368,7 +368,7 @@ describe('Node Sentinel File Watcher', function() {
     it('can gracefully recover when the watch folder is deleted', function() {
       this.timeout(5000);
       var inPath = path.resolve(workDir, "test4");
-      var watch = new nsfw(inPath, function(e){console.log(JSON.stringify(e));});
+      var watch = new nsfw(inPath, function(){});
       var errorFound = false;
 
       var exceptionHandler = process.listeners('uncaughtException').pop();

@@ -365,7 +365,7 @@ describe('Node Sentinel File Watcher', function() {
   });
 
   describe('Error Handling', function() {
-    it.only('can gracefully recover when the watch folder is deleted', function() {
+    it('can gracefully recover when the watch folder is deleted', function() {
       this.timeout(5000);
       var inPath = path.resolve(workDir, "test4");
       var watch = new nsfw(inPath, function(){});
@@ -373,16 +373,14 @@ describe('Node Sentinel File Watcher', function() {
 
       var exceptionHandler = process.listeners('uncaughtException').pop();
       var newExceptionHandler = function(error) {
-        console.log(error.message);
         if (error.message === "Access is denied") {
-          process.removeListener('uncaughtException', newExceptionHandler);
           process.listeners('uncaughtException').push(exceptionHandler);
           errorFound = true;
         }
       };
 
       process.removeListener('uncaughtException', exceptionHandler);
-      process.listeners('uncaughtException').push(newExceptionHandler);
+      process.once('uncaughtException', newExceptionHandler);
       watch.start();
 
       return Promise
@@ -393,7 +391,11 @@ describe('Node Sentinel File Watcher', function() {
         .delay(3000)
         .then(function() {
           assert.equal(errorFound, true, "NSFW did not throw an exception when the watch folder was deleted.");
-        });
+        })
+        .catch(function(error) {
+          process.listeners('uncaughtException').push(exceptionHandler);
+          return Promise.reject(error);
+        })
     });
   });
 });

@@ -31,7 +31,7 @@ nsfw.prototype.start = function() {
         that.watcher.poll();
       } catch(error) {
         clearInterval(that.poll);
-        this.errorCallback(error);
+        that.errorCallback(error);
       }
     }, this.interval);
     return true;

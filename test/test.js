@@ -65,7 +65,7 @@ describe('Node Sentinel File Watcher', function() {
           events.forEach(findEvents);
         },
         function() {
-          error = true;
+          errors = true;
         }
       );
       watch.start();
@@ -97,7 +97,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(1500)
         .then(function() {
-          assert(error == false, "NSFW received an error.");
+          assert(errors == false, "NSFW received an error.");
           assert(changeEvents >= 1, "NSFW did not hear the change event.");
           assert(createEvents == 2, "NSFW did not hear the create event.");
           assert(deleteEvents == 2, "NSFW did not hear the delete event.");
@@ -145,7 +145,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
-          assert(error == false, "NSFW received an error.");
+          assert(errors == false, "NSFW received an error.");
           assert.equal(createEventFound, true, "NSFW did not hear the create event.");
           return watch.stop();
         })
@@ -190,7 +190,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
-          assert(error == false, "NSFW received an error.");
+          assert(errors == false, "NSFW received an error.");
           assert.equal(deleteEventFound, true, "NSFW did not hear the delete event.");
           return watch.stop();
         })

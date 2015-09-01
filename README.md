@@ -24,12 +24,25 @@ A simple file watcher library for node.
 
 ```js
 var simple = require('node-sentinel-file-watcher');
-var watcherOne = new nsfw("dir1", function(events) {
+var watcherOne = new nsfw(
+  "dir1",
+  function(events) {
   // handle events
-});
-var watcherTwo = new nsfw("dir2", function(events) {
+  },
+  function(error) {
+    // handle errors
+  }
+);
+var watcherTwo = new nsfw(
+  "dir2",
+  function(events) {
   // handles other events
-}, 5000); // every 5 seconds
+  },
+  function(error) {
+    // handle errors
+  }
+  5000
+); // every 5 seconds
 
 ```
 

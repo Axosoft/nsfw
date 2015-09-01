@@ -36,6 +36,7 @@ describe('Node Sentinel File Watcher', function() {
       var changeEvents = 0;
       var createEvents = 0;
       var deleteEvents = 0;
+      var errors = false;
 
       function findEvents(element, index, array) {
         if (element.action === "CHANGED"
@@ -58,9 +59,15 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      var watch = new nsfw(filePath, function(events) {
-        events.forEach(findEvents);
-      });
+      var watch = new nsfw(
+        filePath,
+        function(events) {
+          events.forEach(findEvents);
+        },
+        function() {
+          error = true;
+        }
+      );
       watch.start();
 
       return Promise
@@ -90,6 +97,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(1500)
         .then(function() {
+          assert(error == false, "NSFW received an error.");
           assert(changeEvents >= 1, "NSFW did not hear the change event.");
           assert(createEvents == 2, "NSFW did not hear the create event.");
           assert(deleteEvents == 2, "NSFW did not hear the delete event.");
@@ -107,6 +115,7 @@ describe('Node Sentinel File Watcher', function() {
       var createEventFound = false;
       var newFile = "another_test.file";
       var inPath = path.resolve(workDir, "test2", "folder2");
+      var errors = false;
 
       function findCreateEvent(element, index, array) {
         if (element.action === "CREATED"
@@ -116,9 +125,15 @@ describe('Node Sentinel File Watcher', function() {
             createEventFound = true;
         }
       }
-      var watch = new nsfw("./mockfs", function(events) {
-        events.forEach(findCreateEvent);
-      });
+      var watch = new nsfw(
+        "./mockfs",
+        function(events) {
+          events.forEach(findCreateEvent);
+        },
+        function() {
+          errors = true;
+        }
+      );
       watch.start();
 
       return Promise
@@ -130,6 +145,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
+          assert(error == false, "NSFW received an error.");
           assert.equal(createEventFound, true, "NSFW did not hear the create event.");
           return watch.stop();
         })
@@ -146,6 +162,7 @@ describe('Node Sentinel File Watcher', function() {
       var deleteEventFound = false;
       var file = "testing3.file";
       var inPath = path.resolve(workDir, "test3");
+      var errors = false;
 
       function findDeleteEvent(element, index, array) {
         if (element.action === "DELETED"
@@ -155,9 +172,15 @@ describe('Node Sentinel File Watcher', function() {
             deleteEventFound = true;
         }
       }
-      var watch = new nsfw("./mockfs", function(events) {
-        events.forEach(findDeleteEvent);
-      });
+      var watch = new nsfw(
+        "./mockfs",
+        function(events) {
+          events.forEach(findDeleteEvent);
+        },
+        function() {
+          errors = true;
+        }
+      );
       watch.start();
 
       return Promise
@@ -167,6 +190,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
+          assert(error == false, "NSFW received an error.");
           assert.equal(deleteEventFound, true, "NSFW did not hear the delete event.");
           return watch.stop();
         })
@@ -184,6 +208,7 @@ describe('Node Sentinel File Watcher', function() {
       var changeEventFound = false;
       var file = "testing0.file";
       var inPath = path.resolve(workDir, "test0");
+      var errors = false;
 
       function findChangeEvent(element, index, array) {
         if (element.action === "CHANGED"
@@ -193,9 +218,15 @@ describe('Node Sentinel File Watcher', function() {
             changeEventFound = true;
         }
       }
-      var watch = new nsfw("./mockfs", function(events) {
-        events.forEach(findChangeEvent);
-      });
+      var watch = new nsfw(
+        "./mockfs",
+        function(events) {
+          events.forEach(findChangeEvent);
+        },
+        function() {
+          errors = true;
+        }
+      );
       watch.start();
 
       return Promise
@@ -207,6 +238,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
+          assert(errors == false, "NSFW received an error.");
           assert.equal(changeEventFound, true, "NSFW did not hear the change event.");
           return watch.stop();
         })
@@ -225,6 +257,7 @@ describe('Node Sentinel File Watcher', function() {
       var fileA = "testing1.file";
       var dirB = path.resolve(workDir, "test1");
       var fileB = "testing0.file";
+      var errors = false;
 
       function registerCreateEvents(element, index, array) {
         if (element.action === "CREATED") {
@@ -240,8 +273,20 @@ describe('Node Sentinel File Watcher', function() {
         events.forEach(registerCreateEvents);
       }
 
-      var watchA = new nsfw(dirA, eventHandler);
-      var watchB = new nsfw(dirB, eventHandler);
+      var watchA = new nsfw(
+        dirA,
+        eventHandler,
+        function() {
+          errors = true;
+        }
+      );
+      var watchB = new nsfw(
+        dirB,
+        eventHandler,
+        function() {
+          errors = true;
+        }
+      );
 
       watchA.start();
       watchB.start();
@@ -259,6 +304,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
+          assert(errors == false, "NSFW received an error.");
           assert.equal(deleteEvents, 2, "Failed to hear both delete events.");
           return watchA.stop();
         })
@@ -269,7 +315,10 @@ describe('Node Sentinel File Watcher', function() {
         .catch(function(error) {
           return watchA.stop()
             .then(function() {
-              return watchB.stop()
+              return watchB.stop();
+            })
+            .catch(function() {
+              return watchB.stop();
             })
             .then(function() {
               Promise.reject(error);
@@ -283,6 +332,7 @@ describe('Node Sentinel File Watcher', function() {
       var inPath = path.resolve(workDir, "test1");
       var outPath = path.resolve(workDir, "test6");
       var createdCount = 0;
+      var errors = false;
 
       function findCreateEvent(element, index, array) {
         if (element.action === "CREATED")
@@ -298,9 +348,15 @@ describe('Node Sentinel File Watcher', function() {
           }
         }
       }
-      var watch = new nsfw("./mockfs", function(events) {
-        events.forEach(findCreateEvent);
-      });
+      var watch = new nsfw(
+        "./mockfs",
+        function(events) {
+          events.forEach(findCreateEvent);
+        },
+        function() {
+          errors = true;
+        }
+      );
       watch.start();
 
       return Promise
@@ -310,6 +366,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
+          assert(errors == false, "NSFW received an error.");
           assert.equal(createdCount, 3, "NSFW did not hear all 3 delete events.");
           return watch.stop();
         })
@@ -325,6 +382,7 @@ describe('Node Sentinel File Watcher', function() {
       this.timeout(5000);
       var inPath = path.resolve(workDir, "test4");
       var deletionCount = 0;
+      var errors = false;
 
       function findDeleteEvent(element, index, array) {
         if (element.action === "DELETED")
@@ -340,9 +398,15 @@ describe('Node Sentinel File Watcher', function() {
           }
         }
       }
-      var watch = new nsfw("./mockfs", function(events) {
-        events.forEach(findDeleteEvent);
-      });
+      var watch = new nsfw(
+        "./mockfs",
+        function(events) {
+          events.forEach(findDeleteEvent);
+        },
+        function() {
+          errors = true;
+        }
+      );
       watch.start();
 
       return Promise
@@ -352,6 +416,7 @@ describe('Node Sentinel File Watcher', function() {
         })
         .delay(2000)
         .then(function() {
+          assert(errors == false, "NSFW received an error.");
           assert.equal(deletionCount, 3, "NSFW did not hear all 3 delete events.");
           return watch.stop();
         })
@@ -368,19 +433,18 @@ describe('Node Sentinel File Watcher', function() {
     it('can gracefully recover when the watch folder is deleted', function() {
       this.timeout(5000);
       var inPath = path.resolve(workDir, "test4");
-      var watch = new nsfw(inPath, function(){});
       var errorFound = false;
 
-      var exceptionHandler = process.listeners('uncaughtException').pop();
-      var newExceptionHandler = function(error) {
-        if (error.message === "Access is denied") {
-          process.listeners('uncaughtException').push(exceptionHandler);
-          errorFound = true;
+      var watch = new nsfw(
+        inPath,
+        function(){},
+        function(error) {
+          if (error.message === "Access is denied") {
+            errorFound = true;
+          }
         }
-      };
+      );
 
-      process.removeListener('uncaughtException', exceptionHandler);
-      process.once('uncaughtException', newExceptionHandler);
       watch.start();
 
       return Promise
@@ -391,16 +455,12 @@ describe('Node Sentinel File Watcher', function() {
         .delay(3000)
         .then(function() {
           assert.equal(errorFound, true, "NSFW did not throw an exception when the watch folder was deleted.");
-        })
-        .catch(function(error) {
-          process.listeners('uncaughtException').push(exceptionHandler);
-          return Promise.reject(error);
-        })
+        });
     });
 
     it('does not segfault after creating/destroying watches repeatedly', function() {
       this.timeout(21000);
-      var watch = new nsfw(workDir, function(){});
+      var watch = new nsfw(workDir, function(){}, function(e) { throw e; });
 
       var counter = 10;
 

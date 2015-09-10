@@ -59,15 +59,15 @@ namespace NSFW {
 
   NAN_METHOD(NodeSentinelFileWatcher::Poll) {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
-    // if it's not running, don't try polling
-    if (!nsfw->mFileWatcher->running()) return;
-
     if (nsfw->mFileWatcher->errors()) {
       nsfw->mFileWatcher->stop();
       return ThrowError(
         New<v8::String>(nsfw->mFileWatcher->errorMessage()).ToLocalChecked()
       );
     }
+
+    // if it's not running, don't try polling
+    if (!nsfw->mFileWatcher->running()) return;
 
     std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
 

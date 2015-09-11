@@ -221,10 +221,10 @@ namespace NSFW {
       std::cout << "RUN LOOP CLOSED" << std::endl;
 
       // kill the run loop!
-      if (mDirTree != NULL) {
-        FSEventStreamStop(mStream);
-        FSEventStreamInvalidate(mStream);
-        FSEventStreamRelease(mStream);
+      if (fwOSX->mDirTree != NULL) {
+        FSEventStreamStop(fwOSX->mStream);
+        FSEventStreamInvalidate(fwOSX->mStream);
+        FSEventStreamRelease(fwOSX->mStream);
       }
     } else if (S_ISREG(fileInfo.st_mode)) {
       fwOSX->mFile.file = fileInfo;

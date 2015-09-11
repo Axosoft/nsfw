@@ -212,9 +212,20 @@ namespace NSFW {
           kFSEventStreamCreateFlagFileEvents
       );
 
-      FSEventStreamScheduleWithRunLoop(fwOSX->mStream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+      fwOSX->mRunLoop = CFRunLoopGetCurrent();
+
+      FSEventStreamScheduleWithRunLoop(fwOSX->mStream, fwOSX->mRunLoop, kCFRunLoopDefaultMode);
       FSEventStreamStart(fwOSX->mStream);
       CFRunLoopRun();
+
+      std::cout << "RUN LOOP CLOSED" << std::endl;
+
+      // kill the run loop!
+      if (mDirTree != NULL) {
+        FSEventStreamStop(mStream);
+        FSEventStreamInvalidate(mStream);
+        FSEventStreamRelease(mStream);
+      }
     } else if (S_ISREG(fileInfo.st_mode)) {
       fwOSX->mFile.file = fileInfo;
       fwOSX->mDirTree = NULL;
@@ -467,11 +478,8 @@ namespace NSFW {
 
   void FileWatcherOSX::stop() {
     pthread_mutex_lock(&mCallbackSynch);
-    if (mDirTree != NULL) {
-      FSEventStreamStop(mStream);
-      FSEventStreamInvalidate(mStream);
-      FSEventStreamRelease(mStream);
-    }
+
+    CFRunLoopStop(mRunLoop);
 
     int t;
     // safely kill the thread

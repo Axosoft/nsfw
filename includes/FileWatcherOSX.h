@@ -65,7 +65,7 @@ namespace NSFW {
     bool start();
     void stop();
     FSEventStreamRef mStream;
-
+    CFRunLoopRef mRunLoop;
   private:
     void deleteDirTree(Directory *tree);
     pthread_mutex_t mCallbackSynch;

@@ -4,17 +4,18 @@
 namespace NSFW {
 
   FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error)
-    : mDirTree(NULL), mError(error), mEventsQueue(eventsQueue), mPath(path), mWatchFiles(watchFiles)
+    : mDirTree(NULL), mError(error), mEventsQueue(eventsQueue), mIsDirWatch(false), mPath(path), mWatchFiles(watchFiles)
   {
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) == 0)
     {
-      pthread_mutex_init(&mCallbackSynch, &attr);
+      pthread_mutex_init(&mCallbackSync, &attr);
+      pthread_mutex_init(&mMainLoopSync, &attr);
     }
   }
 
   FileWatcherOSX::~FileWatcherOSX() {
-    pthread_mutex_destroy(&mCallbackSynch);
+    pthread_mutex_destroy(&mCallbackSync);
   }
 
   void FileWatcherOSX::callback(
@@ -190,6 +191,8 @@ namespace NSFW {
     }
 
     if (S_ISDIR(fileInfo.st_mode)) {
+      fwOSX->mIsDirWatch = true;
+      pthread_mutex_lock(&fwOSX->mMainLoopSync);
       fwOSX->mDirTree = fwOSX->snapshotDir();
       CFStringRef mypath = CFStringCreateWithCString(
         NULL,
@@ -218,14 +221,12 @@ namespace NSFW {
       FSEventStreamStart(fwOSX->mStream);
       CFRunLoopRun();
 
-      std::cout << "RUN LOOP CLOSED" << std::endl;
-
       // kill the run loop!
-      if (fwOSX->mDirTree != NULL) {
-        FSEventStreamStop(fwOSX->mStream);
-        FSEventStreamInvalidate(fwOSX->mStream);
-        FSEventStreamRelease(fwOSX->mStream);
-      }
+      FSEventStreamStop(fwOSX->mStream);
+      FSEventStreamInvalidate(fwOSX->mStream);
+      FSEventStreamRelease(fwOSX->mStream);
+
+      pthread_mutex_unlock(&fwOSX->mMainLoopSync);
     } else if (S_ISREG(fileInfo.st_mode)) {
       fwOSX->mFile.file = fileInfo;
       fwOSX->mDirTree = NULL;
@@ -240,7 +241,7 @@ namespace NSFW {
 
   void FileWatcherOSX::processDirCallback() {
     // only run this process if mWatchFiles is true, and we can get a lock on the mutex
-    if (mWatchFiles && pthread_mutex_lock(&mCallbackSynch) != 0) {
+    if (mWatchFiles && pthread_mutex_lock(&mCallbackSync) != 0) {
       return;
     }
 
@@ -251,7 +252,7 @@ namespace NSFW {
     if (currentTree == NULL) {
       // try to free the lock
       setErrorMessage("Access is denied");
-      pthread_mutex_unlock(&mCallbackSynch);
+      pthread_mutex_unlock(&mCallbackSync);
       return;
     }
 
@@ -383,7 +384,7 @@ namespace NSFW {
     // assign currentTree to mDirTree
     mDirTree = currentTree;
 
-    pthread_mutex_unlock(&mCallbackSynch);
+    pthread_mutex_unlock(&mCallbackSync);
   }
 
   Directory *FileWatcherOSX::snapshotDir() {
@@ -463,10 +464,11 @@ namespace NSFW {
 
   bool FileWatcherOSX::start() {
     // test mutex for init
-    if (pthread_mutex_lock(&mCallbackSynch) != 0) {
+    if (pthread_mutex_lock(&mCallbackSync) != 0 || pthread_mutex_lock(&mMainLoopSync) != 0) {
       return false; // if it fails, let caller know that this is not started
     } else {
-      pthread_mutex_unlock(&mCallbackSynch);
+      pthread_mutex_unlock(&mCallbackSync);
+      pthread_mutex_unlock(&mMainLoopSync);
     }
 
     if (mWatchFiles && pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this) == 0) {
@@ -477,9 +479,10 @@ namespace NSFW {
   }
 
   void FileWatcherOSX::stop() {
-    pthread_mutex_lock(&mCallbackSynch);
-
     CFRunLoopStop(mRunLoop);
+
+    pthread_mutex_lock(&mCallbackSync);
+    pthread_mutex_lock(&mMainLoopSync);
 
     int t;
     // safely kill the thread
@@ -489,8 +492,8 @@ namespace NSFW {
       deleteDirTree(mDirTree);
       mDirTree = NULL;
     }
-
-    pthread_mutex_unlock(&mCallbackSynch);
+    pthread_mutex_unlock(&mMainLoopSync);
+    pthread_mutex_unlock(&mCallbackSync);
   }
 
 }

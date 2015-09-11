@@ -68,9 +68,11 @@ namespace NSFW {
     CFRunLoopRef mRunLoop;
   private:
     void deleteDirTree(Directory *tree);
-    pthread_mutex_t mCallbackSynch;
+    pthread_mutex_t mCallbackSync;
     Error &mError;
     std::queue<Event> &mEventsQueue;
+    bool mIsDirWatch;
+    pthread_mutex_t mMainLoopSync;
     std::string mPath;
     pthread_t mThread;
     bool &mWatchFiles;

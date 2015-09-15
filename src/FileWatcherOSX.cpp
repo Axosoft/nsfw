@@ -479,21 +479,28 @@ namespace NSFW {
   }
 
   void FileWatcherOSX::stop() {
-    CFRunLoopStop(mRunLoop);
+    if (mIsDirWatch) {
+      CFRunLoopStop(mRunLoop);
 
-    pthread_mutex_lock(&mCallbackSync);
-    pthread_mutex_lock(&mMainLoopSync);
+      pthread_mutex_lock(&mCallbackSync);
+      pthread_mutex_lock(&mMainLoopSync);
 
-    int t;
-    // safely kill the thread
-    pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
-    pthread_cancel(mThread);
-    if (mDirTree != NULL) {
-      deleteDirTree(mDirTree);
-      mDirTree = NULL;
+      int t;
+      // safely kill the thread
+      pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
+      pthread_cancel(mThread);
+      if (mDirTree != NULL) {
+        deleteDirTree(mDirTree);
+        mDirTree = NULL;
+      }
+      pthread_mutex_unlock(&mMainLoopSync);
+      pthread_mutex_unlock(&mCallbackSync);
+    } else {
+      int t;
+      // safely kill the thread
+      pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
+      pthread_cancel(mThread);
     }
-    pthread_mutex_unlock(&mMainLoopSync);
-    pthread_mutex_unlock(&mCallbackSync);
   }
 
 }

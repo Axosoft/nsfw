@@ -56,6 +56,7 @@ namespace NSFW {
     void handleTraversingDirectoryChange(std::string action, Directory *directory);
     bool isSingleFileWatch();
     static void *mainLoop(void *params);
+    bool mDie;
     Directory *mDirTree;
     FilePoll mFile;
     void processDirCallback();
@@ -64,6 +65,7 @@ namespace NSFW {
     Directory *snapshotDir();
     bool start();
     void stop();
+    static void timerCallback(CFRunLoopTimerRef timer, void* callbackInfo);
     FSEventStreamRef mStream;
     CFRunLoopRef mRunLoop;
   private:

@@ -4,7 +4,7 @@
 namespace NSFW {
 
   FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error)
-    : mDirTree(NULL), mError(error), mEventsQueue(eventsQueue), mIsDirWatch(false), mPath(path), mWatchFiles(watchFiles)
+    : mDie(false), mDirTree(NULL), mError(error), mEventsQueue(eventsQueue), mIsDirWatch(false), mPath(path), mWatchFiles(watchFiles)
   {
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) == 0)
@@ -214,19 +214,36 @@ namespace NSFW {
           latency,
           kFSEventStreamCreateFlagFileEvents
       );
+      CFRelease(pathsToWatch);
 
       fwOSX->mRunLoop = CFRunLoopGetCurrent();
+      CFRetain(fwOSX->mRunLoop);
+
 
       FSEventStreamScheduleWithRunLoop(fwOSX->mStream, fwOSX->mRunLoop, kCFRunLoopDefaultMode);
       FSEventStreamStart(fwOSX->mStream);
+
+      CFRunLoopTimerContext ctx;
+      ctx.info = fwOSX;
+      CFRunLoopTimerRef timer = CFRunLoopTimerCreate(
+        NULL, // allocator
+        0, // fireDate
+        0.01, // interval
+        0, // flags
+        0, // order
+        &FileWatcherOSX::timerCallback,
+        &ctx
+      );
+      CFRunLoopAddTimer(fwOSX->mRunLoop, timer, kCFRunLoopCommonModes);
+      CFRelease(timer);
+
       CFRunLoopRun();
 
-      // kill the run loop!
-      FSEventStreamStop(fwOSX->mStream);
-      FSEventStreamInvalidate(fwOSX->mStream);
-      FSEventStreamRelease(fwOSX->mStream);
+      CFRelease(fwOSX->mRunLoop);
 
       pthread_mutex_unlock(&fwOSX->mMainLoopSync);
+      pthread_exit(NULL);
+
     } else if (S_ISREG(fileInfo.st_mode)) {
       fwOSX->mFile.file = fileInfo;
       fwOSX->mDirTree = NULL;
@@ -480,15 +497,13 @@ namespace NSFW {
 
   void FileWatcherOSX::stop() {
     if (mIsDirWatch) {
-      CFRunLoopStop(mRunLoop);
+      mDie = true;
 
       pthread_mutex_lock(&mCallbackSync);
       pthread_mutex_lock(&mMainLoopSync);
 
-      int t;
       // safely kill the thread
-      pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
-      pthread_cancel(mThread);
+      pthread_join(mThread, NULL);
       if (mDirTree != NULL) {
         deleteDirTree(mDirTree);
         mDirTree = NULL;
@@ -500,6 +515,18 @@ namespace NSFW {
       // safely kill the thread
       pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
       pthread_cancel(mThread);
+    }
+  }
+
+  void FileWatcherOSX::timerCallback(CFRunLoopTimerRef timer, void* callbackInfo) {
+    FileWatcherOSX* fwOSX = (FileWatcherOSX *)callbackInfo;
+    if (fwOSX->mDie) {
+      // kill the run loop!
+      FSEventStreamStop(fwOSX->mStream);
+      FSEventStreamInvalidate(fwOSX->mStream);
+      FSEventStreamRelease(fwOSX->mStream);
+
+      CFRunLoopStop(fwOSX->mRunLoop);
     }
   }
 

@@ -23,7 +23,7 @@ A simple file watcher library for node.
 ## Usage
 
 ```js
-var simple = require('node-sentinel-file-watcher');
+var nsfw = require('node-sentinel-file-watcher');
 var watcherOne = new nsfw(
   "dir1",
   function(events) {

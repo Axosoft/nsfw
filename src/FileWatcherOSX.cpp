@@ -16,6 +16,7 @@ namespace NSFW {
 
   FileWatcherOSX::~FileWatcherOSX() {
     pthread_mutex_destroy(&mCallbackSync);
+    pthread_mutex_destroy(&mMainLoopSync);
   }
 
   void FileWatcherOSX::callback(
@@ -192,7 +193,9 @@ namespace NSFW {
 
     if (S_ISDIR(fileInfo.st_mode)) {
       fwOSX->mIsDirWatch = true;
+      // std::cout << "main loop is locking mainloop sync" << std::endl;
       pthread_mutex_lock(&fwOSX->mMainLoopSync);
+      // std::cout << "main loop has the lock for mainloop sync" << std::endl;
       fwOSX->mDirTree = fwOSX->snapshotDir();
       CFStringRef mypath = CFStringCreateWithCString(
         NULL,
@@ -241,8 +244,10 @@ namespace NSFW {
 
       CFRelease(fwOSX->mRunLoop);
 
+      // std::cout << "main loop is unlocking mainloop sync" << std::endl;
       pthread_mutex_unlock(&fwOSX->mMainLoopSync);
-      pthread_exit(NULL);
+      // std::cout << "main loop released the lock for mainloop sync" << std::endl;
+
 
     } else if (S_ISREG(fileInfo.st_mode)) {
       fwOSX->mFile.file = fileInfo;
@@ -258,7 +263,11 @@ namespace NSFW {
 
   void FileWatcherOSX::processDirCallback() {
     // only run this process if mWatchFiles is true, and we can get a lock on the mutex
+    // std::cout << "processcallback is locking callback sync" << std::endl;
     if (mWatchFiles && pthread_mutex_lock(&mCallbackSync) != 0) {
+      // std::cout << "processcallback is unlocking callback sync" << std::endl;
+      pthread_mutex_unlock(&mCallbackSync);
+      // std::cout << "processcallback has unlocked callback sync" << std::endl;
       return;
     }
 
@@ -269,7 +278,9 @@ namespace NSFW {
     if (currentTree == NULL) {
       // try to free the lock
       setErrorMessage("Access is denied");
+      // std::cout << "processcallback is unlocking callback sync" << std::endl;
       pthread_mutex_unlock(&mCallbackSync);
+      // std::cout << "processcallback has unlocked callback sync" << std::endl;
       return;
     }
 
@@ -282,6 +293,12 @@ namespace NSFW {
     while(!dirPairQueue.empty()) {
       // get a DirectoryPair
       snapshot = dirPairQueue.front();
+      if (snapshot.current == NULL || snapshot.prev == NULL) {
+        // std::cout << "processcallback is unlocking callback sync" << std::endl;
+        pthread_mutex_unlock(&mCallbackSync);
+        // std::cout << "processcallback has unlocked callback sync" << std::endl;
+        return;
+      }
 
       // compare files in the directory ----------------------------------------
       // -----------------------------------------------------------------------
@@ -401,7 +418,10 @@ namespace NSFW {
     // assign currentTree to mDirTree
     mDirTree = currentTree;
 
+    // std::cout << "processcallback is locking callback sync" << std::endl;
     pthread_mutex_unlock(&mCallbackSync);
+    // std::cout << "processcallback has unlocked callback sync" << std::endl;
+
   }
 
   Directory *FileWatcherOSX::snapshotDir() {
@@ -499,17 +519,18 @@ namespace NSFW {
     if (mIsDirWatch) {
       mDie = true;
 
-      pthread_mutex_lock(&mCallbackSync);
+      // std::cout << "stop is locking mainLoop sync" << std::endl;
       pthread_mutex_lock(&mMainLoopSync);
-
+      // std::cout << "stop has locked mainLoop sync" << std::endl;
       // safely kill the thread
       pthread_join(mThread, NULL);
       if (mDirTree != NULL) {
         deleteDirTree(mDirTree);
         mDirTree = NULL;
       }
+      // std::cout << "stop is locking mainLoop sync" << std::endl;
       pthread_mutex_unlock(&mMainLoopSync);
-      pthread_mutex_unlock(&mCallbackSync);
+      // std::cout << "stop has locked mainLoop sync" << std::endl;
     } else {
       int t;
       // safely kill the thread
@@ -521,12 +542,19 @@ namespace NSFW {
   void FileWatcherOSX::timerCallback(CFRunLoopTimerRef timer, void* callbackInfo) {
     FileWatcherOSX* fwOSX = (FileWatcherOSX *)callbackInfo;
     if (fwOSX->mDie) {
+      // std::cout << "timerCallback is locking callback sync" << std::endl;
+      pthread_mutex_lock(&fwOSX->mCallbackSync);
+      // std::cout << "timerCallback has locked callback sync" << std::endl;
+
       // kill the run loop!
       FSEventStreamStop(fwOSX->mStream);
       FSEventStreamInvalidate(fwOSX->mStream);
       FSEventStreamRelease(fwOSX->mStream);
 
       CFRunLoopStop(fwOSX->mRunLoop);
+      // std::cout << "timerCallback is unlocking callback sync" << std::endl;
+      pthread_mutex_unlock(&fwOSX->mCallbackSync);
+      // std::cout << "timerCallback has unlocked callback sync" << std::endl;
     }
   }
 

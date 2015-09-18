@@ -45,9 +45,8 @@ nsfw.prototype.stop = function(callback) {
   try {
     clearInterval(this.poll);
     this.watcher.stop(callback);
-    return true;
   } catch(error) {
     this.errorCallback(error);
-    return false;
+    return callback(false);
   }
 };

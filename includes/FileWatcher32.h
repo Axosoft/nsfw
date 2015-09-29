@@ -66,7 +66,8 @@ namespace NSFW {
   };
 
   bool createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopped, Error &error);
-
+  System::String^ getDirectoryName(System::String^ path);
+  System::String^ getFileName(System::String^ path);
 }
 
 #endif

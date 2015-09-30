@@ -20,9 +20,19 @@ namespace NSFW {
       return;
     }
     Event event;
-    event.directory = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
-    event.file = new std::string((char*)(void*)Marshal::StringToHGlobalAnsi(eventFileName));
-    event.action = (char*)(void*)Marshal::StringToHGlobalAnsi(action);
+
+    char *str = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
+    event.directory = str;
+    Marshal::FreeHGlobal(IntPtr(str));
+
+    str = (char*)(void*)Marshal::StringToHGlobalAnsi(eventFileName);
+    event.file = new std::string(str);
+    Marshal::FreeHGlobal(IntPtr(str));
+
+    str = (char*)(void*)Marshal::StringToHGlobalAnsi(action);
+    event.action = str;
+    Marshal::FreeHGlobal(IntPtr(str));
+
     mEventsQueue.push(event);
   }
   FileSystemWatcher ^FSEventHandler::getParent() {
@@ -69,10 +79,20 @@ namespace NSFW {
 
     if (System::String::IsNullOrEmpty(mFileName)) {
       Event event;
-      event.directory = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
+      char *str = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
+      event.directory = str;
+      Marshal::FreeHGlobal(IntPtr(str));
+
       event.file = new std::string[2];
-      event.file[0] = (char*)(void*)Marshal::StringToHGlobalAnsi(eventFileName);
-      event.file[1] = (char*)(void*)Marshal::StringToHGlobalAnsi(getFileName(e->Name));
+
+      str = (char*)(void*)Marshal::StringToHGlobalAnsi(eventFileName);
+      event.file[0] = str;
+      Marshal::FreeHGlobal(IntPtr(str));
+
+      str = (char*)(void*)Marshal::StringToHGlobalAnsi(getFileName(e->Name));
+      event.file[1] = str;
+      Marshal::FreeHGlobal(IntPtr(str));
+
       event.action = "RENAMED";
       mEventsQueue.push(event);
       return;
@@ -80,8 +100,14 @@ namespace NSFW {
 
     if (mFileName == eventFileName) {
       Event event;
-      event.directory = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
-      event.file = new std::string((char*)(void*)Marshal::StringToHGlobalAnsi(eventFileName));
+      char *str = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
+      event.directory = str;
+      Marshal::FreeHGlobal(IntPtr(str));
+
+      str = (char*)(void*)Marshal::StringToHGlobalAnsi(eventFileName);
+      event.file = new std::string(str);
+      Marshal::FreeHGlobal(IntPtr(str));
+
       event.action = "DELETED";
       mEventsQueue.push(event);
       return;
@@ -91,8 +117,15 @@ namespace NSFW {
 
     if (mFileName == newFileName) {
       Event event;
-      event.directory = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
-      event.file = new std::string((char*)(void*)Marshal::StringToHGlobalAnsi(newFileName));
+
+      char *str = (char*)(void*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath));
+      event.directory = str;
+      Marshal::FreeHGlobal(IntPtr(str));
+
+      str = (char*)(void*)Marshal::StringToHGlobalAnsi(newFileName);
+      event.file = new std::string(str);
+      Marshal::FreeHGlobal(IntPtr(str));
+
       event.action = "CREATED";
       mEventsQueue.push(event);
       return;

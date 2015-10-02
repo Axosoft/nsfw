@@ -66,7 +66,9 @@ namespace NSFW {
   void FSEventHandler::onError(Object ^source, ErrorEventArgs ^e) {
     Exception ^exception = e->GetException();
     mError.status = true;
-    mError.message = (char*)(void*)Marshal::StringToHGlobalAnsi(exception->Message);
+    char *str = (char*)(void*)Marshal::StringToHGlobalAnsi(exception->Message);
+    mError.message = str;
+    Marshal::FreeHGlobal(IntPtr(str));
   }
 
   // Specialized handler for renamed events, pushes to event queue

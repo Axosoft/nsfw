@@ -1,5 +1,5 @@
 #include "../includes/FileWatcherOSX.h"
-#include <iostream>
+// #include <iostream>
 
 namespace NSFW {
 
@@ -263,7 +263,7 @@ namespace NSFW {
 
   void FileWatcherOSX::processDirCallback() {
     // only run this process if mWatchFiles is true, and we can get a lock on the mutex
-    // std::cout << "processcallback is locking callback sync" << std::endl;
+    // // std::cout << "processcallback is locking callback sync" << std::endl;
     if (mWatchFiles && pthread_mutex_lock(&mCallbackSync) != 0) {
       // std::cout << "processcallback is unlocking callback sync" << std::endl;
       pthread_mutex_unlock(&mCallbackSync);
@@ -276,8 +276,21 @@ namespace NSFW {
 
     // in case a directory/file was deleted while a scan was active
     if (currentTree == NULL) {
-      // try to free the lock
-      setErrorMessage("Access is denied");
+      dirent ** directoryContents = NULL;
+      size_t lastSlash = mPath.find_last_of("/");
+      const char *path;
+      if (lastSlash != std::string::npos) {
+        path = mPath.substr(0, lastSlash).c_str();
+      } else {
+        path = "";
+      }
+
+      int m = scandir(path, &directoryContents, NULL, alphasort);
+
+      if (m < 0) {
+        setErrorMessage("Access is denied");
+      }
+
       // std::cout << "processcallback is unlocking callback sync" << std::endl;
       pthread_mutex_unlock(&mCallbackSync);
       // std::cout << "processcallback has unlocked callback sync" << std::endl;
@@ -528,9 +541,9 @@ namespace NSFW {
         deleteDirTree(mDirTree);
         mDirTree = NULL;
       }
-      // std::cout << "stop is locking mainLoop sync" << std::endl;
+      // std::cout << "stop is unlocking mainLoop sync" << std::endl;
       pthread_mutex_unlock(&mMainLoopSync);
-      // std::cout << "stop has locked mainLoop sync" << std::endl;
+      // std::cout << "stop has unlocked mainLoop sync" << std::endl;
     } else {
       int t;
       // safely kill the thread

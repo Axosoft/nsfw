@@ -5,6 +5,8 @@
 #include <unistd.h>
 #endif
 
+// #include <iostream>
+
 namespace NSFW {
 
   #pragma unmanaged
@@ -17,7 +19,9 @@ namespace NSFW {
   }
 
   NodeSentinelFileWatcher::~NodeSentinelFileWatcher() {
+    // std::cout << "gc start" << std::endl;
     mFileWatcher->stop();
+    // std::cout << "gc finish" << std::endl;
     delete mFileWatcher;
     delete mCallback;
   }

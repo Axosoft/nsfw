@@ -277,15 +277,7 @@ namespace NSFW {
     // in case a directory/file was deleted while a scan was active
     if (currentTree == NULL) {
       dirent ** directoryContents = NULL;
-      size_t lastSlash = mPath.find_last_of("/");
-      const char *path;
-      if (lastSlash != std::string::npos) {
-        path = mPath.substr(0, lastSlash).c_str();
-      } else {
-        path = "";
-      }
-
-      int m = scandir(path, &directoryContents, NULL, alphasort);
+      int m = scandir(mPath.c_str(), &directoryContents, NULL, alphasort);
 
       if (m < 0) {
         setErrorMessage("Access is denied");

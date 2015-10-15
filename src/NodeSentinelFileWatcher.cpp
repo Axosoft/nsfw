@@ -17,6 +17,7 @@ namespace NSFW {
   }
 
   NodeSentinelFileWatcher::~NodeSentinelFileWatcher() {
+    mFileWatcher->stop();
     delete mFileWatcher;
     delete mCallback;
   }
@@ -60,7 +61,6 @@ namespace NSFW {
   NAN_METHOD(NodeSentinelFileWatcher::Poll) {
     NodeSentinelFileWatcher *nsfw = ObjectWrap::Unwrap<NodeSentinelFileWatcher>(info.This());
     if (nsfw->mFileWatcher->errors()) {
-      nsfw->mFileWatcher->stop();
       return ThrowError(
         New<v8::String>(nsfw->mFileWatcher->errorMessage()).ToLocalChecked()
       );

@@ -12,12 +12,12 @@ namespace NSFW {
     }
   FileWatcherLinux::~FileWatcherLinux() {}
 
-  void FileWatcherLinux::addEvent(std::string action, inotify_event *inEvent) {
+  void FileWatcherLinux::addEvent(Action action, inotify_event *inEvent) {
     Directory *parent = mWDtoDirNode[inEvent->wd];
     addEvent(action, parent->path + "/" + parent->name, new std::string(inEvent->name));
   }
 
-  void FileWatcherLinux::addEvent(std::string action, std::string directory, std::string *file) {
+  void FileWatcherLinux::addEvent(Action action, std::string directory, std::string *file) {
     Event event;
     event.action = action;
     event.directory = directory;
@@ -54,7 +54,7 @@ namespace NSFW {
       } else {
         attributes = IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO;
       }
-      
+
       root->watchDescriptor = inotify_add_watch(
         mInotify,
         fullPath.c_str(),
@@ -108,7 +108,7 @@ namespace NSFW {
         }
 
         if (queueFileEvents) {
-          addEvent("CREATED", root->path + "/" + root->name, new std::string(directoryContents[i]->d_name));
+          addEvent(CREATED, root->path + "/" + root->name, new std::string(directoryContents[i]->d_name));
         }
       }
 
@@ -255,7 +255,7 @@ namespace NSFW {
           case IN_ATTRIB:
           case IN_MODIFY:
             if (*inEvent->name > 31) // ignore control characters
-              addEvent("CHANGED", inEvent);
+              addEvent(MODIFIED, inEvent);
             break;
           case IN_CREATE:
           {
@@ -272,13 +272,13 @@ namespace NSFW {
                 break;
 
               parent->childDirectories[child->name] = child;
-              addEvent("CREATED", inEvent);
+              addEvent(CREATED, inEvent);
               break;
             }
 
             if (!isDir && parent->files.find(inEvent->name) == parent->files.end()) {
               parent->files.insert(inEvent->name);
-              addEvent("CREATED", inEvent);
+              addEvent(CREATED, inEvent);
             }
             break;
           }
@@ -297,7 +297,7 @@ namespace NSFW {
               parent->files.erase(inEvent->name);
             }
 
-            addEvent("DELETED", inEvent);
+            addEvent(DELETED, inEvent);
             break;
           }
           case IN_MOVED_FROM:
@@ -313,13 +313,13 @@ namespace NSFW {
             }
 
             if (position + sizeof(struct inotify_event) + inEvent->len < bytesRead || select(mInotify+1, &checkWD, 0, 0, &timeout) > 0) {
-              lastMovedFromEvent.action = "DELETED";
+              lastMovedFromEvent.action = DELETED;
               lastMovedFromEvent.directory = mWDtoDirNode[inEvent->wd]->path;
               lastMovedFromEvent.file = new std::string(inEvent->name);
               cookie = inEvent->cookie;
               watchDescriptor = inEvent->wd;
             } else {
-              addEvent("DELETED", inEvent);
+              addEvent(DELETED, inEvent);
             }
             break;
           case IN_MOVED_TO:
@@ -330,7 +330,7 @@ namespace NSFW {
             if (cookie != 0 && inEvent->cookie == cookie && inEvent->wd == watchDescriptor) {
               cookie = 0;
               watchDescriptor = -1;
-              event.action = "RENAMED";
+              event.action = RENAMED;
               event.directory = mWDtoDirNode[inEvent->wd]->path;
               event.file = new std::string[2];
               event.file[0] = *lastMovedFromEvent.file;
@@ -338,7 +338,7 @@ namespace NSFW {
               delete lastMovedFromEvent.file;
               mEventsQueue.push(event);
             } else {
-              addEvent("CREATED", inEvent);
+              addEvent(CREATED, inEvent);
             }
             break;
           case IN_DELETE_SELF:
@@ -365,15 +365,15 @@ namespace NSFW {
         switch(inEvent->mask) {
           case IN_ATTRIB:
           case IN_MODIFY:
-            addEvent("CHANGED", mDirTree->path, new std::string(mDirTree->name));
+            addEvent(MODIFIED, mDirTree->path, new std::string(mDirTree->name));
             break;
           case IN_MOVED_TO:
           case IN_CREATE:
-            addEvent("CREATED", mDirTree->path, new std::string(mDirTree->name));
+            addEvent(CREATED, mDirTree->path, new std::string(mDirTree->name));
             break;
           case IN_MOVED_FROM:
           case IN_DELETE:
-            addEvent("DELETED", mDirTree->path, new std::string(mDirTree->name));
+            addEvent(DELETED, mDirTree->path, new std::string(mDirTree->name));
             break;
         }
       } while ((position += sizeof(struct inotify_event) + inEvent->len) < bytesRead);

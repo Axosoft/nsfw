@@ -94,20 +94,34 @@ namespace NSFW {
 
       v8::Local<v8::Object> anEvent = New<v8::Object>();
 
-      anEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::String>(event.action).ToLocalChecked());
+      std::string strAction;
+      switch(event.action) {
+      case CREATED:
+        strAction = "CREATED";
+        break;
+      case DELETED:
+        strAction = "DELETED";
+        break;
+      case MODIFIED:
+        strAction = "CHANGED";
+        break;
+      case RENAMED:
+        strAction = "RENAMED";
+        break;
+      }
+      anEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::String>(strAction).ToLocalChecked());
       anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event.directory).ToLocalChecked());
 
-      if (event.action == "RENAMED") {
+      if (event.action == RENAMED) {
         anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>(event.file[0]).ToLocalChecked());
         anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>(event.file[1]).ToLocalChecked());
-        delete[] event.file;
       } else {
-        anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>(*event.file).ToLocalChecked());
-        delete event.file;
+        anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>(event.file[0]).ToLocalChecked());
       }
 
       jsEventObjects.push_back(anEvent);
     }
+    delete events;
 
     v8::Local<v8::Array> eventArray = New<v8::Array>((int)jsEventObjects.size());
 

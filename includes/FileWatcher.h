@@ -6,10 +6,11 @@
 
 namespace NSFW {
 
+  enum Action { CREATED, DELETED, MODIFIED, RENAMED };
+
   struct Event {
-    std::string action;
-    std::string directory;
-    std::string file[2];
+    Action action;
+    std::string directory, file[2];
   };
 
   struct Error {

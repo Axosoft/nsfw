@@ -51,7 +51,7 @@ namespace NSFW {
     );
     static bool checkTimeValEquality(struct timespec *x, struct timespec *y);
     std::string getPath();
-    void handleTraversingDirectoryChange(std::string action, Directory *directory);
+    void handleTraversingDirectoryChange(Action action, Directory *directory);
     bool isSingleFileWatch();
     static void *mainLoop(void *params);
     bool mDie;
@@ -76,7 +76,6 @@ namespace NSFW {
     std::string mPath;
     pthread_t mThread;
     bool &mWatchFiles;
-
   };
 
 }

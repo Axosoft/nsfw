@@ -1,5 +1,5 @@
 #include "../includes/FileWatcherOSX.h"
-// #include <iostream>
+#include <iostream>
 
 namespace NSFW {
 
@@ -14,7 +14,8 @@ namespace NSFW {
     }
   }
 
-  FileWatcherOSX::~FileWatcherOSX() {
+  FileWatcherOSX::~FileWatcherOSX()
+  {
     pthread_mutex_destroy(&mCallbackSync);
     pthread_mutex_destroy(&mMainLoopSync);
   }
@@ -36,14 +37,19 @@ namespace NSFW {
     return x->tv_sec == y->tv_sec && x->tv_nsec == y->tv_nsec;
   }
 
-  void FileWatcherOSX::deleteDirTree(Directory *tree) {
+  void FileWatcherOSX::deleteDirTree(Directory *tree)
+  {
     if (tree == NULL)
+    {
       return;
+    }
+
     std::queue<Directory *> dirQueue;
 
     dirQueue.push(tree);
 
-    while (!dirQueue.empty()) {
+    while (!dirQueue.empty())
+    {
       Directory *root = dirQueue.front();
 
       // Add directories to the queue to continue deleting directories/files
@@ -59,31 +65,39 @@ namespace NSFW {
     }
   }
 
-  void FileWatcherOSX::filePoller() {
+  void FileWatcherOSX::filePoller()
+  {
     std::string name, path;
 
     size_t lastSlash = mPath.find_last_of("/");
-    if (lastSlash != std::string::npos) {
+    if (lastSlash != std::string::npos)
+    {
       name = mPath.substr(lastSlash + 1);
       path = mPath.substr(0, lastSlash);
     } else {
       name = mPath;
       path = "/";
     }
-    while (mWatchFiles) {
+
+    while (mWatchFiles)
+    {
       FilePoll snapshot;
       int error = stat(mPath.c_str(), &snapshot.file);
-      if (error < 0) {
-        if (mFile.exists) {
+      if (error < 0)
+      {
+        if (mFile.exists)
+        {
           Event event;
           event.directory = path;
-          event.file = new std::string(name);
-          event.action = "DELETED";
+          event.file[0] = name;
+          event.action = DELETED;
           mEventsQueue.push(event);
           mFile.exists = false;
           usleep(1000);
           continue;
-        } else {
+        }
+        else
+        {
           usleep(1000);
           continue;
         }
@@ -91,24 +105,27 @@ namespace NSFW {
 
       snapshot.exists = true;
 
-      if (mFile.exists && !checkTimeValEquality(&mFile.file.st_birthtimespec, &snapshot.file.st_birthtimespec)) {
-        Event event;
-        event.directory = path;
-        event.file = new std::string(name);
-        event.action = "DELETED";
-        mEventsQueue.push(event);
-        event.directory = path;
-        event.file = new std::string(name);
-        event.action = "CREATED";
-        mEventsQueue.push(event);
+      if (mFile.exists && !checkTimeValEquality(&mFile.file.st_birthtimespec, &snapshot.file.st_birthtimespec))
+      {
+        Event eventA, eventB;
+        eventA.directory = path;
+        eventA.file[0] = name;
+        eventA.action = DELETED;
+        mEventsQueue.push(eventA);
+
+        eventB.directory = path;
+        eventB.file[0] = name;
+        eventB.action = CREATED;
+        mEventsQueue.push(eventB);
         mFile = snapshot;
       }
 
-      if (!mFile.exists) {
+      if (!mFile.exists)
+      {
         Event event;
         event.directory = path;
-        event.file = new std::string(name);
-        event.action = "CREATED";
+        event.file[0] = name;
+        event.action = CREATED;
         mEventsQueue.push(event);
         mFile = snapshot;
       }
@@ -117,8 +134,8 @@ namespace NSFW {
       {
         Event event;
         event.directory = path;
-        event.file = new std::string(name);
-        event.action = "CHANGED";
+        event.file[0] = name;
+        event.action = MODIFIED;
         mEventsQueue.push(event);
         mFile = snapshot;
       }
@@ -126,17 +143,20 @@ namespace NSFW {
     usleep(1000);
   }
 
-  std::string FileWatcherOSX::getPath() {
+  std::string FileWatcherOSX::getPath()
+  {
     return mPath;
   }
 
   // traverses the tree under a directory and adds every item as an event of type action
-  void FileWatcherOSX::handleTraversingDirectoryChange(std::string action, Directory *directory) {
+  void FileWatcherOSX::handleTraversingDirectoryChange(Action action, Directory *directory)
+  {
     std::queue<Directory *> dirQueue;
 
     dirQueue.push(directory);
 
-    while (!dirQueue.empty()) {
+    while (!dirQueue.empty())
+    {
       Directory *root = dirQueue.front();
       // Events for all files in this 'root' directory
       for (std::map<ino_t, FileDescriptor>::iterator fileIter = root->fileMap.begin();
@@ -144,7 +164,7 @@ namespace NSFW {
       {
         Event event;
         event.directory = root->path + "/" + root->name;
-        event.file = new std::string(fileIter->second.name);
+        event.file[0] = fileIter->second.name;
         event.action = action;
         mEventsQueue.push(event);
       }
@@ -158,7 +178,7 @@ namespace NSFW {
 
       Event event;
       event.directory = root->path;
-      event.file = new std::string(root->name);
+      event.file[0] = root->name;
       event.action = action;
       mEventsQueue.push(event);
 
@@ -166,7 +186,8 @@ namespace NSFW {
     }
   }
 
-  void *FileWatcherOSX::mainLoop(void *params) {
+  void *FileWatcherOSX::mainLoop(void *params)
+  {
     // load initial dir tree
     FileWatcherOSX *fwOSX = (FileWatcherOSX *)params;
 
@@ -175,16 +196,16 @@ namespace NSFW {
     struct stat fileInfo;
     int error = stat(path.c_str(), &fileInfo);
 
-    if (error < 0) {
+    if (error < 0)
+    {
       fwOSX->setErrorMessage("Access is denied");
       return NULL;
     }
 
-    if (S_ISDIR(fileInfo.st_mode)) {
+    if (S_ISDIR(fileInfo.st_mode))
+    {
       fwOSX->mIsDirWatch = true;
-      // std::cout << "main loop is locking mainloop sync" << std::endl;
       pthread_mutex_lock(&fwOSX->mMainLoopSync);
-      // std::cout << "main loop has the lock for mainloop sync" << std::endl;
       fwOSX->mDirTree = fwOSX->snapshotDir();
       CFStringRef mypath = CFStringCreateWithCString(
         NULL,
@@ -207,6 +228,7 @@ namespace NSFW {
           kFSEventStreamCreateFlagFileEvents
       );
       CFRelease(pathsToWatch);
+      CFRelease(mypath);
 
       fwOSX->mRunLoop = CFRunLoopGetCurrent();
       CFRetain(fwOSX->mRunLoop);
@@ -217,6 +239,7 @@ namespace NSFW {
 
       CFRunLoopTimerContext ctx;
       ctx.info = fwOSX;
+
       CFRunLoopTimerRef timer = CFRunLoopTimerCreate(
         NULL, // allocator
         0, // fireDate
@@ -226,6 +249,7 @@ namespace NSFW {
         &FileWatcherOSX::timerCallback,
         &ctx
       );
+
       CFRunLoopAddTimer(fwOSX->mRunLoop, timer, kCFRunLoopCommonModes);
       CFRelease(timer);
 
@@ -233,30 +257,30 @@ namespace NSFW {
 
       CFRelease(fwOSX->mRunLoop);
 
-      // std::cout << "main loop is unlocking mainloop sync" << std::endl;
       pthread_mutex_unlock(&fwOSX->mMainLoopSync);
-      // std::cout << "main loop released the lock for mainloop sync" << std::endl;
-
-
-    } else if (S_ISREG(fileInfo.st_mode)) {
+    }
+    else if (S_ISREG(fileInfo.st_mode))
+    {
       fwOSX->mFile.file = fileInfo;
       fwOSX->mDirTree = NULL;
       fwOSX->mFile.exists = true;
       fwOSX->filePoller();
-    } else {
+    }
+    else
+    {
       fwOSX->setErrorMessage("Access is denied");
       return NULL;
     }
+
     return NULL;
   }
 
-  void FileWatcherOSX::processDirCallback() {
+  void FileWatcherOSX::processDirCallback()
+  {
     // only run this process if mWatchFiles is true, and we can get a lock on the mutex
-    // // std::cout << "processcallback is locking callback sync" << std::endl;
-    if (mWatchFiles && pthread_mutex_lock(&mCallbackSync) != 0) {
-      // std::cout << "processcallback is unlocking callback sync" << std::endl;
+    if (mWatchFiles && pthread_mutex_lock(&mCallbackSync) != 0)
+    {
       pthread_mutex_unlock(&mCallbackSync);
-      // std::cout << "processcallback has unlocked callback sync" << std::endl;
       return;
     }
 
@@ -264,17 +288,24 @@ namespace NSFW {
     std::queue<DirectoryPair> dirPairQueue;
 
     // in case a directory/file was deleted while a scan was active
-    if (currentTree == NULL) {
+    if (currentTree == NULL)
+    {
       dirent ** directoryContents = NULL;
       int m = scandir(mPath.c_str(), &directoryContents, NULL, alphasort);
 
-      if (m < 0) {
+      for (int i = 0; i < m; ++i)
+      {
+        delete directoryContents[i];
+      }
+
+      delete directoryContents;
+
+      if (m < 0)
+      {
         setErrorMessage("Access is denied");
       }
 
-      // std::cout << "processcallback is unlocking callback sync" << std::endl;
       pthread_mutex_unlock(&mCallbackSync);
-      // std::cout << "processcallback has unlocked callback sync" << std::endl;
       return;
     }
 
@@ -284,15 +315,10 @@ namespace NSFW {
 
     dirPairQueue.push(snapshot);
 
-    while(!dirPairQueue.empty()) {
+    while(!dirPairQueue.empty())
+    {
       // get a DirectoryPair
       snapshot = dirPairQueue.front();
-      if (snapshot.current == NULL || snapshot.prev == NULL) {
-        // std::cout << "processcallback is unlocking callback sync" << std::endl;
-        pthread_mutex_unlock(&mCallbackSync);
-        // std::cout << "processcallback has unlocked callback sync" << std::endl;
-        return;
-      }
 
       // compare files in the directory ----------------------------------------
       // -----------------------------------------------------------------------
@@ -307,23 +333,24 @@ namespace NSFW {
       {
         std::map<ino_t, FileDescriptor>::iterator currentComparableFilePtr = currentFileMapCopy.find(fileIter->first);
         // deleted event
-        if (currentComparableFilePtr == currentFileMapCopy.end()) {
+        if (currentComparableFilePtr == currentFileMapCopy.end())
+        {
           Event event;
           event.directory = currentPath;
-          event.file = new std::string(fileIter->second.name);
-          event.action = "DELETED";
+          event.file[0] = fileIter->second.name;
+          event.action = DELETED;
           mEventsQueue.push(event);
           continue;
         }
 
         // renamed event
-        if (fileIter->second.name != currentComparableFilePtr->second.name) {
+        if (fileIter->second.name != currentComparableFilePtr->second.name)
+        {
           Event event;
           event.directory = currentPath;
-          event.file = new std::string[2];
           event.file[0] = fileIter->second.name;
           event.file[1] = currentComparableFilePtr->second.name;
-          event.action = "RENAMED";
+          event.action = RENAMED;
           mEventsQueue.push(event);
         }
 
@@ -333,8 +360,8 @@ namespace NSFW {
         {
           Event event;
           event.directory = currentPath;
-          event.file = new std::string(fileIter->second.name);
-          event.action = "CHANGED";
+          event.file[0] = fileIter->second.name;
+          event.action = MODIFIED;
           mEventsQueue.push(event);
         }
 
@@ -348,8 +375,8 @@ namespace NSFW {
         // created event
         Event event;
         event.directory = currentPath;
-        event.file = new std::string(fileIter->second.name);
-        event.action = "CREATED";
+        event.file[0] = fileIter->second.name;
+        event.action = CREATED;
         mEventsQueue.push(event);
       }
 
@@ -365,21 +392,21 @@ namespace NSFW {
         std::map<ino_t, Directory *>::iterator currentComparableDirPtr = currentChildDirectories.find(dirIter->first);
 
         // deleted event
-        if (currentComparableDirPtr == currentChildDirectories.end()) {
+        if (currentComparableDirPtr == currentChildDirectories.end())
+        {
           // add all associated delete events for this directory deletion
-          handleTraversingDirectoryChange("DELETED", dirIter->second);
-
+          handleTraversingDirectoryChange(DELETED, dirIter->second);
           continue;
         }
 
         // renamed event
-        if (strcmp(dirIter->second->name, currentComparableDirPtr->second->name)) {
+        if (dirIter->second->name != currentComparableDirPtr->second->name)
+        {
           Event event;
           event.directory = currentPath;
-          event.file = new std::string[2];
           event.file[0] = dirIter->second->name;
           event.file[1] = currentComparableDirPtr->second->name;
-          event.action = "RENAMED";
+          event.action = RENAMED;
           mEventsQueue.push(event);
         }
 
@@ -399,7 +426,7 @@ namespace NSFW {
         dirIter != currentChildDirectories.end(); ++dirIter)
       {
         // add all associated created events for this directory deletion
-        handleTraversingDirectoryChange("CREATED", dirIter->second);
+        handleTraversingDirectoryChange(CREATED, dirIter->second);
       }
 
       // remove the snapshot from the queue
@@ -412,37 +439,46 @@ namespace NSFW {
     // assign currentTree to mDirTree
     mDirTree = currentTree;
 
-    // std::cout << "processcallback is locking callback sync" << std::endl;
     pthread_mutex_unlock(&mCallbackSync);
-    // std::cout << "processcallback has unlocked callback sync" << std::endl;
-
   }
 
-  Directory *FileWatcherOSX::snapshotDir() {
-    int counter = 0;
+  Directory *FileWatcherOSX::snapshotDir()
+  {
     std::queue<Directory *> dirQueue;
     Directory *topRoot = new Directory;
 
     // create root of snapshot
     size_t lastSlash = mPath.find_last_of("/");
-    if (lastSlash != std::string::npos) {
+    if (lastSlash != std::string::npos)
+    {
       topRoot->path = mPath.substr(0, lastSlash);
       topRoot->name = mPath.substr(lastSlash + 1);
-    } else {
+    }
+    else
+    {
       topRoot->path = "";
       topRoot->name = mPath;
     }
 
     dirQueue.push(topRoot);
 
-    while (!dirQueue.empty()) {
+    while (!dirQueue.empty())
+    {
       Directory *root = dirQueue.front();
       dirent ** directoryContents = NULL;
       std::string rootPath = root->path + "/" + root->name;
 
       int n = scandir(rootPath.c_str(), &directoryContents, NULL, alphasort);
 
-      if (n < 0) {
+      if (n < 0)
+      {
+        for (int i = 0; i < n; ++i)
+        {
+          delete directoryContents[i];
+        }
+
+        delete directoryContents;
+
         deleteDirTree(topRoot);
         return NULL;
       }
@@ -450,11 +486,13 @@ namespace NSFW {
       // find all the directories within this directory
       // this breaks the alphabetical sorting of directories
       std::queue<int> childLocation;
-      std::vector<Directory *> safeCleanUp;
       bool failure = false;
-      for (int i = 0; i < n; ++i) {
+      for (int i = 0; i < n; ++i)
+      {
         if (!strcmp(directoryContents[i]->d_name, ".") || !strcmp(directoryContents[i]->d_name, ".."))
+        {
           continue; // skip navigation folder
+        }
 
         ino_t inode = directoryContents[i]->d_ino;
 
@@ -466,15 +504,17 @@ namespace NSFW {
           dir->path = rootPath;
           root->childDirectories[inode] = dir;
           dirQueue.push(dir);
-          safeCleanUp.push_back(dir);
-        } else {
+        }
+        else
+        {
           // store the file information in a quick data structure for later
           FileDescriptor fd;
           fd.name = directoryContents[i]->d_name;
           fd.path = rootPath + "/" + fd.name;
           int error = stat(fd.path.c_str(), &fd.meta);
 
-          if (error < 0) {
+          if (error < 0)
+          {
             failure = true;
             break;
           }
@@ -484,11 +524,14 @@ namespace NSFW {
       }
 
       for (int i = 0; i < n; ++i)
+      {
         delete directoryContents[i];
+      }
 
       delete[] directoryContents;
 
-      if (failure) {
+      if (failure)
+      {
         deleteDirTree(topRoot);
         return NULL;
       }
@@ -499,44 +542,54 @@ namespace NSFW {
     return topRoot;
   }
 
-  void FileWatcherOSX::setErrorMessage(std::string message) {
+  void FileWatcherOSX::setErrorMessage(std::string message)
+  {
     mError.status = true;
     mError.message = message;
   }
 
-  bool FileWatcherOSX::start() {
+  bool FileWatcherOSX::start()
+  {
     // test mutex for init
-    if (pthread_mutex_lock(&mCallbackSync) != 0 || pthread_mutex_lock(&mMainLoopSync) != 0) {
+    if (pthread_mutex_lock(&mCallbackSync) != 0 || pthread_mutex_lock(&mMainLoopSync) != 0)
+    {
       return false; // if it fails, let caller know that this is not started
-    } else {
+    }
+    else
+    {
       pthread_mutex_unlock(&mCallbackSync);
       pthread_mutex_unlock(&mMainLoopSync);
     }
 
-    if (mWatchFiles && pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this) == 0) {
+    if (mWatchFiles && pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this) == 0)
+    {
       return true;
-    } else {
+    }
+    else
+    {
       return false;
     }
   }
 
-  void FileWatcherOSX::stop() {
-    if (mIsDirWatch) {
+  void FileWatcherOSX::stop()
+  {
+    if (mIsDirWatch)
+    {
       mDie = true;
 
-      // std::cout << "stop is locking mainLoop sync" << std::endl;
       pthread_mutex_lock(&mMainLoopSync);
-      // std::cout << "stop has locked mainLoop sync" << std::endl;
       // safely kill the thread
       pthread_join(mThread, NULL);
-      if (mDirTree != NULL) {
+      if (mDirTree != NULL)
+      {
         deleteDirTree(mDirTree);
         mDirTree = NULL;
       }
-      // std::cout << "stop is unlocking mainLoop sync" << std::endl;
+
       pthread_mutex_unlock(&mMainLoopSync);
-      // std::cout << "stop has unlocked mainLoop sync" << std::endl;
-    } else {
+    }
+    else
+    {
       int t;
       // safely kill the thread
       pthread_setcancelstate(PTHREAD_CANCEL_ASYNCHRONOUS, &t);
@@ -544,12 +597,12 @@ namespace NSFW {
     }
   }
 
-  void FileWatcherOSX::timerCallback(CFRunLoopTimerRef timer, void* callbackInfo) {
+  void FileWatcherOSX::timerCallback(CFRunLoopTimerRef timer, void* callbackInfo)
+  {
     FileWatcherOSX* fwOSX = (FileWatcherOSX *)callbackInfo;
-    if (fwOSX->mDie) {
-      // std::cout << "timerCallback is locking callback sync" << std::endl;
+    if (fwOSX->mDie)
+    {
       pthread_mutex_lock(&fwOSX->mCallbackSync);
-      // std::cout << "timerCallback has locked callback sync" << std::endl;
 
       // kill the run loop!
       FSEventStreamStop(fwOSX->mStream);
@@ -557,9 +610,8 @@ namespace NSFW {
       FSEventStreamRelease(fwOSX->mStream);
 
       CFRunLoopStop(fwOSX->mRunLoop);
-      // std::cout << "timerCallback is unlocking callback sync" << std::endl;
+
       pthread_mutex_unlock(&fwOSX->mCallbackSync);
-      // std::cout << "timerCallback has unlocked callback sync" << std::endl;
     }
   }
 

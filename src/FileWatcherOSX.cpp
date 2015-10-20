@@ -430,6 +430,7 @@ namespace NSFW {
   }
 
   Directory *FileWatcherOSX::snapshotDir() {
+    int counter = 0;
     std::queue<Directory *> dirQueue;
     Directory *topRoot = new Directory;
 
@@ -450,18 +451,25 @@ namespace NSFW {
       Directory *root = dirQueue.front();
       dirent ** directoryContents = NULL;
       std::string rootPath = root->path + "/" + root->name;
+
       int n = scandir(rootPath.c_str(), &directoryContents, NULL, alphasort);
 
       if (n < 0) {
+        deleteDirTree(topRoot);
         return NULL;
       }
 
       // find all the directories within this directory
       // this breaks the alphabetical sorting of directories
       std::queue<int> childLocation;
+      std::vector<Directory *> safeCleanUp;
+      bool failure = false;
       for (int i = 0; i < n; ++i) {
-        if (!strcmp(directoryContents[i]->d_name, ".") || !strcmp(directoryContents[i]->d_name, ".."))
+        if (!strcmp(directoryContents[i]->d_name, ".") || !strcmp(directoryContents[i]->d_name, "..")) {
+          delete directoryContents[i];
+          directoryContents[i] = NULL;
           continue; // skip navigation folder
+        }
 
         ino_t inode = directoryContents[i]->d_ino;
 
@@ -474,6 +482,7 @@ namespace NSFW {
           dir->path = rootPath;
           root->childDirectories[inode] = dir;
           dirQueue.push(dir);
+          safeCleanUp.push_back(dir);
         } else {
           // store the file information in a quick data structure for later
           FileDescriptor fd;
@@ -482,14 +491,32 @@ namespace NSFW {
           int error = stat(fd.path.c_str(), &fd.meta);
 
           if (error < 0) {
-            delete[] directoryContents;
-            deleteDirTree(topRoot);
-            mDirTree = NULL;
-            return NULL;
+            failure = true;
+            break;
+          } else {
+            counter++;
           }
 
           root->fileMap[inode] = fd;
         }
+      }
+
+      if (failure) {
+        for (int i = 0; i < n; ++i) {
+          if (directoryContents[i] != NULL)
+            delete directoryContents[i];
+        }
+        delete[] directoryContents;
+
+        root->fileMap.clear();
+
+        for (std::vector<Directory *>::iterator d = safeCleanUp.begin(); d != safeCleanUp.end(); ++d) {
+          delete (*d)->entry;
+          (*d)->entry = NULL;
+        }
+
+        deleteDirTree(topRoot);
+        return NULL;
       }
 
       delete[] directoryContents;

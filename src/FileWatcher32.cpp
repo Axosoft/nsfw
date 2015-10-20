@@ -9,36 +9,29 @@ namespace NSFW {
     : mParentFW(parentFW), mEventsQueue(eventsQueue), mFileName(fileName), mWatchFiles(watchFiles), mStopFlag(stopFlag), mError(error) {}
 
   // Handles the generalized change event for changed/created/deleted and pushes event to queue
-  void FSEventHandler::eventHandlerHelper(FileSystemEventArgs ^e, System::String ^action) {
-    try {
-      if (!mWatchFiles || mError.status) {
-        // Remove these handlers if the object is no longer listening (stop is called)
-        return;
-      }
-
-      System::String ^eventFileName = getFileName(e->Name);
-      if (!System::String::IsNullOrEmpty(mFileName) && eventFileName != mFileName) {
-        return;
-      }
-      Event event;
-
-      char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-      event.directory = str;
-      Marshal::FreeHGlobal(IntPtr(str));
-
-      str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
-      event.file = new std::string(str);
-      Marshal::FreeHGlobal(IntPtr(str));
-
-      str = (char*)Marshal::StringToHGlobalAnsi(action).ToPointer();
-      event.action = str;
-      Marshal::FreeHGlobal(IntPtr(str));
-
-      mEventsQueue.push(event);
-    } catch (Exception ^e) {
-      mError.status = true;
-      mError.message = "An exception occurred in eventHandlerHelper";
+  void FSEventHandler::eventHandlerHelper(FileSystemEventArgs ^e, Action action) {
+    if (!mWatchFiles || mError.status) {
+      // Remove these handlers if the object is no longer listening (stop is called)
+      return;
     }
+
+    System::String ^eventFileName = getFileName(e->Name);
+    if (!System::String::IsNullOrEmpty(mFileName) && eventFileName != mFileName) {
+      return;
+    }
+    Event event;
+
+    char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+    event.directory = str;
+    Marshal::FreeHGlobal(IntPtr(str));
+
+    str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
+    event.file[0] = str;
+    Marshal::FreeHGlobal(IntPtr(str));
+
+    event.action = action;
+
+    mEventsQueue.push(event);
   }
 
   FileSystemWatcher ^FSEventHandler::getParent() {
@@ -58,94 +51,82 @@ namespace NSFW {
   }
 
   void FSEventHandler::onChanged(Object ^source, FileSystemEventArgs ^e) {
-    eventHandlerHelper(e, "CHANGED");
+    eventHandlerHelper(e, MODIFIED);
   }
 
   void FSEventHandler::onCreated(Object ^source, FileSystemEventArgs ^e) {
-    eventHandlerHelper(e, "CREATED");
+    eventHandlerHelper(e, CREATED);
   }
 
   void FSEventHandler::onDeleted(Object ^source, FileSystemEventArgs ^e) {
-    eventHandlerHelper(e, "DELETED");
+    eventHandlerHelper(e, DELETED);
   }
 
   void FSEventHandler::onError(Object ^source, ErrorEventArgs ^e) {
-    try {
-      Exception ^exception = e->GetException();
-      mError.status = true;
-      char *str = (char*)Marshal::StringToHGlobalAnsi(exception->Message).ToPointer();
-      mError.message = str;
-      Marshal::FreeHGlobal(IntPtr(str));
-    } catch (Exception ^e) {
-      mError.status = true;
-      mError.message = "An exception occurred in onError";
-    }
+    Exception ^exception = e->GetException();
+    mError.status = true;
+    char *str = (char*)Marshal::StringToHGlobalAnsi(exception->Message).ToPointer();
+    mError.message = str;
+    Marshal::FreeHGlobal(IntPtr(str));
   }
 
   // Specialized handler for renamed events, pushes to event queue
   void FSEventHandler::onRenamed(Object ^source, RenamedEventArgs ^e) {
-    try {
-      if (!mWatchFiles || mError.status) {
-        // Remove these handlers if the object is no longer listening (stop is called)
-        return;
-      }
-      System::String ^eventFileName = getFileName(e->OldName);
-      if (System::String::IsNullOrEmpty(mFileName)) {
-        Event event;
-        char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-        event.directory = str;
-        Marshal::FreeHGlobal(IntPtr(str));
+    if (!mWatchFiles || mError.status) {
+      // Remove these handlers if the object is no longer listening (stop is called)
+      return;
+    }
+    System::String ^eventFileName = getFileName(e->OldName);
+    if (System::String::IsNullOrEmpty(mFileName)) {
+      Event event;
+      char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+      event.directory = str;
+      Marshal::FreeHGlobal(IntPtr(str));
 
-        event.file = new std::string[2];
+      str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
+      event.file[0] = str;
+      Marshal::FreeHGlobal(IntPtr(str));
 
-        str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
-        event.file[0] = str;
-        Marshal::FreeHGlobal(IntPtr(str));
+      str = (char*)Marshal::StringToHGlobalAnsi(getFileName(e->Name)).ToPointer();
+      event.file[1] = str;
+      Marshal::FreeHGlobal(IntPtr(str));
 
-        str = (char*)Marshal::StringToHGlobalAnsi(getFileName(e->Name)).ToPointer();
-        event.file[1] = str;
-        Marshal::FreeHGlobal(IntPtr(str));
+      event.action = RENAMED;
+      mEventsQueue.push(event);
+      return;
+    }
 
-        event.action = "RENAMED";
-        mEventsQueue.push(event);
-        return;
-      }
+    if (mFileName == eventFileName) {
+      Event event;
+      char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+      event.directory = str;
+      Marshal::FreeHGlobal(IntPtr(str));
 
-      if (mFileName == eventFileName) {
-        Event event;
-        char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-        event.directory = str;
-        Marshal::FreeHGlobal(IntPtr(str));
+      str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
+      event.file[0] = str;
+      Marshal::FreeHGlobal(IntPtr(str));
 
-        str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
-        event.file = new std::string(str);
-        Marshal::FreeHGlobal(IntPtr(str));
+      event.action = DELETED;
+      mEventsQueue.push(event);
+      return;
+    }
 
-        event.action = "DELETED";
-        mEventsQueue.push(event);
-        return;
-      }
+    System::String ^newFileName = getFileName(e->Name);
 
-      System::String ^newFileName = getFileName(e->Name);
+    if (mFileName == newFileName) {
+      Event event;
 
-      if (mFileName == newFileName) {
-        Event event;
+      char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+      event.directory = str;
+      Marshal::FreeHGlobal(IntPtr(str));
 
-        char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-        event.directory = str;
-        Marshal::FreeHGlobal(IntPtr(str));
+      str = (char*)Marshal::StringToHGlobalAnsi(newFileName).ToPointer();
+      event.file[0] = str;
+      Marshal::FreeHGlobal(IntPtr(str));
 
-        str = (char*)Marshal::StringToHGlobalAnsi(newFileName).ToPointer();
-        event.file = new std::string(str);
-        Marshal::FreeHGlobal(IntPtr(str));
-
-        event.action = "CREATED";
-        mEventsQueue.push(event);
-        return;
-      }
-    } catch (Exception ^e) {
-      mError.status = true;
-      mError.message = "An exception occurred in onRenamed";
+      event.action = CREATED;
+      mEventsQueue.push(event);
+      return;
     }
   }
 
@@ -164,36 +145,28 @@ namespace NSFW {
   }
 
   void FSEventHandler::removeHandlers() {
-    try {
-      mParentFW->Changed -= mChangedHandler;
-      mParentFW->Created -= mCreatedHandler;
-      mParentFW->Deleted -= mDeletedHandler;
-      mParentFW->Error -= mErrorHandler;
-      mParentFW->Renamed -= mRenamedHandler;
-    } catch (Exception ^e) {
-      mError.status = true;
-      mError.message = "An exception occurred in removeHandlers";
-    }
+    mParentFW->Changed -= mChangedHandler;
+    mParentFW->Created -= mCreatedHandler;
+    mParentFW->Deleted -= mDeletedHandler;
+    mParentFW->Error -= mErrorHandler;
+    mParentFW->Renamed -= mRenamedHandler;
   }
 
   static void fileWatcherControl(Object ^data) {
     FSEventHandler ^handler = (FSEventHandler^)data;
     Error &error = handler->getErrorStruct();
-    try {
-      bool &stopFlag = handler->getStopFlag();
-      bool &watchFiles = handler->getWatchFiles();
-      FileSystemWatcher ^fsWatcher = handler->getParent();
-      while(watchFiles && !error.status) {
-        Thread::Sleep(50);
-      }
-      fsWatcher->EnableRaisingEvents = false;
-      handler->removeHandlers();
-      delete fsWatcher;
-      stopFlag = true;
-    } catch (Exception ^e) {
-      error.status = true;
-      error.message = "An exception occurred in fileWatcherControl";
+    bool &stopFlag = handler->getStopFlag();
+    bool &watchFiles = handler->getWatchFiles();
+    FileSystemWatcher ^fsWatcher = handler->getParent();
+
+    while(watchFiles && !error.status) {
+      Thread::Sleep(50);
     }
+
+    fsWatcher->EnableRaisingEvents = false;
+    handler->removeHandlers();
+    delete fsWatcher;
+    stopFlag = true;
   }
 
   // Creates the filewatcher and initializes the handlers.

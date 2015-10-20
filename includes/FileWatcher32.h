@@ -33,7 +33,7 @@ namespace NSFW {
       Error &error,
       System::String ^fileName
     );
-    void eventHandlerHelper(FileSystemEventArgs ^e, System::String ^action);
+    void eventHandlerHelper(FileSystemEventArgs ^e, Action action);
     FileSystemWatcher ^getParent();
     Error &getErrorStruct();
     bool &getStopFlag();

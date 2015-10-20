@@ -46,14 +46,6 @@ namespace NSFW {
     while (!dirQueue.empty()) {
       Directory *root = dirQueue.front();
 
-      // delete all file entries
-      for (std::map<ino_t, FileDescriptor>::iterator fileIter = root->fileMap.begin();
-        fileIter != root->fileMap.end(); ++fileIter)
-      {
-        if (fileIter->second.entry)
-          delete fileIter->second.entry;
-      }
-
       // Add directories to the queue to continue deleting directories/files
       for (std::map<ino_t, Directory *>::iterator dirIter = root->childDirectories.begin();
         dirIter != root->childDirectories.end(); ++dirIter)
@@ -62,9 +54,6 @@ namespace NSFW {
       }
 
       dirQueue.pop();
-
-      if (root->entry)
-        delete root->entry;
 
       delete root;
     }
@@ -155,7 +144,7 @@ namespace NSFW {
       {
         Event event;
         event.directory = root->path + "/" + root->name;
-        event.file = new std::string(fileIter->second.entry->d_name);
+        event.file = new std::string(fileIter->second.name);
         event.action = action;
         mEventsQueue.push(event);
       }
@@ -169,7 +158,7 @@ namespace NSFW {
 
       Event event;
       event.directory = root->path;
-      event.file = new std::string(root->entry->d_name);
+      event.file = new std::string(root->name);
       event.action = action;
       mEventsQueue.push(event);
 
@@ -321,19 +310,19 @@ namespace NSFW {
         if (currentComparableFilePtr == currentFileMapCopy.end()) {
           Event event;
           event.directory = currentPath;
-          event.file = new std::string(fileIter->second.entry->d_name);
+          event.file = new std::string(fileIter->second.name);
           event.action = "DELETED";
           mEventsQueue.push(event);
           continue;
         }
 
         // renamed event
-        if (strcmp(fileIter->second.entry->d_name, currentComparableFilePtr->second.entry->d_name)) {
+        if (fileIter->second.name != currentComparableFilePtr->second.name) {
           Event event;
           event.directory = currentPath;
           event.file = new std::string[2];
-          event.file[0] = fileIter->second.entry->d_name;
-          event.file[1] = currentComparableFilePtr->second.entry->d_name;
+          event.file[0] = fileIter->second.name;
+          event.file[1] = currentComparableFilePtr->second.name;
           event.action = "RENAMED";
           mEventsQueue.push(event);
         }
@@ -344,7 +333,7 @@ namespace NSFW {
         {
           Event event;
           event.directory = currentPath;
-          event.file = new std::string(fileIter->second.entry->d_name);
+          event.file = new std::string(fileIter->second.name);
           event.action = "CHANGED";
           mEventsQueue.push(event);
         }
@@ -359,7 +348,7 @@ namespace NSFW {
         // created event
         Event event;
         event.directory = currentPath;
-        event.file = new std::string(fileIter->second.entry->d_name);
+        event.file = new std::string(fileIter->second.name);
         event.action = "CREATED";
         mEventsQueue.push(event);
       }
@@ -384,12 +373,12 @@ namespace NSFW {
         }
 
         // renamed event
-        if (strcmp(dirIter->second->entry->d_name, currentComparableDirPtr->second->entry->d_name)) {
+        if (strcmp(dirIter->second->name, currentComparableDirPtr->second->name)) {
           Event event;
           event.directory = currentPath;
           event.file = new std::string[2];
-          event.file[0] = dirIter->second->entry->d_name;
-          event.file[1] = currentComparableDirPtr->second->entry->d_name;
+          event.file[0] = dirIter->second->name;
+          event.file[1] = currentComparableDirPtr->second->name;
           event.action = "RENAMED";
           mEventsQueue.push(event);
         }
@@ -435,7 +424,6 @@ namespace NSFW {
     Directory *topRoot = new Directory;
 
     // create root of snapshot
-    topRoot->entry = NULL;
     size_t lastSlash = mPath.find_last_of("/");
     if (lastSlash != std::string::npos) {
       topRoot->path = mPath.substr(0, lastSlash);
@@ -465,11 +453,8 @@ namespace NSFW {
       std::vector<Directory *> safeCleanUp;
       bool failure = false;
       for (int i = 0; i < n; ++i) {
-        if (!strcmp(directoryContents[i]->d_name, ".") || !strcmp(directoryContents[i]->d_name, "..")) {
-          delete directoryContents[i];
-          directoryContents[i] = NULL;
+        if (!strcmp(directoryContents[i]->d_name, ".") || !strcmp(directoryContents[i]->d_name, ".."))
           continue; // skip navigation folder
-        }
 
         ino_t inode = directoryContents[i]->d_ino;
 
@@ -477,8 +462,7 @@ namespace NSFW {
         {
           // create the directory struct for this directory and add a reference of this directory to its root
           Directory *dir = new Directory;
-          dir->entry = directoryContents[i];
-          dir->name = dir->entry->d_name;
+          dir->name = directoryContents[i]->d_name;
           dir->path = rootPath;
           root->childDirectories[inode] = dir;
           dirQueue.push(dir);
@@ -486,40 +470,29 @@ namespace NSFW {
         } else {
           // store the file information in a quick data structure for later
           FileDescriptor fd;
-          fd.entry = directoryContents[i];
-          fd.path = rootPath + "/" + fd.entry->d_name;
+          fd.name = directoryContents[i]->d_name;
+          fd.path = rootPath + "/" + fd.name;
           int error = stat(fd.path.c_str(), &fd.meta);
 
           if (error < 0) {
             failure = true;
             break;
-          } else {
-            counter++;
           }
 
           root->fileMap[inode] = fd;
         }
       }
 
+      for (int i = 0; i < n; ++i)
+        delete directoryContents[i];
+
+      delete[] directoryContents;
+
       if (failure) {
-        for (int i = 0; i < n; ++i) {
-          if (directoryContents[i] != NULL)
-            delete directoryContents[i];
-        }
-        delete[] directoryContents;
-
-        root->fileMap.clear();
-
-        for (std::vector<Directory *>::iterator d = safeCleanUp.begin(); d != safeCleanUp.end(); ++d) {
-          delete (*d)->entry;
-          (*d)->entry = NULL;
-        }
-
         deleteDirTree(topRoot);
         return NULL;
       }
 
-      delete[] directoryContents;
       dirQueue.pop();
     }
 

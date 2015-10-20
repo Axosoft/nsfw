@@ -9,7 +9,7 @@ namespace NSFW {
   struct Event {
     std::string action;
     std::string directory;
-    std::string *file;
+    std::string file[2];
   };
 
   struct Error {

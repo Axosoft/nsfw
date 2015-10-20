@@ -18,9 +18,8 @@
 namespace NSFW {
 
   struct FileDescriptor {
-    dirent *entry;
     struct stat meta;
-    std::string path;
+    std::string name, path;
   };
 
   struct FilePoll {
@@ -29,10 +28,9 @@ namespace NSFW {
   };
 
   struct Directory {
-    dirent *entry;
     std::map<ino_t, FileDescriptor> fileMap;
     std::map<ino_t, Directory *> childDirectories;
-    std::string path, name;
+    std::string name, path;
   };
 
   struct DirectoryPair {

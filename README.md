@@ -10,7 +10,7 @@
   <tbody>
     <tr>
       <td colspan="2" align="center">
-      <a href="https://travis-ci.org/Axosoft/node-sentinel-file-watcher"><img src="https://travis-ci.org/Axosoft/node-sentinel-file-watcher.svg?branch=master"></a>
+      <a href="https://travis-ci.org/Axosoft/nsfw"><img src="https://travis-ci.org/Axosoft/nsfw.svg?branch=master"></a>
       </td>
       <td align="center">
         <a href="https://ci.appveyor.com/project/implausible/node-simple-file-watcher"><img src="https://ci.appveyor.com/api/projects/status/79ejlq7e60kjmbl6?svg=true"></a>
@@ -23,7 +23,7 @@ A simple file watcher library for node.
 ## Usage
 
 ```js
-var nsfw = require('node-sentinel-file-watcher');
+var nsfw = require('nsfw');
 var watcherOne = new nsfw(
   'dir1',
   function(events) {

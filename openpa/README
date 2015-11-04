@@ -1,0 +1,103 @@
+OpenPA v1.0.4
+-------------
+
+The goal of this project is to provide an open source, highly-portable
+library that provides atomic primitives (and related constructs) for
+high performance, concurrent software. This project is a collaboration
+between the Mathematics and Computer Science (MCS) division at Argonne
+National Laboratory (ANL) and the HDF Group. The code was originally
+derived from work on the MPICH2 project. 
+
+Project documentation and bug tracking can be found at:
+
+  https://trac.mcs.anl.gov/projects/openpa/
+
+If you would like to email questions or discuss topics related to OpenPA
+you can send mail to opa-discuss@lists.mcs.anl.gov.
+
+
+Building 
+--------
+
+If you checked out the project from source control then you will need to
+generate configure files and makefiles with autogen.sh:
+
+% ./autogen.sh
+
+Otherwise, the build procedure is basically the same as any other
+autoconfiscated software:
+
+% ./configure [configure_args]
+% make
+% make install
+
+OpenPA does support Microsoft Windows but the build system
+infrastructure is unfortunately not yet in place for general use.
+
+
+Supported Platforms
+-------------------
+
+The following header files in the src/primitives directory support the
+listed platforms:
+opa_gcc_ia64.h        - GCC on Intel's IA64 (Itanium) architecture
+opa_gcc_intel_32_64.h - GCC (and some GCC-like compilers) on x86 and
+                        x86_64 architectures
+opa_gcc_intrinsics.h  - GCC on many other platforms.  These use compiler
+                        intrinsics which are not always implemented on
+                        every platform
+opa_gcc_ppc.h         - GCC and IBM's XLC on PowerPC 4xx and 970 systems.
+                        Specifically, this supports the modified-PPC440
+                        processor in IBM's Blue Gene/P supercomputers and most
+                        64-bit PPC machines such as BG/P login nodes and G5
+                        Macs.
+opa_gcc_sicortex.h    - GCC on SiCortex machines.  This is a MIPS 5K based
+                        architecture, so it may work on similar platforms.
+opa_gcc_arm.h         - GCC on ARMv7 (and later)
+opa_nt_intrinsics.h   - Windows support.  These use compiler intrinsics
+                        available in Microsoft's Visual Studio compiler.
+opa_sun_atomic_ops.h  - Solaris support.  This uses Solaris' built-in
+                        atomic operations library.  Tested on a Niagara
+                        (T5240) machine with Solaris (s10s_u4wos_12b).
+
+We also support two pseudo-platforms:
+
+opa_by_lock.h - Used when you specify "--with-atomic-primitives=no" or when
+                auto-detecting the primitive implementation and lock-based fall
+                back is selected.  This uses pthread mutexes to emulate the
+                atomic behavior.  This option typically has dramatically slower
+                performance on most platforms where native primitives are
+                available.  You should usually only use it for testing or on
+                platforms where pthreads are available but no native primitives
+                are currently implemented.  The library initialization function
+                *must* be called when using this primitives implementation.
+opa_unsafe.h  - Used when you specify "--with-atomic-primitives=unsafe".  This
+                can be used to improve performance in code that uses OPA already
+                and is conditionally compiled to be single-threaded without
+                having to modify said code.  It is also potentially useful for
+                meta-testing to ensure that any threading tests you might have
+                will catch bugs when you have a broken atomics implementation.
+                The OPA test suite itself fails spectacularly when compiled this
+                way.  This header can also be used by defining the preprocessor
+                macro OPA_USE_UNSAFE_PRIMITIVES prior to including
+                opa_primitives.h.
+
+Known Issues
+------------
+
+* One known issue is that the gcc atomic intrinsics aren't supported by
+  compilers prior to GCC 4.1.  In particular the default Mac OS X compiler is
+  gcc 4.0.1 so these result in a linker error when using this set of
+  primitives.  The good news is that on OSX/Intel we use native inline
+  assembly anyway, so this isn't a big problem.
+* The PGI compilers currently are not supported.  There is at least one known
+  bug in the PGI compiler's handling of of inline assembly for which we are
+  awaiting a fix from PGI.  Once a fixed version of the compiler is available
+  this issue should be rectified in an upcoming release.
+* As mentioned earlier, Windows is supported but the build system is not
+  yet present.
+* We've had reports of trouble with older IA64 machines running GCC 3.2.2.
+  Unfortunately we don't have access to a machine with this configuration so we
+  have been unable to debug and fix the problem.  Patches and detailed bug
+  reports on this issue are very welcome.
+

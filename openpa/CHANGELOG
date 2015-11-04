@@ -1,0 +1,191 @@
+=============
+OpenPA v1.0.4
+=============
+Major Changes:
+      * native ARM (v7 and higher) support
+      * numerous memory barrier placement improvements in queue and test code
+      * x86 memory barrier improvements, including for Intel MIC
+      * numerous build system improvements
+
+Individual Change Summary By Developer:
+
+Dave Goodell (17):
+      * [svn-r125] fix quoting in configure macros to avoid ac-2.68 "no
+         AC_LANG_SOURCE" warnings
+      * [svn-r126] OPA build system fixes
+      * [svn-r129] fix and optimize GCC+x86/x86_64 memory barriers
+      * [svn-r130] improve AC_ARG_WITH m4 quoting
+      * [svn-r131] do not install the README
+      * [svn-r132] store-release/load-acquire functionality
+      * [svn-r133] add a "coverage" target to keep MPICH2's recursive "make
+         coverage" happy
+      * [svn-r134] support automatic dependency tracking for pgcc
+      * [svn-r137] improve opa_queue.h comments
+      * [svn-r138] add read barrier to opa_queue.h
+      * [svn-r140] build-sys: fixes for automake-1.12 compatibility
+      * [svn-r142] pkg-config: unconditionally add -lopa to Libs
+      * [svn-r147] Revert r145: "Since we now depend on automake-1.12.3
+         [...]"
+      * [svn-r149] tweak intel header includes
+      * [svn-r152] fix incorrect PPC LL/SC comment
+      * add .gitignore file
+      * bump version number to 1.0.4 for a new release
+
+Kazutomo Yoshii (1):
+      * [svn-r151] added preliminary ARM support. only tested it on panda
+         board(ARMv7) and gcc 4.6.3
+
+Neil Fortner (3):
+      * [svn-r136] Fix problem in queue that manifested in an occasional
+         infinite loop on POWER7 machines.  Added a write barrier to
+         OPA_Queue_enqueue() after the invocation of OPA_SHM_SET_REL_NULL to
+         prevent the "next" pointer from being set to NULL after the element
+         was enqueued (and possibly modified by another thread).
+      * [svn-r139] Add memory barriers to LL/SC ABA tests.  Should fix
+         occasional failure on POWER7 systems.
+      * Add more memory barriers to LL/SC ABA tests.  This should fix the
+         recent errors on POWER7.
+
+Pavan Balaji (9):
+      * [svn-r127] Some x86 processors don't seem to like sfence either.
+         Making the write barrier even more stringent by forcing it to do a
+         full barrier.
+      * [svn-r128] Forgot to update the comment when we fixed the sfence
+         problem in r127.
+      * [svn-r135] configure.in --> configure.ac to match the naming
+         convention of newer autotools.
+      * [svn-r143] Propagate autoreconf errors upstream.
+      * [svn-r144] Remove internally maintained pgcc patch since
+         automake-1.12.3 fixes this.
+      * [svn-r145] Since we now depend on automake-1.12.3, we no longer need
+         to check if AM_PROG_AR is available.
+      * [svn-r146] svn:ignore.
+      * [svn-r148] svn:ignores.
+      * [svn-r150] IBM-contributed patch: Added support for non-versioned
+         libraries
+
+William Gropp (1):
+      * [svn-r141] Added missing svn:ignore entries
+
+
+=============
+OpenPA v1.0.3
+=============
+Major Changes:
+      * Libtool shared library support for OPA, avoiding shared/static mixed linking problems on some platforms.
+      * The build system should now work more portably with broken/exotic shells.
+      * pkg-config support
+      * Emulated atomics can now be detected by the presence of an OPA_EXPLICIT_EMULATION #define in opa_config.h.
+      * PPC types are now correctly aligned to 8 bytes instead of 16 bytes.
+      * many more tests for "make check", fixed missing memory barriers in one test
+
+Individual Change Summary By Developer:
+
+balaji (2):
+      * Shared-library support for OPA.
+      * Initial draft of shared library versioning support for OPA.
+
+buntinas (1):
+      * added svn:ignores
+
+fortnern (3):
+      * Added tests for OPA_swap_int and OPA_swap_ptr.  Other minor cleanup in the test suite.
+      * Added tests for queue, and fixed bugs in queue implementation.  Other misc cleanup.
+      * Add tests for OPA_LL_int, OPA_SC_int, OPA_LL_ptr and OPA_SC_ptr (skipped test 4 from plan).
+
+goodell (16):
+      * Fix const usage in OPA_load_xxx
+      * Change PPC type sizes back to 8-bytes.
+      * Add pkg-config support.
+      * Add configure check for stddef.h, fixes ticket #15.
+      * AC_DEFINE OPA_EXPLICIT_EMULATION upon --with-atomic-primitives=no
+      * remove nonsense "bit" word in configure message
+      * fix AX_PREFIX_CONFIG_H to work with dash
+      * redo r113 with printf to be more portable
+      * fix AX_PREFIX_CONFIG sed issue with AS_ECHO this time
+      * include VERSION in EXTRA_DIST to avoid "make distcheck" errors
+      * add "color-tests" option for automake
+      * use "silent rules" by default, like other MPICH2 projects
+      * ensure that config.status has a dependency on the VERSION file
+      * make the age=0 field explicit in the VERSION file
+      * update CHANGELOG, etc. for the upcoming 1.0.3 release
+      * add missing memory barriers to test_primitive.c's stack tests
+
+jayesh (1):
+      * Fixing the type casts of atomic func params for 64-bit builds on windows
+
+
+=============
+OpenPA v1.0.2
+=============
+Major Changes:
+      * Add support for 64-bit PPC.
+      * Static initializer macros for OPA types.
+
+Individual Change Summary By Developer:
+
+balaji (1):
+      * Fix pthread_mutex usage for inter-process shared memory regions.
+
+buntinas (1):
+      * added OPA typedef for pthread_mutex_t
+
+fortnern (4):
+      * Add more tests for compare-and-swap.
+      * Add integer compare-and-swap fairness test.
+      * Add pointer version of compare-and-swap fairness test.
+      * Added configure test for pthread_yield.
+
+goodell (6):
+      * Fix bad include guard in the opa_by_lock.h header.
+      * Add new "unsafe" primitives.  Also minor updates to the docs.
+      * Add support for 64-bit PPC.
+      * Update README to reflect 64-bit PPC support.
+      * Add static initializer macros for OPA_int_t/OPA_ptr_t.
+      * Actually include the COPYRIGHT and CHANGELOG files in the distribution.
+
+jayesh (1):
+      * Fixed compiler warnings in NT intrinsics. Now type casting the arguments to NT intrinsics correctly
+
+
+=============
+OpenPA v1.0.1
+=============
+
+Major Changes:
+      * Fix for x86/x86_64 machines that don't support SSE2 and therefore lfence/mfence.
+      * Fix major bug in SC on PPC.  Fixes ticket #8.
+
+Individual Change Summary By Developer:
+
+buntinas (2):
+      * Work around PGI compiler bug by rearranging input parameters
+      * check for pre-Pentium 4 machines which don't support mfence and lfence
+
+fortnern (2):
+      * Add/improve tests for fetch_and_{incr,decr}_int and fetch_and_add_int.
+      * Add some tests for OPA_cas_int.  Also fix a bug in the fetch and * tests.
+
+goodell (6):
+      * Remove erroneous "C" mode from some emacs modelines.
+      * Fix Darius' email address in the COPYRIGHT file.
+      * Update the README version number to match configure.in.
+      * Add an "all-executable" target to support parallel make in MPICH2.
+      * Fix major bug in SC on PPC.  Fixes ticket #8.
+      * Add new header files to the appropriate automake variables.
+
+
+=============
+OpenPA v1.0.0
+=============
+
+everyone:
+      * This is the initial release of OpenPA.
+      * support for GCC + x86/x86_64
+      * support for GCC + IA64
+      * support for GCC intrinsic atomic operations
+      * support for GCC + PPC450 (IBM Blue Gene/P compute nodes)
+      * support for GCC + MIPS (specifically, SiCortex compute nodes)
+      * support for SUN Solaris' atomic operations library
+      * support for Windows NT intrinsic atomic operations
+      * Includes a partially completed test suite covering a substantial portion of the API.

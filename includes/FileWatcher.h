@@ -1,17 +1,10 @@
 #ifndef FILEWATCHER_H
 #define FILEWATCHER_H
 
+#include "EventQueue.h"
 #include <string>
-#include <queue>
 
 namespace NSFW {
-
-  enum Action { CREATED, DELETED, MODIFIED, RENAMED };
-
-  struct Event {
-    Action action;
-    std::string directory, file[2];
-  };
 
   struct Error {
     std::string message;

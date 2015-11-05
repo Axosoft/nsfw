@@ -8,12 +8,13 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <map>
-#include <set>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <map>
+#include <set>
+#include <queue>
 
 namespace NSFW {
 

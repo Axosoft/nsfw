@@ -3,7 +3,6 @@
 
 #include "FileWatcher.h"
 #include <nan.h>
-#include <queue>
 #include <vector>
 
 namespace NSFW

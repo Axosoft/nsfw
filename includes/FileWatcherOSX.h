@@ -11,9 +11,10 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <search.h>
-#include <map>
 #include <time.h>
 #include <sys/errno.h>
+#include <map>
+#include <queue>
 
 namespace NSFW {
 

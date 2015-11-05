@@ -3,6 +3,11 @@ env:
     - export NODE_VERSION="0.10" CC=clang CXX=clang++ npm_config_clang=1
     - export NODE_VERSION="0.12" CC=clang CXX=clang++ npm_config_clang=1
     - export NODE_VERSION="4.1" CC=clang CXX=clang++ npm_config_clang=1
+
+branches:
+  only:
+    - master
+
 git:
   depth: 10
 

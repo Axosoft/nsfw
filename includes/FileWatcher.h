@@ -21,7 +21,7 @@ namespace NSFW {
     std::string errorMessage();
     bool errors();
     bool hasStopped();
-    std::queue<Event> *pollEvents();
+    EventQueue &getEventQueue();
     bool running();
     bool start();
     bool stop();
@@ -29,7 +29,7 @@ namespace NSFW {
   private:
     void *fwInterface;
     Error mError;
-    std::queue<Event> mEventsQueue;
+    EventQueue mEventQueue;
     std::string mPath;
     bool mStopFlag;
     bool mWatchFiles;

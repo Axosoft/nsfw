@@ -3,8 +3,8 @@
 
 namespace NSFW {
 
-  FileWatcherOSX::FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error)
-    : mDie(false), mDirTree(NULL), mError(error), mEventsQueue(eventsQueue), mIsDirWatch(false), mPath(path), mWatchFiles(watchFiles)
+  FileWatcherOSX::FileWatcherOSX(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error)
+    : mDie(false), mDirTree(NULL), mError(error), mEventQueue(eventQueue), mIsDirWatch(false), mPath(path), mWatchFiles(watchFiles)
   {
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) == 0)
@@ -91,7 +91,7 @@ namespace NSFW {
           event.directory = path;
           event.file[0] = name;
           event.action = DELETED;
-          mEventsQueue.push(event);
+          mEventQueue.push(event);
           mFile.exists = false;
           usleep(1000);
           continue;
@@ -111,12 +111,12 @@ namespace NSFW {
         eventA.directory = path;
         eventA.file[0] = name;
         eventA.action = DELETED;
-        mEventsQueue.push(eventA);
+        mEventQueue.push(eventA);
 
         eventB.directory = path;
         eventB.file[0] = name;
         eventB.action = CREATED;
-        mEventsQueue.push(eventB);
+        mEventQueue.push(eventB);
         mFile = snapshot;
       }
 
@@ -126,7 +126,7 @@ namespace NSFW {
         event.directory = path;
         event.file[0] = name;
         event.action = CREATED;
-        mEventsQueue.push(event);
+        mEventQueue.push(event);
         mFile = snapshot;
       }
       else if (!checkTimeValEquality(&mFile.file.st_mtimespec, &snapshot.file.st_mtimespec)
@@ -136,7 +136,7 @@ namespace NSFW {
         event.directory = path;
         event.file[0] = name;
         event.action = MODIFIED;
-        mEventsQueue.push(event);
+        mEventQueue.push(event);
         mFile = snapshot;
       }
     }
@@ -166,7 +166,7 @@ namespace NSFW {
         event.directory = root->path + "/" + root->name;
         event.file[0] = fileIter->second.name;
         event.action = action;
-        mEventsQueue.push(event);
+        mEventQueue.push(event);
       }
 
       // Add directories to the queue to continue listing events
@@ -180,7 +180,7 @@ namespace NSFW {
       event.directory = root->path;
       event.file[0] = root->name;
       event.action = action;
-      mEventsQueue.push(event);
+      mEventQueue.push(event);
 
       dirQueue.pop();
     }
@@ -339,7 +339,7 @@ namespace NSFW {
           event.directory = currentPath;
           event.file[0] = fileIter->second.name;
           event.action = DELETED;
-          mEventsQueue.push(event);
+          mEventQueue.push(event);
           continue;
         }
 
@@ -351,7 +351,7 @@ namespace NSFW {
           event.file[0] = fileIter->second.name;
           event.file[1] = currentComparableFilePtr->second.name;
           event.action = RENAMED;
-          mEventsQueue.push(event);
+          mEventQueue.push(event);
         }
 
         // changed event
@@ -362,7 +362,7 @@ namespace NSFW {
           event.directory = currentPath;
           event.file[0] = fileIter->second.name;
           event.action = MODIFIED;
-          mEventsQueue.push(event);
+          mEventQueue.push(event);
         }
 
         currentFileMapCopy.erase(currentComparableFilePtr);
@@ -377,7 +377,7 @@ namespace NSFW {
         event.directory = currentPath;
         event.file[0] = fileIter->second.name;
         event.action = CREATED;
-        mEventsQueue.push(event);
+        mEventQueue.push(event);
       }
 
       // compare directory structure -------------------------------------------
@@ -407,7 +407,7 @@ namespace NSFW {
           event.file[0] = dirIter->second->name;
           event.file[1] = currentComparableDirPtr->second->name;
           event.action = RENAMED;
-          mEventsQueue.push(event);
+          mEventQueue.push(event);
         }
 
         // create a new pair for comparison

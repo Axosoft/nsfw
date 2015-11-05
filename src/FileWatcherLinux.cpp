@@ -3,8 +3,8 @@
 
 namespace NSFW {
 
-  FileWatcherLinux::FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error)
-    : mError(error), mEventsQueue(eventsQueue), mInotify(0), mPath(path), mWatchFiles(watchFiles) {
+  FileWatcherLinux::FileWatcherLinux(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error)
+    : mError(error), mEventQueue(eventQueue), mInotify(0), mPath(path), mWatchFiles(watchFiles) {
       // strip trailing slash
       if (mPath[mPath.length() - 1] == '/') {
         mPath = mPath.substr(0, mPath.length() - 1);
@@ -22,7 +22,7 @@ namespace NSFW {
     event.action = action;
     event.directory = directory;
     event.file[0] = file;
-    mEventsQueue.push(event);
+    mEventQueue.push(event);
   }
 
   Directory *FileWatcherLinux::buildDirTree(std::string path, bool queueFileEvents = false) {
@@ -244,7 +244,7 @@ namespace NSFW {
         // if the event is not a moved to event and the cookie exists
         // we should reset the cookie and push the last moved from event
         if (cookie != 0 && inEvent->mask != IN_MOVED_TO) {
-          mEventsQueue.push(lastMovedFromEvent);
+          mEventQueue.push(lastMovedFromEvent);
           cookie = 0;
           watchDescriptor = -1;
         }
@@ -334,7 +334,7 @@ namespace NSFW {
               event.directory = mWDtoDirNode[inEvent->wd]->path;
               event.file[0] = *lastMovedFromEvent.file;
               event.file[1] = inEvent->name;
-              mEventsQueue.push(event);
+              mEventQueue.push(event);
             } else {
               addEvent(CREATED, inEvent);
             }

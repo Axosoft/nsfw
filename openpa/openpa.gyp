@@ -3,8 +3,12 @@
         {
             "target_name": "openpa",
             "target_arch%": "x86",
+            "type": "static_library",
+
             "sources": [
                 "src/primitives/opa_emulated.h",
+                "src/primitives/opa_nt_intrinics.h",
+                "src/primitives/opa_gcc_intrinsics.h",
                 "src/opa_config.h",
                 "src/opa_primitives.h",
                 "src/opa_primitives.c",
@@ -12,10 +16,14 @@
                 "src/opa_queue.h",
                 "src/opa_queue.c"
             ],
+            "include_dirs": [
+                "src/primitves",
+                "src"
+            ],
             "conditions": [
                 ["OS=='win'", {
                     "sources": [
-                        "opa_nt_intrinsics.h"
+                        "src/primitives/opa_nt_intrinsics.h"
                     ],
                     "defines": [
                         "OPA_HAVE_NT_INTRINSICS=1",
@@ -39,7 +47,7 @@
                 }],
                 ["OS=='mac' or OS=='linux'", {
                     "sources": [
-                        "opa_gcc_intrinsics.h"
+                        "src/primitives/opa_gcc_intrinsics.h"
                     ],
                     "defines": [
                         "OPA_HAVE_GCC_INTRINSIC_ATOMICS"
@@ -55,7 +63,12 @@
                         "OPA_SIZEOF_VOID_P=4"
                     ]
                 }]
-            ]
+            ],
+            "direct_dependent_settings": {
+                "include_dirs": [
+                    "src"
+                ]
+            }
         }
     ]
 }

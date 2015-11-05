@@ -27,7 +27,7 @@ namespace NSFW {
 
   class FileWatcherLinux {
   public:
-    FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error);
+    FileWatcherLinux(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error);
     ~FileWatcherLinux();
     Directory *buildDirTree(std::string path, bool queueFileEvents);
     Directory *buildWatchDirectory();
@@ -46,7 +46,7 @@ namespace NSFW {
     void addEvent(Action action, std::string directory, std::string file);
     Directory *mDirTree;
     Error &mError;
-    std::queue<Event> &mEventsQueue;
+    EventQueue &mEventQueue;
     int mInotify;
     std::string mPath;
     pthread_t mThread;

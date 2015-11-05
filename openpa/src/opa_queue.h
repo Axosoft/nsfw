@@ -1,5 +1,5 @@
 /* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil ; -*- */
-/*  
+/*
  *  (C) 2008 by Argonne National Laboratory.
  *      See COPYRIGHT in top-level directory.
  */
@@ -30,7 +30,7 @@ extern char *OPA_Shm_asymm_base_addr;
    assumes that there is only one shared memory segment.  If this turns out to
    not be the case in the future, we should probably add support for multiple
    shm segments.
-   
+
    This function will return an error if it has already been called. */
 int OPA_Shm_asymm_init(char *base);
 
@@ -45,7 +45,7 @@ int OPA_Shm_asymm_init(char *base);
 /* This structure exists such that it is possible to expand the expressiveness
    of a relative address at some point in the future.  It also provides a
    modicum of type safety to help prevent certain flavors of errors.
-   
+
    For example, instead of referencing an offset from a global base address, it
    might make sense for there to be multiple base addresses.  These base
    addresses could correspond to the start of a segment or region of shared
@@ -128,7 +128,7 @@ OPA_Shm_rel_addr_t OPA_Shm_cas_rel_null(OPA_Shm_rel_addr_t *addr, OPA_Shm_rel_ad
       only one L2 cache miss is encountered when enqueuing onto an empty queue
       or dequeuing from a queue with one element. And because the tail and
       shadow head are in separate cache lines, there are no L2 cache misses from
-      false sharing. 
+      false sharing.
 
       We found that using a shadow head pointer reduced one-way latency by about
       200 ns on a dual 2 GHz Xeon node.
@@ -259,7 +259,7 @@ do {                                                                          \
     OPA_Shm_rel_addr_t _r_e;                                                  \
                                                                               \
     _r_e = (qhead_ptr)->shadow_head;                                          \
-    _e = OPA_Shm_rel_to_abs(_r_e);                                            \
+    _e = (elt_type *)OPA_Shm_rel_to_abs(_r_e);                                            \
                                                                               \
     if (!OPA_SHM_IS_REL_NULL(_e->elt_hdr_field.next)) {                       \
         (qhead_ptr)->shadow_head = _e->elt_hdr_field.next;                    \

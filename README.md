@@ -13,7 +13,7 @@
       <a href="https://travis-ci.org/Axosoft/nsfw"><img src="https://travis-ci.org/Axosoft/nsfw.svg?branch=master"></a>
       </td>
       <td align="center">
-        <a href="https://ci.appveyor.com/project/implausible/node-simple-file-watcher"><img src="https://ci.appveyor.com/api/projects/status/79ejlq7e60kjmbl6?svg=true"></a>
+        <a href="https://ci.appveyor.com/project/Axosoft/nsfw"><img src="https://ci.appveyor.com/api/projects/status/tvcss1m0rlp86cu8?svg=true"></a>
       </td>
     </tr>
   </tbody>

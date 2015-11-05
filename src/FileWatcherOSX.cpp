@@ -21,15 +21,15 @@ namespace NSFW {
   }
 
   void FileWatcherOSX::callback(
-      ConstFSEventStreamRef streamRef,
-      void *clientCallBackInfo,
-      size_t numEvents,
-      void *eventPaths,
-      const FSEventStreamEventFlags eventFlags[],
-      const FSEventStreamEventId eventIds[])
-  {
-      FileWatcherOSX *fwOSX = (FileWatcherOSX *)clientCallBackInfo;
-      fwOSX->processDirCallback();
+    ConstFSEventStreamRef streamRef,
+    void *clientCallBackInfo,
+    size_t numEvents,
+    void *eventPaths,
+    const FSEventStreamEventFlags eventFlags[],
+    const FSEventStreamEventId eventIds[]
+  ) {
+    FileWatcherOSX *fwOSX = (FileWatcherOSX *)clientCallBackInfo;
+    fwOSX->processDirCallback();
   }
 
   bool FileWatcherOSX::checkTimeValEquality(struct timespec *x, struct timespec *y)
@@ -87,11 +87,7 @@ namespace NSFW {
       {
         if (mFile.exists)
         {
-          Event event;
-          event.directory = path;
-          event.file[0] = name;
-          event.action = DELETED;
-          mEventQueue.push(event);
+          mEventQueue.enqueue(DELETED, path, name);
           mFile.exists = false;
           usleep(1000);
           continue;
@@ -105,38 +101,41 @@ namespace NSFW {
 
       snapshot.exists = true;
 
-      if (mFile.exists && !checkTimeValEquality(&mFile.file.st_birthtimespec, &snapshot.file.st_birthtimespec))
-      {
-        Event eventA, eventB;
-        eventA.directory = path;
-        eventA.file[0] = name;
-        eventA.action = DELETED;
-        mEventQueue.push(eventA);
-
-        eventB.directory = path;
-        eventB.file[0] = name;
-        eventB.action = CREATED;
-        mEventQueue.push(eventB);
+      if (
+        mFile.exists &&
+        !checkTimeValEquality(&mFile.file.st_birthtimespec, &snapshot.file.st_birthtimespec)
+      ) {
+        mEventQueue.enqueue(
+          DELETED,
+          path,
+          name
+        );
+        mEventQueue.enqueue(
+          CREATED,
+          path,
+          name
+        );
         mFile = snapshot;
       }
 
       if (!mFile.exists)
       {
-        Event event;
-        event.directory = path;
-        event.file[0] = name;
-        event.action = CREATED;
-        mEventQueue.push(event);
+        mEventQueue.enqueue(
+          CREATED,
+          path,
+          name
+        );
         mFile = snapshot;
       }
-      else if (!checkTimeValEquality(&mFile.file.st_mtimespec, &snapshot.file.st_mtimespec)
-        || !checkTimeValEquality(&mFile.file.st_ctimespec, &snapshot.file.st_ctimespec))
-      {
-        Event event;
-        event.directory = path;
-        event.file[0] = name;
-        event.action = MODIFIED;
-        mEventQueue.push(event);
+      else if (
+        !checkTimeValEquality(&mFile.file.st_mtimespec, &snapshot.file.st_mtimespec) ||
+        !checkTimeValEquality(&mFile.file.st_ctimespec, &snapshot.file.st_ctimespec)
+      ) {
+        mEventQueue.enqueue(
+          MODIFIED,
+          path,
+          name
+        );
         mFile = snapshot;
       }
     }
@@ -159,28 +158,32 @@ namespace NSFW {
     {
       Directory *root = dirQueue.front();
       // Events for all files in this 'root' directory
-      for (std::map<ino_t, FileDescriptor>::iterator fileIter = root->fileMap.begin();
-        fileIter != root->fileMap.end(); ++fileIter)
-      {
-        Event event;
-        event.directory = root->path + "/" + root->name;
-        event.file[0] = fileIter->second.name;
-        event.action = action;
-        mEventQueue.push(event);
+      for (
+        std::map<ino_t, FileDescriptor>::iterator fileIter = root->fileMap.begin();
+        fileIter != root->fileMap.end();
+        ++fileIter
+      ) {
+        mEventQueue.enqueue(
+          action,
+          root->path + "/" + root->name,
+          fileIter->second.name
+        );
       }
 
       // Add directories to the queue to continue listing events
-      for (std::map<ino_t, Directory *>::iterator dirIter = root->childDirectories.begin();
-        dirIter != root->childDirectories.end(); ++dirIter)
-      {
+      for (
+        std::map<ino_t, Directory *>::iterator dirIter = root->childDirectories.begin();
+        dirIter != root->childDirectories.end();
+        ++dirIter
+      ) {
         dirQueue.push(dirIter->second);
       }
 
-      Event event;
-      event.directory = root->path;
-      event.file[0] = root->name;
-      event.action = action;
-      mEventQueue.push(event);
+      mEventQueue.enqueue(
+        action,
+        root->path,
+        root->name
+      );
 
       dirQueue.pop();
     }
@@ -278,8 +281,10 @@ namespace NSFW {
   void FileWatcherOSX::processDirCallback()
   {
     // only run this process if mWatchFiles is true, and we can get a lock on the mutex
-    if (mWatchFiles && pthread_mutex_lock(&mCallbackSync) != 0)
-    {
+    if (
+      mWatchFiles &&
+      pthread_mutex_lock(&mCallbackSync) != 0
+    ) {
       pthread_mutex_unlock(&mCallbackSync);
       return;
     }
@@ -328,56 +333,60 @@ namespace NSFW {
 
 
       // iterate through old snapshot, compare to new snapshot
-      for (std::map<ino_t, FileDescriptor>::iterator fileIter = snapshot.prev->fileMap.begin();
-        fileIter != snapshot.prev->fileMap.end(); ++fileIter)
-      {
+      for (
+        std::map<ino_t, FileDescriptor>::iterator fileIter = snapshot.prev->fileMap.begin();
+        fileIter != snapshot.prev->fileMap.end();
+        ++fileIter
+      ) {
         std::map<ino_t, FileDescriptor>::iterator currentComparableFilePtr = currentFileMapCopy.find(fileIter->first);
         // deleted event
         if (currentComparableFilePtr == currentFileMapCopy.end())
         {
-          Event event;
-          event.directory = currentPath;
-          event.file[0] = fileIter->second.name;
-          event.action = DELETED;
-          mEventQueue.push(event);
+          mEventQueue.enqueue(
+            DELETED,
+            currentPath,
+            fileIter->second.name
+          );
           continue;
         }
 
         // renamed event
         if (fileIter->second.name != currentComparableFilePtr->second.name)
         {
-          Event event;
-          event.directory = currentPath;
-          event.file[0] = fileIter->second.name;
-          event.file[1] = currentComparableFilePtr->second.name;
-          event.action = RENAMED;
-          mEventQueue.push(event);
+          mEventQueue.enqueue(
+            RENAMED,
+            currentPath,
+            fileIter->second.name,
+            currentComparableFilePtr->second.name
+          );
         }
 
         // changed event
-        if (!checkTimeValEquality(&fileIter->second.meta.st_mtimespec, &currentComparableFilePtr->second.meta.st_mtimespec)
-         || !checkTimeValEquality(&fileIter->second.meta.st_ctimespec, &currentComparableFilePtr->second.meta.st_ctimespec))
-        {
-          Event event;
-          event.directory = currentPath;
-          event.file[0] = fileIter->second.name;
-          event.action = MODIFIED;
-          mEventQueue.push(event);
+        if (
+          !checkTimeValEquality(&fileIter->second.meta.st_mtimespec, &currentComparableFilePtr->second.meta.st_mtimespec) ||
+          !checkTimeValEquality(&fileIter->second.meta.st_ctimespec, &currentComparableFilePtr->second.meta.st_ctimespec)
+        ) {
+          mEventQueue.enqueue(
+            MODIFIED,
+            currentPath,
+            fileIter->second.name
+          );
         }
 
         currentFileMapCopy.erase(currentComparableFilePtr);
       }
 
       // find all new files
-      for (std::map<ino_t, FileDescriptor>::iterator fileIter = currentFileMapCopy.begin();
-        fileIter != currentFileMapCopy.end(); ++fileIter)
-      {
-        // created event
-        Event event;
-        event.directory = currentPath;
-        event.file[0] = fileIter->second.name;
-        event.action = CREATED;
-        mEventQueue.push(event);
+      for (
+        std::map<ino_t, FileDescriptor>::iterator fileIter = currentFileMapCopy.begin();
+        fileIter != currentFileMapCopy.end();
+        ++fileIter
+      ) {
+        mEventQueue.enqueue(
+          CREATED,
+          currentPath,
+          fileIter->second.name
+        );
       }
 
       // compare directory structure -------------------------------------------
@@ -386,9 +395,11 @@ namespace NSFW {
       std::map<ino_t, Directory *> currentChildDirectories(snapshot.current->childDirectories);
 
       // iterate through old snapshot, compare to new snapshot
-      for(std::map<ino_t, Directory *>::iterator dirIter = snapshot.prev->childDirectories.begin();
-        dirIter != snapshot.prev->childDirectories.end(); ++dirIter)
-      {
+      for(
+        std::map<ino_t, Directory *>::iterator dirIter = snapshot.prev->childDirectories.begin();
+        dirIter != snapshot.prev->childDirectories.end();
+        ++dirIter
+      ) {
         std::map<ino_t, Directory *>::iterator currentComparableDirPtr = currentChildDirectories.find(dirIter->first);
 
         // deleted event
@@ -402,12 +413,12 @@ namespace NSFW {
         // renamed event
         if (dirIter->second->name != currentComparableDirPtr->second->name)
         {
-          Event event;
-          event.directory = currentPath;
-          event.file[0] = dirIter->second->name;
-          event.file[1] = currentComparableDirPtr->second->name;
-          event.action = RENAMED;
-          mEventQueue.push(event);
+          mEventQueue.enqueue(
+            RENAMED,
+            currentPath,
+            dirIter->second->name,
+            currentComparableDirPtr->second->name
+          );
         }
 
         // create a new pair for comparison
@@ -422,9 +433,11 @@ namespace NSFW {
         currentChildDirectories.erase(currentComparableDirPtr);
       }
 
-      for (std::map<ino_t, Directory *>::iterator dirIter = currentChildDirectories.begin();
-        dirIter != currentChildDirectories.end(); ++dirIter)
-      {
+      for (
+        std::map<ino_t, Directory *>::iterator dirIter = currentChildDirectories.begin();
+        dirIter != currentChildDirectories.end();
+        ++dirIter
+      ) {
         // add all associated created events for this directory deletion
         handleTraversingDirectoryChange(CREATED, dirIter->second);
       }
@@ -489,8 +502,10 @@ namespace NSFW {
       bool failure = false;
       for (int i = 0; i < n; ++i)
       {
-        if (!strcmp(directoryContents[i]->d_name, ".") || !strcmp(directoryContents[i]->d_name, ".."))
-        {
+        if (
+          !strcmp(directoryContents[i]->d_name, ".") ||
+          !strcmp(directoryContents[i]->d_name, "..")
+        ) {
           continue; // skip navigation folder
         }
 
@@ -551,8 +566,10 @@ namespace NSFW {
   bool FileWatcherOSX::start()
   {
     // test mutex for init
-    if (pthread_mutex_lock(&mCallbackSync) != 0 || pthread_mutex_lock(&mMainLoopSync) != 0)
-    {
+    if (
+      pthread_mutex_lock(&mCallbackSync) != 0 ||
+      pthread_mutex_lock(&mMainLoopSync) != 0
+    ) {
       return false; // if it fails, let caller know that this is not started
     }
     else
@@ -561,8 +578,10 @@ namespace NSFW {
       pthread_mutex_unlock(&mMainLoopSync);
     }
 
-    if (mWatchFiles && pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this) == 0)
-    {
+    if (
+      mWatchFiles &&
+      pthread_create(&mThread, 0, &FileWatcherOSX::mainLoop, (void *)this) == 0
+    ) {
       return true;
     }
     else

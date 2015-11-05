@@ -4,14 +4,16 @@
 #include "EventQueue.h"
 #include <string>
 
-namespace NSFW {
-
-  struct Error {
+namespace NSFW
+{
+  struct Error
+  {
     std::string message;
     bool status;
   };
 
-  class FileWatcher {
+  class FileWatcher
+  {
   public:
     // Constructor
     FileWatcher(std::string path);

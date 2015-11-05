@@ -2,7 +2,6 @@
 #include <iostream>
 
 namespace NSFW {
-
   FileWatcherLinux::FileWatcherLinux(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error)
     : mError(error), mEventQueue(eventQueue), mInotify(0), mPath(path), mWatchFiles(watchFiles)
   {
@@ -562,5 +561,4 @@ namespace NSFW {
   {
     mDirTree = tree;
   }
-
 }

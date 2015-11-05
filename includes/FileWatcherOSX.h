@@ -16,29 +16,34 @@
 #include <map>
 #include <queue>
 
-namespace NSFW {
-
-  struct FileDescriptor {
+namespace NSFW
+{
+  struct FileDescriptor
+  {
     struct stat meta;
     std::string name, path;
   };
 
-  struct FilePoll {
+  struct FilePoll
+  {
     struct stat file;
     bool exists;
   };
 
-  struct Directory {
+  struct Directory
+  {
     std::map<ino_t, FileDescriptor> fileMap;
     std::map<ino_t, Directory *> childDirectories;
     std::string name, path;
   };
 
-  struct DirectoryPair {
+  struct DirectoryPair
+  {
     Directory *prev, *current;
   };
 
-  class FileWatcherOSX {
+  class FileWatcherOSX
+  {
   public:
     FileWatcherOSX(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error);
     ~FileWatcherOSX();
@@ -78,7 +83,6 @@ namespace NSFW {
     pthread_t mThread;
     bool &mWatchFiles;
   };
-
 }
 
 #endif

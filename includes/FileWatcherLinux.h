@@ -16,16 +16,18 @@
 #include <set>
 #include <queue>
 
-namespace NSFW {
-
-  struct Directory {
+namespace NSFW
+{
+  struct Directory
+  {
     std::map<std::string, Directory *> childDirectories;
     std::set<std::string> files;
     std::string name, path;
     int watchDescriptor;
   };
 
-  class FileWatcherLinux {
+  class FileWatcherLinux
+  {
   public:
     FileWatcherLinux(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error);
     ~FileWatcherLinux();
@@ -53,7 +55,6 @@ namespace NSFW {
     std::map<int, Directory *> mWDtoDirNode;
     bool &mWatchFiles;
   };
-
 }
 
 #endif

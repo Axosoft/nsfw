@@ -2,7 +2,6 @@
 #include <iostream>
 
 namespace NSFW {
-
   FileWatcherOSX::FileWatcherOSX(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error)
     : mDie(false), mDirTree(NULL), mError(error), mEventQueue(eventQueue), mIsDirWatch(false), mPath(path), mWatchFiles(watchFiles)
   {
@@ -53,9 +52,11 @@ namespace NSFW {
       Directory *root = dirQueue.front();
 
       // Add directories to the queue to continue deleting directories/files
-      for (std::map<ino_t, Directory *>::iterator dirIter = root->childDirectories.begin();
-        dirIter != root->childDirectories.end(); ++dirIter)
-      {
+      for (
+        std::map<ino_t, Directory *>::iterator dirIter = root->childDirectories.begin();
+        dirIter != root->childDirectories.end();
+        ++dirIter
+      ) {
         dirQueue.push(dirIter->second);
       }
 
@@ -633,5 +634,4 @@ namespace NSFW {
       pthread_mutex_unlock(&fwOSX->mCallbackSync);
     }
   }
-
 }

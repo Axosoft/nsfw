@@ -12,7 +12,6 @@
 #endif
 
 namespace NSFW {
-
   #pragma unmanaged
 
   FileWatcher::FileWatcher(std::string path)
@@ -79,5 +78,4 @@ namespace NSFW {
       return true;
     }
   }
-
 }

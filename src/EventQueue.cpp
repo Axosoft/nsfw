@@ -1,7 +1,6 @@
 #include "../includes/EventQueue.h"
 
 namespace NSFW {
-
   #pragma unmanaged
   EventQueue::EventQueue() {
     OPA_Queue_init(&mQueue);

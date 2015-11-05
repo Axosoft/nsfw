@@ -14,9 +14,10 @@ using namespace System::Runtime::InteropServices;
 using namespace System::Collections::Generic;
 using namespace System::Threading;
 
-namespace NSFW {
-
-  ref class FSEventHandler {
+namespace NSFW
+{
+  ref class FSEventHandler
+  {
   public:
     FSEventHandler(
       FileSystemWatcher ^parentFW,

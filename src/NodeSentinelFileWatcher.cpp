@@ -8,7 +8,6 @@
 // #include <iostream>
 
 namespace NSFW {
-
   #pragma unmanaged
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
 

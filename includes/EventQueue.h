@@ -4,8 +4,8 @@ extern "C" {
 }
 #include <string>
 
-namespace NSFW {
-
+namespace NSFW
+{
   enum Action { CREATED, DELETED, MODIFIED, RENAMED };
 
   struct Event {

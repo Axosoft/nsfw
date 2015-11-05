@@ -12,7 +12,7 @@
 #define OPA_QUEUE_H_INCLUDED
 
 #include "opa_primitives.h"
-#ifdef OPA_HAVE_STDDEF_H
+#ifdef HAVE_STDDEF_H
 #include <stddef.h>
 #endif /* OPA_HAVE_STDDEF_H */
 

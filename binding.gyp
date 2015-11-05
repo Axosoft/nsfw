@@ -105,8 +105,8 @@
             }],
             ["OS=='mac' or OS=='linux'", {
                 "defines": [
-                    "OPA_HAVE_GCC_INTRINSIC_ATOMICS",
-                    "OPA_HAVE_STDDEF_H"
+                    "OPA_HAVE_GCC_INTRINSIC_ATOMICS=1",
+                    "HAVE_STDDEF_H=1"
                 ]
             }],
             ["target_arch=='x64' or target_arch=='arm64'", {

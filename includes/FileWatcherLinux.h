@@ -43,7 +43,7 @@ namespace NSFW {
 
   private:
     void addEvent(Action action, inotify_event *inEvent);
-    void addEvent(Action action, std::string directory, std::string file);
+    void addEvent(Action action, std::string directory, std::string fileA, std::string fileB = "");
     Directory *mDirTree;
     Error &mError;
     EventQueue &mEventQueue;

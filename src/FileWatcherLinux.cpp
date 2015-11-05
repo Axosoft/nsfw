@@ -14,15 +14,11 @@ namespace NSFW {
 
   void FileWatcherLinux::addEvent(Action action, inotify_event *inEvent) {
     Directory *parent = mWDtoDirNode[inEvent->wd];
-    addEvent(action, parent->path + "/" + parent->name, inEvent->name);
+    mEventQueue.enqueue(action, parent->path + "/" + parent->name, inEvent->name);
   }
 
-  void FileWatcherLinux::addEvent(Action action, std::string directory, std::string file) {
-    Event event;
-    event.action = action;
-    event.directory = directory;
-    event.file[0] = file;
-    mEventQueue.push(event);
+  void FileWatcherLinux::addEvent(Action action, std::string directory, std::string fileA, std::string fileB) {
+    mEventQueue.enqueue(action, directory, fileA, fileB);
   }
 
   Directory *FileWatcherLinux::buildDirTree(std::string path, bool queueFileEvents = false) {
@@ -244,7 +240,7 @@ namespace NSFW {
         // if the event is not a moved to event and the cookie exists
         // we should reset the cookie and push the last moved from event
         if (cookie != 0 && inEvent->mask != IN_MOVED_TO) {
-          mEventQueue.push(lastMovedFromEvent);
+          addEvent(lastMovedFromEvent.action, lastMovedFromEvent.directory, lastMovedFromEvent.fileA);
           cookie = 0;
           watchDescriptor = -1;
         }
@@ -315,7 +311,7 @@ namespace NSFW {
             if (position + sizeof(struct inotify_event) + inEvent->len < bytesRead || select(mInotify+1, &checkWD, 0, 0, &timeout) > 0) {
               lastMovedFromEvent.action = DELETED;
               lastMovedFromEvent.directory = mWDtoDirNode[inEvent->wd]->path;
-              lastMovedFromEvent.file[0] = inEvent->name;
+              lastMovedFromEvent.fileA = inEvent->name;
               cookie = inEvent->cookie;
               watchDescriptor = inEvent->wd;
             } else {
@@ -330,11 +326,7 @@ namespace NSFW {
             if (cookie != 0 && inEvent->cookie == cookie && inEvent->wd == watchDescriptor) {
               cookie = 0;
               watchDescriptor = -1;
-              event.action = RENAMED;
-              event.directory = mWDtoDirNode[inEvent->wd]->path;
-              event.file[0] = *lastMovedFromEvent.file;
-              event.file[1] = inEvent->name;
-              mEventQueue.push(event);
+              addEvent(RENAMED, mWDtoDirNode[inEvent->wd]->path, lastMovedFromEvent.fileA, inEvent->name);
             } else {
               addEvent(CREATED, inEvent);
             }

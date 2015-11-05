@@ -18,7 +18,11 @@ namespace NSFW {
   void FileWatcherLinux::addEvent(Action action, inotify_event *inEvent)
   {
     Directory *parent = mWDtoDirNode[inEvent->wd];
-    mEventQueue.enqueue(action, parent->path + "/" + parent->name, inEvent->name);
+    mEventQueue.enqueue(
+      action,
+      parent->path + "/" + parent->name,
+      inEvent->name
+    );
   }
 
   void FileWatcherLinux::addEvent(
@@ -27,7 +31,12 @@ namespace NSFW {
     std::string fileA,
     std::string fileB
   ) {
-    mEventQueue.enqueue(action, directory, fileA, fileB);
+    mEventQueue.enqueue(
+      action,
+      directory,
+      fileA,
+      fileB
+    );
   }
 
   Directory *FileWatcherLinux::buildDirTree(std::string path, bool queueFileEvents = false)
@@ -61,11 +70,22 @@ namespace NSFW {
       int attributes;
       if (root == topRoot)
       {
-        attributes = IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF;
+        attributes =  IN_ATTRIB |
+                      IN_CREATE |
+                      IN_DELETE |
+                      IN_MODIFY |
+                      IN_MOVED_FROM |
+                      IN_MOVED_TO |
+                      IN_DELETE_SELF;
       }
       else
       {
-        attributes = IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO;
+        attributes =  IN_ATTRIB |
+                      IN_CREATE |
+                      IN_DELETE |
+                      IN_MODIFY |
+                      IN_MOVED_FROM |
+                      IN_MOVED_TO;
       }
 
       root->watchDescriptor = inotify_add_watch(
@@ -138,7 +158,11 @@ namespace NSFW {
 
         if (queueFileEvents)
         {
-          addEvent(CREATED, root->path + "/" + root->name, directoryContents[i]->d_name);
+          addEvent(
+            CREATED,
+            root->path + "/" + root->name,
+            directoryContents[i]->d_name
+          );
         }
       }
 
@@ -188,7 +212,12 @@ namespace NSFW {
     watchDir->watchDescriptor = inotify_add_watch(
       mInotify,
       watchDir->path.c_str(),
-      IN_ATTRIB | IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO
+      IN_ATTRIB |
+      IN_CREATE |
+      IN_DELETE |
+      IN_MODIFY |
+      IN_MOVED_FROM |
+      IN_MOVED_TO
     );
 
     // if it fails, we'll return an error
@@ -419,7 +448,12 @@ namespace NSFW {
             ) {
               cookie = 0;
               watchDescriptor = -1;
-              addEvent(RENAMED, mWDtoDirNode[inEvent->wd]->path, lastMovedFromEvent.fileA, inEvent->name);
+              addEvent(
+                RENAMED,
+                mWDtoDirNode[inEvent->wd]->path,
+                lastMovedFromEvent.fileA,
+                inEvent->name
+              );
             }
             else
             {
@@ -457,15 +491,27 @@ namespace NSFW {
         {
           case IN_ATTRIB:
           case IN_MODIFY:
-            addEvent(MODIFIED, mDirTree->path, mDirTree->name);
+            addEvent(
+              MODIFIED,
+              mDirTree->path,
+              mDirTree->name
+            );
             break;
           case IN_MOVED_TO:
           case IN_CREATE:
-            addEvent(CREATED, mDirTree->path, mDirTree->name);
+            addEvent(
+              CREATED,
+              mDirTree->path,
+              mDirTree->name
+            );
             break;
           case IN_MOVED_FROM:
           case IN_DELETE:
-            addEvent(DELETED, mDirTree->path, mDirTree->name);
+            addEvent(
+              DELETED,
+              mDirTree->path,
+              mDirTree->name
+            );
             break;
         }
       } while ((position += sizeof(struct inotify_event) + inEvent->len) < bytesRead);
@@ -489,7 +535,12 @@ namespace NSFW {
 
     if (
       mWatchFiles &&
-      pthread_create(&mThread, 0, &FileWatcherLinux::mainLoop, (void *)this)
+      pthread_create(
+        &mThread,
+        0,
+        &FileWatcherLinux::mainLoop,
+        (void *)this
+      )
     ) {
       return true;
     }

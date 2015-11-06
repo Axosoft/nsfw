@@ -8,25 +8,28 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <map>
-#include <set>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <map>
+#include <set>
+#include <queue>
 
-namespace NSFW {
-
-  struct Directory {
+namespace NSFW
+{
+  struct Directory
+  {
     std::map<std::string, Directory *> childDirectories;
     std::set<std::string> files;
     std::string name, path;
     int watchDescriptor;
   };
 
-  class FileWatcherLinux {
+  class FileWatcherLinux
+  {
   public:
-    FileWatcherLinux(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error);
+    FileWatcherLinux(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error);
     ~FileWatcherLinux();
     Directory *buildDirTree(std::string path, bool queueFileEvents);
     Directory *buildWatchDirectory();
@@ -42,17 +45,16 @@ namespace NSFW {
 
   private:
     void addEvent(Action action, inotify_event *inEvent);
-    void addEvent(Action action, std::string directory, std::string file);
+    void addEvent(Action action, std::string directory, std::string fileA, std::string fileB = "");
     Directory *mDirTree;
     Error &mError;
-    std::queue<Event> &mEventsQueue;
+    EventQueue &mEventQueue;
     int mInotify;
     std::string mPath;
     pthread_t mThread;
     std::map<int, Directory *> mWDtoDirNode;
     bool &mWatchFiles;
   };
-
 }
 
 #endif

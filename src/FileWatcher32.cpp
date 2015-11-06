@@ -2,67 +2,73 @@
 
 namespace NSFW {
   #pragma managed
-  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag, Error &error)
-    : mParentFW(parentFW), mEventsQueue(eventsQueue), mWatchFiles(watchFiles), mStopFlag(stopFlag), mError(error) {}
+  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, EventQueue &eventQueue, bool &watchFiles, bool &stopFlag, Error &error)
+    : mParentFW(parentFW), mEventQueue(eventQueue), mWatchFiles(watchFiles), mStopFlag(stopFlag), mError(error) {}
 
-  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag, Error &error, System::String ^fileName)
-    : mParentFW(parentFW), mEventsQueue(eventsQueue), mFileName(fileName), mWatchFiles(watchFiles), mStopFlag(stopFlag), mError(error) {}
+  FSEventHandler::FSEventHandler(FileSystemWatcher ^parentFW, EventQueue &eventQueue, bool &watchFiles, bool &stopFlag, Error &error, System::String ^fileName)
+    : mParentFW(parentFW), mEventQueue(eventQueue), mFileName(fileName), mWatchFiles(watchFiles), mStopFlag(stopFlag), mError(error) {}
 
   // Handles the generalized change event for changed/created/deleted and pushes event to queue
-  void FSEventHandler::eventHandlerHelper(FileSystemEventArgs ^e, Action action) {
-    if (!mWatchFiles || mError.status) {
+  void FSEventHandler::eventHandlerHelper(FileSystemEventArgs ^e, Action action)
+  {
+    if (!mWatchFiles || mError.status)
+    {
       // Remove these handlers if the object is no longer listening (stop is called)
       return;
     }
 
     System::String ^eventFileName = getFileName(e->Name);
-    if (!System::String::IsNullOrEmpty(mFileName) && eventFileName != mFileName) {
+    if (!System::String::IsNullOrEmpty(mFileName) && eventFileName != mFileName)
+    {
       return;
     }
-    Event event;
 
-    char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-    event.directory = str;
-    Marshal::FreeHGlobal(IntPtr(str));
+    char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+    char *fileA = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
 
-    str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
-    event.file[0] = str;
-    Marshal::FreeHGlobal(IntPtr(str));
+    mEventQueue.enqueue(action, directory, fileA);
 
-    event.action = action;
-
-    mEventsQueue.push(event);
+    Marshal::FreeHGlobal(IntPtr(directory));
+    Marshal::FreeHGlobal(IntPtr(fileA));
   }
 
-  FileSystemWatcher ^FSEventHandler::getParent() {
+  FileSystemWatcher ^FSEventHandler::getParent()
+  {
     return mParentFW;
   }
 
-  Error &FSEventHandler::getErrorStruct() {
+  Error &FSEventHandler::getErrorStruct()
+  {
     return mError;
   }
 
-  bool &FSEventHandler::getStopFlag() {
+  bool &FSEventHandler::getStopFlag()
+  {
     return mStopFlag;
   }
 
-  bool &FSEventHandler::getWatchFiles() {
+  bool &FSEventHandler::getWatchFiles()
+  {
     return mWatchFiles;
   }
 
-  void FSEventHandler::onChanged(Object ^source, FileSystemEventArgs ^e) {
+  void FSEventHandler::onChanged(Object ^source, FileSystemEventArgs ^e)
+  {
     eventHandlerHelper(e, MODIFIED);
   }
 
-  void FSEventHandler::onCreated(Object ^source, FileSystemEventArgs ^e) {
+  void FSEventHandler::onCreated(Object ^source, FileSystemEventArgs ^e)
+  {
     eventHandlerHelper(e, CREATED);
   }
 
-  void FSEventHandler::onDeleted(Object ^source, FileSystemEventArgs ^e) {
+  void FSEventHandler::onDeleted(Object ^source, FileSystemEventArgs ^e)
+  {
     eventHandlerHelper(e, DELETED);
   }
 
-  void FSEventHandler::onError(Object ^source, ErrorEventArgs ^e) {
+  void FSEventHandler::onError(Object ^source, ErrorEventArgs ^e)
+  {
     Exception ^exception = e->GetException();
     mError.status = true;
     char *str = (char*)Marshal::StringToHGlobalAnsi(exception->Message).ToPointer();
@@ -71,61 +77,54 @@ namespace NSFW {
   }
 
   // Specialized handler for renamed events, pushes to event queue
-  void FSEventHandler::onRenamed(Object ^source, RenamedEventArgs ^e) {
-    if (!mWatchFiles || mError.status) {
+  void FSEventHandler::onRenamed(Object ^source, RenamedEventArgs ^e)
+  {
+    if (
+      !mWatchFiles ||
+      mError.status
+    ) {
       // Remove these handlers if the object is no longer listening (stop is called)
       return;
     }
+
     System::String ^eventFileName = getFileName(e->OldName);
-    if (System::String::IsNullOrEmpty(mFileName)) {
-      Event event;
-      char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-      event.directory = str;
-      Marshal::FreeHGlobal(IntPtr(str));
+    if (System::String::IsNullOrEmpty(mFileName))
+    {
+      char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+      char *fileA = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
+      char *fileB = (char*)Marshal::StringToHGlobalAnsi(getFileName(e->Name)).ToPointer();
 
-      str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
-      event.file[0] = str;
-      Marshal::FreeHGlobal(IntPtr(str));
+      mEventQueue.enqueue(RENAMED, directory, fileA, fileB);
 
-      str = (char*)Marshal::StringToHGlobalAnsi(getFileName(e->Name)).ToPointer();
-      event.file[1] = str;
-      Marshal::FreeHGlobal(IntPtr(str));
-
-      event.action = RENAMED;
-      mEventsQueue.push(event);
+      Marshal::FreeHGlobal(IntPtr(directory));
+      Marshal::FreeHGlobal(IntPtr(fileA));
+      Marshal::FreeHGlobal(IntPtr(fileB));
       return;
     }
 
-    if (mFileName == eventFileName) {
-      Event event;
-      char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-      event.directory = str;
-      Marshal::FreeHGlobal(IntPtr(str));
+    if (mFileName == eventFileName)
+    {
+      char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+      char *fileA = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
 
-      str = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
-      event.file[0] = str;
-      Marshal::FreeHGlobal(IntPtr(str));
+      mEventQueue.enqueue(DELETED, directory, fileA);
 
-      event.action = DELETED;
-      mEventsQueue.push(event);
+      Marshal::FreeHGlobal(IntPtr(directory));
+      Marshal::FreeHGlobal(IntPtr(fileA));
       return;
     }
 
     System::String ^newFileName = getFileName(e->Name);
 
-    if (mFileName == newFileName) {
-      Event event;
+    if (mFileName == newFileName)
+    {
+      char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+      char *fileA = (char*)Marshal::StringToHGlobalAnsi(newFileName).ToPointer();
 
-      char *str = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
-      event.directory = str;
-      Marshal::FreeHGlobal(IntPtr(str));
+      mEventQueue.enqueue(CREATED, directory, fileA);
 
-      str = (char*)Marshal::StringToHGlobalAnsi(newFileName).ToPointer();
-      event.file[0] = str;
-      Marshal::FreeHGlobal(IntPtr(str));
-
-      event.action = CREATED;
-      mEventsQueue.push(event);
+      Marshal::FreeHGlobal(IntPtr(directory));
+      Marshal::FreeHGlobal(IntPtr(fileA));
       return;
     }
   }
@@ -144,7 +143,8 @@ namespace NSFW {
     mRenamedHandler = renamedHandler;
   }
 
-  void FSEventHandler::removeHandlers() {
+  void FSEventHandler::removeHandlers()
+  {
     mParentFW->Changed -= mChangedHandler;
     mParentFW->Created -= mCreatedHandler;
     mParentFW->Deleted -= mDeletedHandler;
@@ -152,14 +152,16 @@ namespace NSFW {
     mParentFW->Renamed -= mRenamedHandler;
   }
 
-  static void fileWatcherControl(Object ^data) {
+  static void fileWatcherControl(Object ^data)
+  {
     FSEventHandler ^handler = (FSEventHandler^)data;
     Error &error = handler->getErrorStruct();
     bool &stopFlag = handler->getStopFlag();
     bool &watchFiles = handler->getWatchFiles();
     FileSystemWatcher ^fsWatcher = handler->getParent();
 
-    while(watchFiles && !error.status) {
+    while(watchFiles && !error.status)
+    {
       Thread::Sleep(50);
     }
 
@@ -170,7 +172,13 @@ namespace NSFW {
   }
 
   // Creates the filewatcher and initializes the handlers.
-  bool createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopFlag, Error &error) {
+  bool createFileWatcher(
+    std::string path,
+    EventQueue &eventQueue,
+    bool &watchFiles,
+    bool &stopFlag,
+    Error &error
+  ) {
     FileSystemWatcher ^fsWatcher;
     FSEventHandler ^handler;
     FileSystemEventHandler ^changedHandler, ^createdHandler, ^deletedHandler;
@@ -179,7 +187,8 @@ namespace NSFW {
 
     System::String ^gcPath = gcnew System::String(path.c_str());
 
-    if (System::IO::Directory::Exists(gcPath)) {
+    if (System::IO::Directory::Exists(gcPath))
+    {
       fsWatcher = gcnew FileSystemWatcher();
       fsWatcher->Path = gcPath;
       fsWatcher->IncludeSubdirectories = true;
@@ -193,9 +202,17 @@ namespace NSFW {
         NotifyFilters::Size
       );
 
-      handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopFlag, error);
+      handler = gcnew FSEventHandler(
+        fsWatcher,
+        eventQueue,
+        watchFiles,
+        stopFlag,
+        error
+      );
 
-    } else if (System::IO::File::Exists(gcPath)) {
+    }
+    else if (System::IO::File::Exists(gcPath))
+    {
       System::String ^gcFileName = getFileName(gcPath);
       gcPath = getDirectoryName(gcPath);
 
@@ -211,9 +228,18 @@ namespace NSFW {
         NotifyFilters::Size
       );
 
-      handler = gcnew FSEventHandler(fsWatcher, eventsQueue, watchFiles, stopFlag, error, gcFileName);
+      handler = gcnew FSEventHandler(
+        fsWatcher,
+        eventQueue,
+        watchFiles,
+        stopFlag,
+        error,
+        gcFileName
+      );
 
-    } else {
+    }
+    else
+    {
       return false;
     }
 
@@ -224,7 +250,13 @@ namespace NSFW {
     renamedHandler = gcnew RenamedEventHandler(handler, &FSEventHandler::onRenamed);
 
     // pass the handler delegates to the handler so that it can destroy them at a later time
-    handler->rememberHandlers(changedHandler, createdHandler, deletedHandler, errorHandler, renamedHandler);
+    handler->rememberHandlers(
+      changedHandler,
+      createdHandler,
+      deletedHandler,
+      errorHandler,
+      renamedHandler
+    );
 
     fsWatcher->Changed += changedHandler;
     fsWatcher->Created += createdHandler;
@@ -240,27 +272,40 @@ namespace NSFW {
     return true;
   }
 
-  System::String^ getDirectoryName(System::String^ path) {
+  System::String^ getDirectoryName(System::String^ path)
+  {
     wchar_t delim = '\\';
     array<System::String^>^ tokens = path->Split(delim);
 
-    if (path[path->Length - 1] == delim) {
-      if (tokens->Length == 2 && System::String::IsNullOrEmpty(tokens[1])
-       || tokens->Length < 2) {
+    if (path[path->Length - 1] == delim)
+    {
+      if (
+        tokens->Length == 2 &&
+        System::String::IsNullOrEmpty(tokens[1]) ||
+        tokens->Length < 2
+      ) {
         return gcnew System::String("");
-      } else {
+      }
+      else
+      {
         return path->Substring(0, path->Length - 1);
       }
-    } else {
+    }
+    else
+    {
       return path->Substring(0, path->LastIndexOf(delim));
     }
   }
 
-  System::String^ getFileName(System::String^ path) {
+  System::String^ getFileName(System::String^ path)
+  {
     wchar_t delim = '\\';
-    if (path->LastIndexOf(delim) == path->Length - 1) {
+    if (path->LastIndexOf(delim) == path->Length - 1)
+    {
       return gcnew System::String("");
-    } else {
+    }
+    else
+    {
       return path->Substring(path->LastIndexOf(delim) + 1);
     }
   }

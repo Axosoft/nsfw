@@ -8,7 +8,6 @@
 // #include <iostream>
 
 namespace NSFW {
-
   #pragma unmanaged
   Persistent<v8::Function> NodeSentinelFileWatcher::constructor;
 
@@ -19,9 +18,7 @@ namespace NSFW {
   }
 
   NodeSentinelFileWatcher::~NodeSentinelFileWatcher() {
-    // std::cout << "gc start" << std::endl;
     mFileWatcher->stop();
-    // std::cout << "gc finish" << std::endl;
     delete mFileWatcher;
     delete mCallback;
   }
@@ -73,9 +70,9 @@ namespace NSFW {
     // if it's not running, don't try polling
     if (!nsfw->mFileWatcher->running()) return;
 
-    std::queue<Event> *events = nsfw->mFileWatcher->pollEvents();
+    EventQueue &eventQueue = nsfw->mFileWatcher->getEventQueue();
 
-    if (events == NULL) {
+    if (eventQueue.count() == 0) {
       v8::Local<v8::Array> emptyArray = New<v8::Array>(0);
 
       v8::Local<v8::Value> argv[] = {
@@ -88,14 +85,14 @@ namespace NSFW {
 
     std::vector< v8::Local<v8::Object> > jsEventObjects;
 
-    while(!events->empty()) {
-      Event event = events->front();
-      events->pop();
+    int count = eventQueue.count();
+    for (int i = 0; i < count; ++i) {
+      Event *event = eventQueue.dequeue();
 
       v8::Local<v8::Object> anEvent = New<v8::Object>();
 
       std::string strAction;
-      switch(event.action) {
+      switch(event->action) {
       case CREATED:
         strAction = "CREATED";
         break;
@@ -110,18 +107,18 @@ namespace NSFW {
         break;
       }
       anEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::String>(strAction).ToLocalChecked());
-      anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event.directory).ToLocalChecked());
+      anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>(event->directory).ToLocalChecked());
 
-      if (event.action == RENAMED) {
-        anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>(event.file[0]).ToLocalChecked());
-        anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>(event.file[1]).ToLocalChecked());
+      if (event->action == RENAMED) {
+        anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>(event->fileA).ToLocalChecked());
+        anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>(event->fileB).ToLocalChecked());
       } else {
-        anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>(event.file[0]).ToLocalChecked());
+        anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>(event->fileA).ToLocalChecked());
       }
 
       jsEventObjects.push_back(anEvent);
+      delete event;
     }
-    delete events;
 
     v8::Local<v8::Array> eventArray = New<v8::Array>((int)jsEventObjects.size());
 

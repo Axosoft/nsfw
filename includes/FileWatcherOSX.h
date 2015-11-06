@@ -11,35 +11,41 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <search.h>
-#include <map>
 #include <time.h>
 #include <sys/errno.h>
+#include <map>
+#include <queue>
 
-namespace NSFW {
-
-  struct FileDescriptor {
+namespace NSFW
+{
+  struct FileDescriptor
+  {
     struct stat meta;
     std::string name, path;
   };
 
-  struct FilePoll {
+  struct FilePoll
+  {
     struct stat file;
     bool exists;
   };
 
-  struct Directory {
+  struct Directory
+  {
     std::map<ino_t, FileDescriptor> fileMap;
     std::map<ino_t, Directory *> childDirectories;
     std::string name, path;
   };
 
-  struct DirectoryPair {
+  struct DirectoryPair
+  {
     Directory *prev, *current;
   };
 
-  class FileWatcherOSX {
+  class FileWatcherOSX
+  {
   public:
-    FileWatcherOSX(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, Error &error);
+    FileWatcherOSX(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error);
     ~FileWatcherOSX();
     static void callback(
       ConstFSEventStreamRef streamRef,
@@ -70,14 +76,13 @@ namespace NSFW {
     void deleteDirTree(Directory *tree);
     pthread_mutex_t mCallbackSync;
     Error &mError;
-    std::queue<Event> &mEventsQueue;
+    EventQueue &mEventQueue;
     bool mIsDirWatch;
     pthread_mutex_t mMainLoopSync;
     std::string mPath;
     pthread_t mThread;
     bool &mWatchFiles;
   };
-
 }
 
 #endif

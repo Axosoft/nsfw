@@ -1,24 +1,32 @@
 env:
   matrix:
-    - export NODE_VERSION="0.10"
-    - export NODE_VERSION="0.12"
-    - export NODE_VERSION="iojs-v2.5.0"
-matrix:
-  fast_finish: true
+    - export NODE_VERSION="0.10" CC=clang CXX=clang++ npm_config_clang=1
+    - export NODE_VERSION="0.12" CC=clang CXX=clang++ npm_config_clang=1
+    - export NODE_VERSION="4.1" CC=clang CXX=clang++ npm_config_clang=1
+
+branches:
+  only:
+    - master
+
+git:
+  depth: 10
+
+compiler: clang
+
 before_install:
   - git clone https://github.com/creationix/nvm.git ./.nvm
   - source ./.nvm/nvm.sh
   - nvm install $NODE_VERSION
   - nvm use $NODE_VERSION
 
-
-
 install:
   - npm install
 
 script:
-    - npm test
+  - npm test
 
 os:
-  - linux
-  - osx
+- linux
+- osx
+
+sudo: false

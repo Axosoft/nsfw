@@ -14,20 +14,21 @@ using namespace System::Runtime::InteropServices;
 using namespace System::Collections::Generic;
 using namespace System::Threading;
 
-namespace NSFW {
-
-  ref class FSEventHandler {
+namespace NSFW
+{
+  ref class FSEventHandler
+  {
   public:
     FSEventHandler(
       FileSystemWatcher ^parentFW,
-      std::queue<Event> &eventsQueue,
+      EventQueue &eventQueue,
       bool &watchFiles,
       bool &stopped,
       Error &error
     );
     FSEventHandler(
       FileSystemWatcher ^parentFW,
-      std::queue<Event> &eventsQueue,
+      EventQueue &eventQueue,
       bool &watchFiles,
       bool &stopped,
       Error &error,
@@ -57,7 +58,7 @@ namespace NSFW {
     FileSystemEventHandler ^mDeletedHandler;
     Error &mError;
     ErrorEventHandler ^mErrorHandler;
-    std::queue<Event> &mEventsQueue;
+    EventQueue &mEventQueue;
     System::String ^mFileName;
     FileSystemWatcher ^mParentFW;
     RenamedEventHandler ^mRenamedHandler;
@@ -65,7 +66,7 @@ namespace NSFW {
     bool &mWatchFiles;
   };
 
-  bool createFileWatcher(std::string path, std::queue<Event> &eventsQueue, bool &watchFiles, bool &stopped, Error &error);
+  bool createFileWatcher(std::string path, EventQueue &eventQueue, bool &watchFiles, bool &stopped, Error &error);
   System::String^ getDirectoryName(System::String^ path);
   System::String^ getFileName(System::String^ path);
 }

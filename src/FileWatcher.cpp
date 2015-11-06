@@ -12,7 +12,6 @@
 #endif
 
 namespace NSFW {
-
   #pragma unmanaged
 
   FileWatcher::FileWatcher(std::string path)
@@ -33,13 +32,8 @@ namespace NSFW {
     return mStopFlag;
   }
 
-  std::queue<Event> *FileWatcher::pollEvents() {
-    if (mEventsQueue.empty()) {
-      return NULL;
-    }
-    std::queue<Event> *out = new std::queue<Event>();
-    std::swap(mEventsQueue, *out);
-    return out;
+  EventQueue &FileWatcher::getEventQueue() {
+    return mEventQueue;
   }
 
   bool FileWatcher::running() {
@@ -55,10 +49,12 @@ namespace NSFW {
         mPath = mPath.substr(0, mPath.length() - 2);
       }
 
+      mEventQueue.clear();
+
       #if defined(USE_WINDOWS_INIT)
-      createFileWatcher(mPath, mEventsQueue, mWatchFiles, mStopFlag, mError);
+      createFileWatcher(mPath, mEventQueue, mWatchFiles, mStopFlag, mError);
       #else
-      fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventsQueue, mWatchFiles, mError);
+      fwInterface = (void *) new FILE_WATCHER_INTERFACE(mPath, mEventQueue, mWatchFiles, mError);
       ((FILE_WATCHER_INTERFACE *)fwInterface)->start();
       #endif
       return true;
@@ -78,8 +74,8 @@ namespace NSFW {
       fwInterface = NULL;
       mStopFlag = true;
       #endif
+      mEventQueue.clear();
       return true;
     }
   }
-
 }

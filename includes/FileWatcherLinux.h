@@ -16,14 +16,19 @@
 #include <set>
 #include <queue>
 
+#define NO_WATCH -1
+#define DEAD_NODE -2
+
 namespace NSFW
 {
   struct Directory
   {
     std::map<std::string, Directory *> childDirectories;
     std::set<std::string> files;
+    bool isNew;
     std::string name, path;
-    int watchDescriptor;
+    Directory *parent;
+    int watchDescriptor; // can be flagged as NO_WATCH or DEAD_NODE
   };
 
   class FileWatcherLinux
@@ -31,25 +36,29 @@ namespace NSFW
   public:
     FileWatcherLinux(std::string path, EventQueue &eventQueue, bool &watchFiles, Error &error);
     ~FileWatcherLinux();
-    Directory *buildDirTree(std::string path, bool queueFileEvents);
-    Directory *buildWatchDirectory();
-    void destroyWatchTree(Directory *tree);
+
+    bool buildWatchDirectory();
+    bool buildWatchTree();
+    void destroyWatchTree(Directory *tree, std::set<Directory *> *cleanUp = NULL);
+    Directory *findFirstDeadAncestor(Directory *child);
     std::string getPath();
     static void *mainLoop(void *params);
     void processDirectoryEvents();
     void processFileEvents();
-    void setDirTree(Directory *tree);
+    bool refreshWatchTree();
     void setErrorMessage(std::string message);
     bool start();
     void stop();
 
   private:
+    bool addDirectoryEvent(inotify_event *inEvent);
     void addEvent(Action action, inotify_event *inEvent);
     void addEvent(Action action, std::string directory, std::string fileA, std::string fileB = "");
     Directory *mDirTree;
     Error &mError;
     EventQueue &mEventQueue;
     int mInotify;
+    pthread_mutex_t mMainLoopSync;
     std::string mPath;
     pthread_t mThread;
     std::map<int, Directory *> mWDtoDirNode;

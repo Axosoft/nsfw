@@ -367,12 +367,12 @@ describe('Node Sentinel File Watcher', function() {
         .delay(2000)
         .then(function() {
           assert(errors == false, "NSFW received an error.");
-          assert.equal(createdCount, 3, "NSFW did not hear all 3 delete events.");
+          assert.equal(createdCount, 3, "NSFW did not hear all 3 create events.");
           return watch.stop();
         })
         .catch(function(error) {
           return watch.stop()
-          .then(function(error) {
+          .then(function() {
             Promise.reject(error);
           });
         });

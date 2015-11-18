@@ -137,6 +137,7 @@ namespace NSFW {
   void FileWatcherLinux::addEvent(Action action, inotify_event *inEvent)
   {
     Directory *parent = mWDtoDirNode[inEvent->wd];
+
     mEventQueue.enqueue(
       action,
       parent->path + "/" + parent->name,
@@ -392,6 +393,8 @@ namespace NSFW {
       root->childDirectories.clear();
       dirQueue.pop();
 
+      mWDtoDirNode.erase(root->watchDescriptor);
+
       if (cleanUp)
       {
         root->watchDescriptor = DEAD_NODE;
@@ -498,6 +501,11 @@ namespace NSFW {
 
         inEvent = (inotify_event *)(buffer + position);
         Event event;
+
+        if (mWDtoDirNode.find(inEvent->wd) == mWDtoDirNode.end())
+        {
+          continue;
+        }
 
         // if the event is not a moved to event and the cookie exists
         // we should reset the cookie and push the last moved from event

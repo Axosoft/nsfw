@@ -448,7 +448,6 @@ namespace NSFW {
       // build the directory tree before listening for events
       if (!fwLinux->buildWatchTree())
       {
-        fwLinux->setErrorMessage("Access is denied");
         return NULL;
       }
 

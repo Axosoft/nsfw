@@ -1,6 +1,6 @@
 #include "../../includes/linux/InotifyTree.h"
 /**
- * InotifyTree
+ * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
 InotifyTree::InotifyTree(int inotifyInstance, int attributes, std::string path):
   mAttributes(attributes), mInotifyInstance(inotifyInstance) {
@@ -13,7 +13,7 @@ InotifyTree::InotifyTree(int inotifyInstance, int attributes, std::string path):
     watchName = "";
   } else {
     uint32_t location = path.find_last_of("/");
-    directory = (location == 0) ? "/" : path.substr(0, location);
+    directory = (location == 0) ? "" : path.substr(0, location);
     watchName = path.substr(location + 1);
   }
 
@@ -115,20 +115,20 @@ InotifyTree::InotifyNode::InotifyNode(
 
   dirent ** directoryContents = NULL;
 
-  int n = scandir(
+  int resultCountOrError = scandir(
     mFullPath.c_str(),
     &directoryContents,
     NULL,
     alphasort
   );
 
-  mAlive = (n >= 0);
+  mAlive = (resultCountOrError >= 0);
 
   if (!mAlive) {
     return;
   }
 
-  for (uint32_t i = 0; i < n; ++i) {
+  for (uint32_t i = 0; i < resultCountOrError; ++i) {
     std::string fileName = directoryContents[i]->d_name;
 
     if (
@@ -165,7 +165,7 @@ InotifyTree::InotifyNode::InotifyNode(
     }
   }
 
-  for (uint32_t i = 0; i < n; ++i) {
+  for (uint32_t i = 0; i < resultCountOrError; ++i) {
     delete directoryContents[i];
   }
 

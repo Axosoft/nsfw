@@ -27,7 +27,7 @@ InotifyEventLoop::InotifyEventLoop(
 void InotifyEventLoop::work() {
   char buffer[8192];
   inotify_event *event = NULL;
-  unsigned int bytesRead, position = 0, i;
+  unsigned int bytesRead, position = 0;
   bool isDirectoryEvent = false, isDirectoryRemoval = false;
   InotifyService *inotifyService = mInotifyService;
   InotifyRenameEvent *renameEvent = NULL;

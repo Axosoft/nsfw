@@ -19,7 +19,6 @@ InotifyService::InotifyService(std::string path) {
               | IN_MOVED_TO
               | IN_DELETE_SELF;
 
-  // TODO: add failure catches
   mTree = new InotifyTree(mInotifyInstance, mAttributes, path);
   if (!mTree->isRootAlive()) {
     delete mTree;

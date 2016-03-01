@@ -30,7 +30,8 @@ void InotifyEventLoop::work() {
   unsigned int bytesRead, position = 0;
   bool isDirectoryEvent = false, isDirectoryRemoval = false;
   InotifyService *inotifyService = mInotifyService;
-  InotifyRenameEvent *renameEvent = NULL;
+  InotifyRenameEvent renameEvent;
+  renameEvent.isGood = false;
 
   auto create = [&event, &isDirectoryEvent, &inotifyService]() {
     if (event == NULL) {
@@ -65,44 +66,45 @@ void InotifyEventLoop::work() {
   };
 
   auto renameStart = [&event, &isDirectoryEvent, &renameEvent]() {
-    if (renameEvent == NULL) {
-      renameEvent = new InotifyRenameEvent;
-    }
-
-    renameEvent->cookie = event->cookie;
-    renameEvent->isDirectory = isDirectoryEvent;
-    renameEvent->name = event->name;
-    renameEvent->wd = event->wd;
+    renameEvent.cookie = event->cookie;
+    renameEvent.isDirectory = isDirectoryEvent;
+    renameEvent.name = event->name;
+    renameEvent.wd = event->wd;
+    renameEvent.isGood = true;
   };
 
   auto renameEnd = [&create, &event, &inotifyService, &isDirectoryEvent, &renameEvent]() {
-    if (renameEvent == NULL) {
+    if (!renameEvent.isGood) {
       create();
       return;
     }
 
-    if (renameEvent->cookie != event->cookie) {
-      if (renameEvent->isDirectory) {
-        inotifyService->removeDirectory(renameEvent->wd);
+    if (renameEvent.cookie != event->cookie) {
+      if (renameEvent.isDirectory) {
+        inotifyService->removeDirectory(renameEvent.wd);
       } else {
-        inotifyService->remove(renameEvent->wd, renameEvent->name);
+        inotifyService->remove(renameEvent.wd, renameEvent.name);
       }
       create();
     } else {
-      if (renameEvent->isDirectory) {
-        inotifyService->renameDirectory(renameEvent->wd, renameEvent->name, event->name);
+      if (renameEvent.isDirectory) {
+        inotifyService->renameDirectory(renameEvent.wd, renameEvent.name, event->name);
       } else {
-        inotifyService->rename(renameEvent->wd, renameEvent->name, event->name);
+        inotifyService->rename(renameEvent.wd, renameEvent.name, event->name);
       }
     }
-    delete renameEvent;
-    renameEvent = NULL;
+    renameEvent.isGood = false;
   };
 
   while((bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE)) > 0) {
     Lock syncWithDestructor(this->mMutex);
     do {
       event = (struct inotify_event *)(buffer + position);
+
+      if (renameEvent.isGood && event->cookie != renameEvent.cookie) {
+        renameEnd();
+      }
+
       isDirectoryRemoval = event->mask & (uint32_t)(IN_IGNORED | IN_DELETE_SELF);
       isDirectoryEvent = event->mask & (uint32_t)(IN_ISDIR);
 

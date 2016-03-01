@@ -1,8 +1,8 @@
-#include "../includes/linux/InotifyService.h"
+#include "../includes/NativeInterface.h"
 #include <unistd.h>
 
 int main() {
-  InotifyService service("./a");
+  NativeInterface service("./a");
   while(true) {
     sleep(0);
   }

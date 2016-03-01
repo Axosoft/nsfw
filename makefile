@@ -3,8 +3,8 @@ CFLAGS=-c -std=c++0x -pthread
 LDFLAGS=-std=c++0x -pthread
 all: main
 
-main: main.o Lock.o InotifyEventLoop.o InotifyTree.o InotifyService.o
-	$(CC) $(LDFLAGS) main.o Lock.o InotifyEventLoop.o InotifyTree.o InotifyService.o -o run
+main: main.o Lock.o InotifyEventLoop.o InotifyTree.o InotifyService.o NativeInterface.o
+	$(CC) $(LDFLAGS) main.o Lock.o InotifyEventLoop.o InotifyTree.o InotifyService.o NativeInterface.o -o run
 
 main.o: includes/linux/InotifyService.h
 	$(CC) $(CFLAGS) src/main.cpp
@@ -20,6 +20,9 @@ InotifyTree.o: includes/linux/InotifyTree.h
 
 InotifyService.o: includes/linux/InotifyEventLoop.h includes/linux/InotifyTree.h includes/linux/InotifyService.h
 	$(CC) $(CFLAGS) src/linux/InotifyService.cpp
+
+NativeInterface.o: includes/linux/InotifyService.h includes/NativeInterface.h
+	$(CC) $(CFLAGS) src/NativeInterface.cpp
 
 clean:
 	rm *.o run

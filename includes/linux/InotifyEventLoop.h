@@ -21,6 +21,8 @@ public:
     InotifyService *inotifyService
   );
 
+  bool isLooping();
+
   void work();
 
   ~InotifyEventLoop();

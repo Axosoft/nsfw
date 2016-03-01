@@ -14,8 +14,10 @@ class InotifyTree;
 class InotifyService {
 public:
   InotifyService(Queue &queue, std::string path);
-  ~InotifyService();
 
+  bool isWatching();
+
+  ~InotifyService();
 private:
   void create(int wd, std::string name);
   void createDirectory(int wd, std::string name);

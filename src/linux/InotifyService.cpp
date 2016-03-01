@@ -50,6 +50,14 @@ void InotifyService::dispatchRename(int wd, std::string oldName, std::string new
   mQueue.enqueue(RENAMED, path, oldName, newName);
 }
 
+bool InotifyService::isWatching() {
+  if (mTree == NULL || mEventLoop == NULL) {
+    return false;
+  }
+
+  return mTree->isRootAlive() && mEventLoop->isLooping();
+}
+
 void InotifyService::modify(int wd, std::string name) {
   dispatch(MODIFIED, wd, name);
 }

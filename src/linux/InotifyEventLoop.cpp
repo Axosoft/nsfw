@@ -21,7 +21,10 @@ InotifyEventLoop::InotifyEventLoop(
     },
     (void *)this
   );
+}
 
+bool InotifyEventLoop::isLooping() {
+  return mStarted;
 }
 
 void InotifyEventLoop::work() {
@@ -136,6 +139,7 @@ void InotifyEventLoop::work() {
     } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);
     position = 0;
   }
+  mStarted = false;
 }
 
 InotifyEventLoop::~InotifyEventLoop() {
@@ -148,5 +152,6 @@ InotifyEventLoop::~InotifyEventLoop() {
     pthread_cancel(mEventLoop);
   }
 
+  pthread_join(mEventLoop, NULL);
   pthread_mutex_destroy(&mMutex);
 }

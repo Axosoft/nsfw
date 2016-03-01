@@ -25,7 +25,7 @@ private:
   class InotifyNode {
   public:
     InotifyNode(
-      std::map<int, InotifyNode *> *inotifyNodeByWatchDescriptor,
+      InotifyTree *tree,
       int inotifyInstance,
       InotifyNode *parent,
       std::string directory,
@@ -59,16 +59,21 @@ private:
     std::string mDirectory;
     std::string mFullPath;
     const int mInotifyInstance;
-    std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
     std::string mName;
     InotifyNode *mParent;
+    InotifyTree *mTree;
     int mWatchDescriptor;
     bool mWatchDescriptorInitialized;
   };
 
+  void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
+  void removeNodeReferenceByWD(int watchDescriptor);
+
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   InotifyNode *mRoot;
+
+  friend class InotifyNode;
 };
 
 #endif

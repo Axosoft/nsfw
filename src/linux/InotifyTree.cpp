@@ -18,7 +18,7 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path):
   }
 
   mRoot = new InotifyNode(
-    mInotifyNodeByWatchDescriptor,
+    this,
     mInotifyInstance,
     NULL,
     directory,
@@ -43,6 +43,10 @@ void InotifyTree::addDirectory(int wd, std::string name) {
 
   InotifyNode *node = nodeIterator->second;
   node->addChild(name);
+}
+
+void InotifyTree::addNodeReferenceByWD(int wd, InotifyNode *node) {
+  (*mInotifyNodeByWatchDescriptor)[wd] = node;
 }
 
 bool InotifyTree::getPath(std::string &out, int wd) {
@@ -76,6 +80,13 @@ void InotifyTree::removeDirectory(int wd) {
   parent->removeChild(node->getName());
 }
 
+void InotifyTree::removeNodeReferenceByWD(int wd) {
+  auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
+  if (nodeIterator != mInotifyNodeByWatchDescriptor->end()) {
+    mInotifyNodeByWatchDescriptor->erase(nodeIterator);
+  }
+}
+
 void InotifyTree::renameDirectory(int wd, std::string oldName, std::string newName) {
   auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
   if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {
@@ -95,7 +106,7 @@ InotifyTree::~InotifyTree() {
  * InotifyNode ---------------------------------------------------------------------------------------------------------
  */
 InotifyTree::InotifyNode::InotifyNode(
-  std::map<int, InotifyNode *> *inotifyNodeByWatchDescriptor,
+  InotifyTree *tree,
   int inotifyInstance,
   InotifyNode *parent,
   std::string directory,
@@ -103,9 +114,9 @@ InotifyTree::InotifyNode::InotifyNode(
 ):
   mDirectory(directory),
   mInotifyInstance(inotifyInstance),
-  mInotifyNodeByWatchDescriptor(inotifyNodeByWatchDescriptor),
   mName(name),
-  mParent(parent) {
+  mParent(parent),
+  mTree(tree) {
   mChildren = new std::map<std::string, InotifyNode *>;
   mFullPath = createFullPath(mDirectory, mName);
   mWatchDescriptorInitialized = false;
@@ -147,7 +158,7 @@ InotifyTree::InotifyNode::InotifyNode(
     }
 
     InotifyNode *child = new InotifyNode(
-      mInotifyNodeByWatchDescriptor,
+      mTree,
       mInotifyInstance,
       this,
       mFullPath,
@@ -171,10 +182,7 @@ InotifyTree::InotifyNode::InotifyNode(
 InotifyTree::InotifyNode::~InotifyNode() {
   if (mWatchDescriptorInitialized) {
     inotify_rm_watch(mInotifyInstance, mWatchDescriptor);
-    auto nodeIterator = mInotifyNodeByWatchDescriptor->find(mWatchDescriptor);
-    if (nodeIterator != mInotifyNodeByWatchDescriptor->end()) {
-      mInotifyNodeByWatchDescriptor->erase(nodeIterator);
-    }
+    mTree->removeNodeReferenceByWD(mWatchDescriptor);
   }
 
   for (auto i = mChildren->begin(); i != mChildren->end(); ++i) {
@@ -186,7 +194,7 @@ InotifyTree::InotifyNode::~InotifyNode() {
 
 void InotifyTree::InotifyNode::addChild(std::string name) {
   InotifyNode *child = new InotifyNode(
-    mInotifyNodeByWatchDescriptor,
+    mTree,
     mInotifyInstance,
     this,
     mFullPath,
@@ -266,10 +274,10 @@ bool InotifyTree::InotifyNode::inotifyInit() {
         for (auto i = childrenToRemove->begin(); i != childrenToRemove->end(); ++i) {
           removeChild(*i);
         }
-        (*mInotifyNodeByWatchDescriptor)[mWatchDescriptor] = this;
+        mTree->addNodeReferenceByWD(mWatchDescriptor, this);
       }
     } else {
-      (*mInotifyNodeByWatchDescriptor)[mWatchDescriptor] = this;
+      mTree->addNodeReferenceByWD(mWatchDescriptor, this);
     }
     delete childrenToRemove;
   }

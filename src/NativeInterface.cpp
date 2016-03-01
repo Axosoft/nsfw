@@ -1,7 +1,7 @@
 #include "../includes/NativeInterface.h"
 
 NativeInterface::NativeInterface(std::string path) {
-  mNativeInterface = new InotifyService(path);
+  mNativeInterface = new InotifyService(mQueue, path);
 }
 
 NativeInterface::~NativeInterface() {

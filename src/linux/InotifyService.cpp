@@ -1,14 +1,7 @@
 #include "../../includes/linux/InotifyService.h"
 
-void writeLog(std::string type, std::string path) {
-  std::cout
-    << type
-    << ": "
-    << path
-    << std::endl;
-}
-
-InotifyService::InotifyService(std::string path) {
+InotifyService::InotifyService(Queue &queue, std::string path):
+  mQueue(queue) {
   // TODO: add failure catches
   mInotifyInstance = inotify_init();
 
@@ -36,54 +29,46 @@ InotifyService::~InotifyService() {
 }
 
 void InotifyService::create(int wd, std::string name) {
-  std::string fullName;
-  if (!mTree->getPath(fullName, wd)) {
-    return;
-  }
-
-  fullName += std::string("/") + name;
-  writeLog("CREATE", fullName);
+  dispatch(CREATED, wd, name);
 }
 
-void InotifyService::modify(int wd, std::string name) {
-  std::string fullName;
-  if (!mTree->getPath(fullName, wd)) {
-    return;
-  }
-
-  fullName += std::string("/") + name;
-  writeLog("MODIFY", fullName);
-}
-
-void InotifyService::remove(int wd, std::string name) {
-  std::string fullName;
-  if (!mTree->getPath(fullName, wd)) {
-    return;
-  }
-
-  fullName += std::string("/") + name;
-  writeLog("REMOVE", fullName);
-}
-
-void InotifyService::rename(int wd, std::string oldName, std::string newName) {
+void InotifyService::dispatch(EventType action, int wd, std::string name) {
   std::string path;
   if (!mTree->getPath(path, wd)) {
     return;
   }
 
-  writeLog("RENAME A", path + "/" + oldName);
-  writeLog("RENAME B", path + "/" + newName);
+  mQueue.enqueue(action, path, name);
 }
 
-void InotifyService::createDirectory(int wd, std::string name) {
-  std::string fullName;
-  if (!mTree->getPath(fullName, wd)) {
+void InotifyService::dispatchRename(int wd, std::string oldName, std::string newName) {
+  std::string path;
+  if (!mTree->getPath(path, wd)) {
     return;
   }
 
-  fullName += std::string("/") + name;
+  mQueue.enqueue(RENAMED, path, oldName, newName);
+}
+
+void InotifyService::modify(int wd, std::string name) {
+  dispatch(MODIFIED, wd, name);
+}
+
+void InotifyService::remove(int wd, std::string name) {
+  dispatch(DELETED, wd, name);
+}
+
+void InotifyService::rename(int wd, std::string oldName, std::string newName) {
+  dispatchRename(wd, oldName, newName);
+}
+
+void InotifyService::createDirectory(int wd, std::string name) {
+  if (!mTree->nodeExists(wd)) {
+    return;
+  }
+
   mTree->addDirectory(wd, name);
-  writeLog("CREATE", fullName);
+  dispatch(CREATED, wd, name);
 }
 
 void InotifyService::removeDirectory(int wd) {
@@ -91,13 +76,11 @@ void InotifyService::removeDirectory(int wd) {
 }
 
 void InotifyService::renameDirectory(int wd, std::string oldName, std::string newName) {
-  std::string path;
-  if (!mTree->getPath(path, wd)) {
+  if (!mTree->nodeExists(wd)) {
     return;
   }
 
   mTree->renameDirectory(wd, oldName, newName);
 
-  writeLog("RENAME A", path + "/" + oldName);
-  writeLog("RENAME B", path + "/" + newName);
+  dispatchRename(wd, oldName, newName);
 }

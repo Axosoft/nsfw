@@ -63,6 +63,11 @@ bool InotifyTree::isRootAlive() {
   return mRoot != NULL;
 }
 
+bool InotifyTree::nodeExists(int wd) {
+  auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
+  return nodeIterator != mInotifyNodeByWatchDescriptor->end();
+}
+
 void InotifyTree::removeDirectory(int wd) {
   auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
   if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {

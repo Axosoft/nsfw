@@ -17,6 +17,7 @@ public:
   void addDirectory(int wd, std::string name);
   bool getPath(std::string &out, int wd);
   bool isRootAlive();
+  bool nodeExists(int wd);
   void removeDirectory(int wd);
   void renameDirectory(int wd, std::string oldName, std::string newName);
 

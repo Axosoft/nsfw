@@ -3,6 +3,7 @@
 
 #include "InotifyEventLoop.h"
 #include "InotifyTree.h"
+#include "../Queue.h"
 #include <queue>
 #include <map>
 #include <iostream>
@@ -12,13 +13,15 @@ class InotifyTree;
 
 class InotifyService {
 public:
-  InotifyService(std::string path);
+  InotifyService(Queue &queue, std::string path);
   ~InotifyService();
 
 private:
   void create(int wd, std::string name);
   void createDirectory(int wd, std::string name);
   void createDirectoryTree(std::string directoryTreePath);
+  void dispatch(EventType action, int wd, std::string name);
+  void dispatchRename(int wd, std::string oldName, std::string newName);
   void modify(int wd, std::string name);
   void remove(int wd, std::string name);
   void removeDirectory(int wd);
@@ -26,6 +29,7 @@ private:
   void renameDirectory(int wd, std::string oldName, std::string newName);
 
   InotifyEventLoop *mEventLoop;
+  Queue &mQueue;
   InotifyTree *mTree;
   int mInotifyInstance;
 

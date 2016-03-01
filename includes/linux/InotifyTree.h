@@ -12,7 +12,7 @@
 
 class InotifyTree {
 public:
-  InotifyTree(int inotifyInstance, int attributes, std::string path);
+  InotifyTree(int inotifyInstance, std::string path);
 
   void addDirectory(int wd, std::string name);
   bool getPath(std::string &out, int wd);
@@ -25,7 +25,6 @@ private:
   class InotifyNode {
   public:
     InotifyNode(
-      int attributes,
       std::map<int, InotifyNode *> *inotifyNodeByWatchDescriptor,
       int inotifyInstance,
       InotifyNode *parent,
@@ -47,9 +46,15 @@ private:
     ~InotifyNode();
   private:
     static std::string createFullPath(std::string parentPath, std::string name);
+    static const int ATTRIBUTES = IN_ATTRIB
+                                | IN_CREATE
+                                | IN_DELETE
+                                | IN_MODIFY
+                                | IN_MOVED_FROM
+                                | IN_MOVED_TO
+                                | IN_DELETE_SELF;
 
     bool mAlive;
-    const int mAttributes;
     std::map<std::string, InotifyNode *> *mChildren;
     std::string mDirectory;
     std::string mFullPath;
@@ -61,7 +66,6 @@ private:
     bool mWatchDescriptorInitialized;
   };
 
-  const int mAttributes;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   InotifyNode *mRoot;

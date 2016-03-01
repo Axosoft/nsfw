@@ -2,8 +2,8 @@
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
-InotifyTree::InotifyTree(int inotifyInstance, int attributes, std::string path):
-  mAttributes(attributes), mInotifyInstance(inotifyInstance) {
+InotifyTree::InotifyTree(int inotifyInstance, std::string path):
+  mInotifyInstance(inotifyInstance) {
   mInotifyNodeByWatchDescriptor = new std::map<int, InotifyNode *>;
 
   std::string directory;
@@ -18,7 +18,6 @@ InotifyTree::InotifyTree(int inotifyInstance, int attributes, std::string path):
   }
 
   mRoot = new InotifyNode(
-    mAttributes,
     mInotifyNodeByWatchDescriptor,
     mInotifyInstance,
     NULL,
@@ -96,14 +95,12 @@ InotifyTree::~InotifyTree() {
  * InotifyNode ---------------------------------------------------------------------------------------------------------
  */
 InotifyTree::InotifyNode::InotifyNode(
-  int attributes,
   std::map<int, InotifyNode *> *inotifyNodeByWatchDescriptor,
   int inotifyInstance,
   InotifyNode *parent,
   std::string directory,
   std::string name
 ):
-  mAttributes(attributes),
   mDirectory(directory),
   mInotifyInstance(inotifyInstance),
   mInotifyNodeByWatchDescriptor(inotifyNodeByWatchDescriptor),
@@ -150,7 +147,6 @@ InotifyTree::InotifyNode::InotifyNode(
     }
 
     InotifyNode *child = new InotifyNode(
-      mAttributes,
       mInotifyNodeByWatchDescriptor,
       mInotifyInstance,
       this,
@@ -190,7 +186,6 @@ InotifyTree::InotifyNode::~InotifyNode() {
 
 void InotifyTree::InotifyNode::addChild(std::string name) {
   InotifyNode *child = new InotifyNode(
-    mAttributes,
     mInotifyNodeByWatchDescriptor,
     mInotifyInstance,
     this,
@@ -245,7 +240,7 @@ bool InotifyTree::InotifyNode::inotifyInit() {
   mWatchDescriptor = inotify_add_watch(
     mInotifyInstance,
     mFullPath.c_str(),
-    mAttributes
+    ATTRIBUTES
   );
 
   mAlive = (mWatchDescriptor != -1);

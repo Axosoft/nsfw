@@ -28,7 +28,6 @@ private:
   InotifyEventLoop *mEventLoop;
   InotifyTree *mTree;
   int mInotifyInstance;
-  int mAttributes;
 
   friend class InotifyEventLoop;
 };

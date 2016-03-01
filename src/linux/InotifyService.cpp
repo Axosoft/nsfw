@@ -11,15 +11,8 @@ void writeLog(std::string type, std::string path) {
 InotifyService::InotifyService(std::string path) {
   // TODO: add failure catches
   mInotifyInstance = inotify_init();
-  mAttributes = IN_ATTRIB
-              | IN_CREATE
-              | IN_DELETE
-              | IN_MODIFY
-              | IN_MOVED_FROM
-              | IN_MOVED_TO
-              | IN_DELETE_SELF;
 
-  mTree = new InotifyTree(mInotifyInstance, mAttributes, path);
+  mTree = new InotifyTree(mInotifyInstance, path);
   if (!mTree->isRootAlive()) {
     delete mTree;
     mTree = NULL;

@@ -25,6 +25,7 @@ public:
 
   ~InotifyEventLoop();
 private:
+  static const int BUFFER_SIZE = 8192;
   struct InotifyRenameEvent {
     uint32_t cookie;
     bool isDirectory;

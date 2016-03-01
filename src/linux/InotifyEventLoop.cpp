@@ -25,7 +25,7 @@ InotifyEventLoop::InotifyEventLoop(
 }
 
 void InotifyEventLoop::work() {
-  char buffer[8192];
+  char buffer[BUFFER_SIZE];
   inotify_event *event = NULL;
   unsigned int bytesRead, position = 0;
   bool isDirectoryEvent = false, isDirectoryRemoval = false;
@@ -99,7 +99,7 @@ void InotifyEventLoop::work() {
     renameEvent = NULL;
   };
 
-  while((bytesRead = read(mInotifyInstance, &buffer, 8192)) > 0) {
+  while((bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE)) > 0) {
     Lock syncWithDestructor(this->mMutex);
     do {
       event = (struct inotify_event *)(buffer + position);

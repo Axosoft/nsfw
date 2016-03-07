@@ -2,7 +2,6 @@
 #define NSFW_NATIVE_INTERFACE_H
 
 #include "Queue.h"
-#include "linux/InotifyService.h"
 
 class NativeInterface {
 public:

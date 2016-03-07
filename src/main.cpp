@@ -1,10 +1,13 @@
 #include "../includes/NativeInterface.h"
+#include <stdlib.h>
 #include <unistd.h>
 
 int main() {
-  NativeInterface service("./a");
+  char path[PATH_MAX + 1];
+  realpath("./a", path);
+  NativeInterface service(path);
   while(true) {
-    sleep(0);
+    sleep(1);
   }
   return 0;
 }

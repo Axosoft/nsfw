@@ -2,7 +2,7 @@
 #define INOTIFY_EVENT_LOOP_H
 
 #include "InotifyService.h"
-#include "Lock.h"
+#include "../Lock.h"
 #include <sys/inotify.h>
 #include <stdlib.h>
 #include <string.h>

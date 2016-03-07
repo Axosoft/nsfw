@@ -1,4 +1,4 @@
-#include "../../includes/linux/Lock.h"
+#include "../includes/Lock.h"
 
 Lock::Lock(pthread_mutex_t &mutex)
   : mMutex(mutex) {

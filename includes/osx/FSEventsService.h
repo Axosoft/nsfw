@@ -35,6 +35,7 @@ public:
     const FSEventStreamEventFlags eventFlags[],
     const FSEventStreamEventId eventIds[]
   );
+  bool isWatching();
 
   ~FSEventsService();
 private:

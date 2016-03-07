@@ -13,7 +13,7 @@ FSEventsService::FSEventsService(Queue &queue, std::string path):
 }
 
 FSEventsService::~FSEventsService() {
-  if (mRunLoop != NULL) {
+  if (isWatching()) {
     delete mRunLoop;
   }
 }
@@ -83,6 +83,10 @@ void FSEventsService::dispatch(EventType action, std::string path) {
 
 void FSEventsService::modify(std::string path) {
   dispatch(MODIFIED, path);
+}
+
+bool FSEventsService::isWatching() {
+  return mRunLoop != NULL;
 }
 
 void FSEventsService::remove(std::string path) {

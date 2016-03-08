@@ -1,7 +1,7 @@
 #include "../../includes/win32/FSWatcherWrapper.h"
 
 #pragma unmanaged
-FSWatcherWrapper::FSWatcherWrapper(std::string path) {
+FSWatcherWrapper::FSWatcherWrapper(Queue &queue, std::string path): mQueue(queue) {
   mWD = createFileWatcher(path);
 }
 

@@ -5,12 +5,11 @@ delegate void fsCallback(FileSystemEventArgs ^e);
 delegate void errorCallback(ErrorEventArgs ^e);
 delegate void renamedCallback(RenamedEventArgs ^e);
 
-
 static void beginDispatchThread(Object ^fsWatcher) {
   ((FSWatcher ^)fsWatcher)->dispatchSetup();
 }
 
-FSWatcher::FSWatcher(System::String ^path) {
+FSWatcher::FSWatcher(Queue &queue, System::String ^path): mQueue(queue) {
   mDispatcherStarted = gcnew ManualResetEvent(false);
 
   Thread ^dispatchThread = gcnew Thread(gcnew ParameterizedThreadStart(&beginDispatchThread));
@@ -52,13 +51,66 @@ void FSWatcher::dispatchSetup() {
   mDispatcher->Run();
 }
 
+System::String^ getDirectoryName(System::String^ path)
+{
+  wchar_t delim = '\\';
+  array<System::String^>^ tokens = path->Split(delim);
+
+  if (path[path->Length - 1] == delim)
+  {
+    if (
+      tokens->Length == 2 &&
+      System::String::IsNullOrEmpty(tokens[1]) ||
+      tokens->Length < 2
+    ) {
+      return gcnew System::String("");
+    }
+    else
+    {
+      return path->Substring(0, path->Length - 1);
+    }
+  }
+  else
+  {
+    return path->Substring(0, path->LastIndexOf(delim));
+  }
+}
+
+System::String^ getFileName(System::String^ path)
+{
+  wchar_t delim = '\\';
+  if (path->LastIndexOf(delim) == path->Length - 1)
+  {
+    return gcnew System::String("");
+  }
+  else
+  {
+    return path->Substring(path->LastIndexOf(delim) + 1);
+  }
+}
+
+void FSEventHandler::eventHandlerHelper(Action action, FileSystemEventArgs ^e) {
+  System::String ^eventFileName = getFileName(e->Name);
+  if (!System::String::IsNullOrEmpty(mFileName) && eventFileName != mFileName) {
+    return;
+  }
+
+  char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+  char *file = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
+
+  mQueue.enqueue(action, directory, file);
+
+  Marshal::FreeHGlobal(IntPtr(directory));
+  Marshal::FreeHGlobal(IntPtr(file));
+}
+
 void FSWatcher::onChangedDispatch(Object ^source, FileSystemEventArgs ^e) {
   array<Object ^> ^params = gcnew array<Object ^> { e };
   mDispatcher->BeginInvoke(gcnew fsCallback(this, &FSWatcher::onChanged), gcnew array<Object ^> { e });
 }
 
 void FSWatcher::onChanged(FileSystemEventArgs ^e) {
-  Console::WriteLine("Changed {0}", e->FullPath);
+  eventHandlerHelper(MODIFIED, e);
 }
 
 void FSWatcher::onCreatedDispatch(Object ^source, FileSystemEventArgs ^e) {
@@ -66,7 +118,7 @@ void FSWatcher::onCreatedDispatch(Object ^source, FileSystemEventArgs ^e) {
 }
 
 void FSWatcher::onCreated(FileSystemEventArgs ^e) {
-  Console::WriteLine("Created {0}", e->FullPath);
+  eventHandlerHelper(CREATED, e);
 }
 
 void FSWatcher::onDeletedDispatch(Object ^source, FileSystemEventArgs ^e) {
@@ -74,7 +126,7 @@ void FSWatcher::onDeletedDispatch(Object ^source, FileSystemEventArgs ^e) {
 }
 
 void FSWatcher::onDeleted(FileSystemEventArgs ^e) {
-  Console::WriteLine("Deleted {0}", e->FullPath);
+  eventHandlerHelper(DELETED, e);
 }
 
 void FSWatcher::onErrorDispatch(Object ^source, ErrorEventArgs ^e) {
@@ -82,6 +134,7 @@ void FSWatcher::onErrorDispatch(Object ^source, ErrorEventArgs ^e) {
 }
 
 void FSWatcher::onError(ErrorEventArgs ^e) {
+  // TODO: error handling
   Console::WriteLine("Error");
 }
 
@@ -90,5 +143,14 @@ void FSWatcher::onRenamedDispatch(Object ^source, RenamedEventArgs ^e) {
 }
 
 void FSWatcher::onRenamed(RenamedEventArgs ^e) {
-  Console::WriteLine("Renamed {0} to {1}", e->OldFullPath, e->FullPath);
+  System::String ^eventFileName = getFileName(e->OldName);
+  char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
+  char *fileA = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
+  char *fileB = (char*)Marshal::StringToHGlobalAnsi(getFileName(e->Name)).ToPointer();
+
+  mQueue.enqueue(RENAMED, directory, fileA, fileB);
+
+  Marshal::FreeHGlobal(IntPtr(directory));
+  Marshal::FreeHGlobal(IntPtr(fileA));
+  Marshal::FreeHGlobal(IntPtr(fileB));
 }

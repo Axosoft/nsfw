@@ -1,8 +1,12 @@
+#ifndef FS_WATCHER_WRAPPER_H
+#define FS_WATCHER_WRAPPER_H
+
 #include "FSWatcherSingleton.h"
+#include "../Queue.h"
 
 class FSWatcherWrapper {
 public:
-  FSWatcherWrapper(std::string path);
+  FSWatcherWrapper(Queue &queue, std::string path);
 
   bool isWatching();
 
@@ -10,3 +14,5 @@ public:
 private:
   int mWD;
 };
+
+#endif

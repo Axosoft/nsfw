@@ -1,6 +1,7 @@
 #ifndef FS_WATCHER_H
 #define FS_WATCHER_H
 
+#include "../Queue.h"
 #include <string>
 #include <msclr\marshal_cppstd.h>
 
@@ -16,9 +17,10 @@ using namespace System::Windows::Threading;
 
 ref class FSWatcher {
 public:
-  FSWatcher(System::String ^path);
+  FSWatcher(Queue &queue, System::String ^path);
   ~FSWatcher();
   void dispatchSetup();
+  void eventHandlerHelper(Action action, FileSystemEventArgs ^e);
   void onChanged(FileSystemEventArgs ^e);
   void onChangedDispatch(Object ^source, FileSystemEventArgs ^e);
   void onCreated(FileSystemEventArgs ^e);
@@ -33,6 +35,7 @@ private:
   Dispatcher ^mDispatcher;
   ManualResetEvent ^mDispatcherStarted;
   FileSystemWatcher ^mWatcher;
+  Queue &mQueue;
 };
 
 #endif

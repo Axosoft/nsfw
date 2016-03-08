@@ -2,7 +2,10 @@
 #define NSFW_QUEUE_H
 
 #include <string>
-#include <queue>
+extern "C" {
+#  include <opa_queue.h>
+#  include <opa_primitives.h>
+}
 #include <iostream>
 
 enum EventType {
@@ -12,15 +15,33 @@ enum EventType {
   RENAMED = 3
 };
 
+struct Event {
+  Action action;
+  std::string directory, fileA, fileB;
+};
+
 class Queue {
 public:
+  Queue();
+  ~Queue();
+
+  void clear();
+  int count();
+  Event *dequeue(); // Free this pointer when you are done with it
   void enqueue(
-    EventType action,
+    Event action,
     std::string directory,
-    std::string name,
-    std::string
-    renamedName = ""
+    std::string fileA,
+    std::string fileB = ""
   );
+
+private:
+  struct EventNode {
+    OPA_Queue_element_hdr_t header;
+    Event *event;
+  };
+  OPA_Queue_info_t mQueue;
+  OPA_int_t mNumEvents;
 };
 
 #endif

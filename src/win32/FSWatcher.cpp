@@ -89,7 +89,7 @@ System::String^ getFileName(System::String^ path)
   }
 }
 
-void FSEventHandler::eventHandlerHelper(Action action, FileSystemEventArgs ^e) {
+void FSEventHandler::eventHandlerHelper(EventType event, FileSystemEventArgs ^e) {
   System::String ^eventFileName = getFileName(e->Name);
   if (!System::String::IsNullOrEmpty(mFileName) && eventFileName != mFileName) {
     return;
@@ -98,7 +98,7 @@ void FSEventHandler::eventHandlerHelper(Action action, FileSystemEventArgs ^e) {
   char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
   char *file = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
 
-  mQueue.enqueue(action, directory, file);
+  mQueue.enqueue(event, directory, file);
 
   Marshal::FreeHGlobal(IntPtr(directory));
   Marshal::FreeHGlobal(IntPtr(file));

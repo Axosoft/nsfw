@@ -6,7 +6,7 @@ FSWatcherSingleton::FSWatcherSingleton() {
   mNext = 0;
 }
 
-int FSWatcherSingleton::createFileWatcher(Queue &queue, System::String ^path) {
+int FSWatcherSingleton::createFileWatcher(EventQueue &queue, System::String ^path) {
   try {
     FSWatcher ^watcher = gcnew FSWatcher(queue, path);
     int wd = mNext;
@@ -29,7 +29,7 @@ void FSWatcherSingleton::destroyFileWatcher(Int32 wd) {
   delete watcher;
 }
 
-int createFileWatcher(Queue &queue, std::string path) {
+int createFileWatcher(EventQueue &queue, std::string path) {
   return FSWatcherSingleton::Instance->createFileWatcher(queue, gcnew System::String(path.c_str()));
 }
 

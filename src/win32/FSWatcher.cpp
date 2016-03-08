@@ -1,22 +1,19 @@
 #include "../../includes/win32/FSWatcher.h"
 
 #pragma managed
-delegate void fsCallback(FileSystemEventArgs ^e);
-delegate void errorCallback(ErrorEventArgs ^e);
-delegate void renamedCallback(RenamedEventArgs ^e);
-
 static void beginDispatchThread(Object ^fsWatcher) {
   ((FSWatcher ^)fsWatcher)->dispatchSetup();
 }
 
-FSWatcher::FSWatcher(Queue &queue, System::String ^path): mQueue(queue) {
-  mDispatcherStarted = gcnew ManualResetEvent(false);
+FSWatcher::FSWatcher(EventQueue &queue, System::String ^path):
+  mDispatchExit(false),
+  mDispatching(false),
+  mQueue(queue) {
+  mDispatchQueue = gcnew ConcurrentQueue< Tuple<Int32, Object ^> ^>();
 
   Thread ^dispatchThread = gcnew Thread(gcnew ParameterizedThreadStart(&beginDispatchThread));
   dispatchThread->IsBackground = true;
   dispatchThread->Start(this);
-
-  mDispatcherStarted->WaitOne();
 
   mWatcher = gcnew FileSystemWatcher();
   mWatcher->Path = path;
@@ -42,13 +39,32 @@ FSWatcher::FSWatcher(Queue &queue, System::String ^path): mQueue(queue) {
 
 FSWatcher::~FSWatcher() {
   delete mWatcher;
-  mDispatcher->BeginInvokeShutdown(DispatcherPriority::Normal);
+  mDispatching = false;
+  while (mDispatchExit) {}
 }
 
 void FSWatcher::dispatchSetup() {
-  mDispatcher = Dispatcher::CurrentDispatcher;
-  mDispatcherStarted->Set();
-  mDispatcher->Run();
+  mDispatching = true;
+  while (mDispatching) {
+    Int32 count = mDispatchQueue->Count;
+    if (count == 0) {
+      continue;
+    }
+
+    for (Int32 i = 0; i < count; ++i) {
+      if (!mDispatching) {
+        break;
+      }
+      Tuple<Int32, Object^> ^toDispatch;
+      while (!mDispatchQueue->TryDequeue(toDispatch)) {}
+      if (toDispatch->Item1 == RENAMED) {
+        onRenamed(safe_cast<RenamedEventArgs ^>(toDispatch->Item2));
+      } else {
+        eventHandlerHelper(static_cast<EventType>(toDispatch->Item1), safe_cast<FileSystemEventArgs ^>(toDispatch->Item2));
+      }
+    }
+  }
+  mDispatchExit = true;
 }
 
 System::String^ getDirectoryName(System::String^ path)
@@ -89,11 +105,8 @@ System::String^ getFileName(System::String^ path)
   }
 }
 
-void FSEventHandler::eventHandlerHelper(EventType event, FileSystemEventArgs ^e) {
+void FSWatcher::eventHandlerHelper(EventType event, FileSystemEventArgs ^e) {
   System::String ^eventFileName = getFileName(e->Name);
-  if (!System::String::IsNullOrEmpty(mFileName) && eventFileName != mFileName) {
-    return;
-  }
 
   char *directory = (char*)Marshal::StringToHGlobalAnsi(getDirectoryName(e->FullPath)).ToPointer();
   char *file = (char*)Marshal::StringToHGlobalAnsi(eventFileName).ToPointer();
@@ -105,41 +118,24 @@ void FSEventHandler::eventHandlerHelper(EventType event, FileSystemEventArgs ^e)
 }
 
 void FSWatcher::onChangedDispatch(Object ^source, FileSystemEventArgs ^e) {
-  array<Object ^> ^params = gcnew array<Object ^> { e };
-  mDispatcher->BeginInvoke(gcnew fsCallback(this, &FSWatcher::onChanged), gcnew array<Object ^> { e });
-}
-
-void FSWatcher::onChanged(FileSystemEventArgs ^e) {
-  eventHandlerHelper(MODIFIED, e);
+  mDispatchQueue->Enqueue(gcnew Tuple<Int32, Object ^>(MODIFIED, e));
 }
 
 void FSWatcher::onCreatedDispatch(Object ^source, FileSystemEventArgs ^e) {
-	mDispatcher->BeginInvoke(gcnew fsCallback(this, &FSWatcher::onCreated), gcnew array<Object ^> { e });
-}
-
-void FSWatcher::onCreated(FileSystemEventArgs ^e) {
-  eventHandlerHelper(CREATED, e);
+  mDispatchQueue->Enqueue(gcnew Tuple<Int32, Object ^>(CREATED, e));
 }
 
 void FSWatcher::onDeletedDispatch(Object ^source, FileSystemEventArgs ^e) {
-	mDispatcher->BeginInvoke(gcnew fsCallback(this, &FSWatcher::onDeleted), gcnew array<Object ^> { e });
+  mDispatchQueue->Enqueue(gcnew Tuple<Int32, Object ^>(DELETED, e));
 }
 
-void FSWatcher::onDeleted(FileSystemEventArgs ^e) {
-  eventHandlerHelper(DELETED, e);
-}
+// TODO error handling
+void FSWatcher::onErrorDispatch(Object ^source, ErrorEventArgs ^e) {}
 
-void FSWatcher::onErrorDispatch(Object ^source, ErrorEventArgs ^e) {
-	mDispatcher->BeginInvoke(gcnew errorCallback(this, &FSWatcher::onError), gcnew array<Object ^> { e });
-}
-
-void FSWatcher::onError(ErrorEventArgs ^e) {
-  // TODO: error handling
-  Console::WriteLine("Error");
-}
+void FSWatcher::onError(ErrorEventArgs ^e) {}
 
 void FSWatcher::onRenamedDispatch(Object ^source, RenamedEventArgs ^e) {
-	mDispatcher->BeginInvoke(gcnew renamedCallback(this, &FSWatcher::onRenamed), gcnew array<Object ^> { e });
+  mDispatchQueue->Enqueue(gcnew Tuple<Int32, Object ^>(RENAMED, e));
 }
 
 void FSWatcher::onRenamed(RenamedEventArgs ^e) {

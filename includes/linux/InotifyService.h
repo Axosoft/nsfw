@@ -13,7 +13,7 @@ class InotifyTree;
 
 class InotifyService {
 public:
-  InotifyService(Queue &queue, std::string path);
+  InotifyService(EventQueue &queue, std::string path);
 
   bool isWatching();
 
@@ -31,7 +31,7 @@ private:
   void renameDirectory(int wd, std::string oldName, std::string newName);
 
   InotifyEventLoop *mEventLoop;
-  Queue &mQueue;
+  EventQueue &mQueue;
   InotifyTree *mTree;
   int mInotifyInstance;
 

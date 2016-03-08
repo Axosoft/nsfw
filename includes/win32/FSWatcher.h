@@ -12,30 +12,28 @@ using namespace System;
 using namespace System::IO;
 using namespace System::Runtime::InteropServices;
 using namespace System::Collections::Generic;
+using namespace System::Collections::Concurrent;
 using namespace System::Threading;
-using namespace System::Windows::Threading;
 
 ref class FSWatcher {
 public:
-  FSWatcher(Queue &queue, System::String ^path);
+  FSWatcher(EventQueue &queue, System::String ^path);
   ~FSWatcher();
   void dispatchSetup();
-  void eventHandlerHelper(Action action, FileSystemEventArgs ^e);
-  void onChanged(FileSystemEventArgs ^e);
+  void eventHandlerHelper(EventType action, FileSystemEventArgs ^e);
   void onChangedDispatch(Object ^source, FileSystemEventArgs ^e);
-  void onCreated(FileSystemEventArgs ^e);
   void onCreatedDispatch(Object ^source, FileSystemEventArgs ^e);
-  void onDeleted(FileSystemEventArgs ^e);
   void onDeletedDispatch(Object ^source, FileSystemEventArgs ^e);
   void onError(ErrorEventArgs ^e);
   void onErrorDispatch(Object ^source, ErrorEventArgs ^e);
   void onRenamed(RenamedEventArgs ^e);
   void onRenamedDispatch(Object ^source, RenamedEventArgs ^e);
 private:
-  Dispatcher ^mDispatcher;
-  ManualResetEvent ^mDispatcherStarted;
+  ConcurrentQueue< Tuple<Int32, Object ^> ^> ^mDispatchQueue;
+  bool mDispatching;
+  bool mDispatchExit;
   FileSystemWatcher ^mWatcher;
-  Queue &mQueue;
+  EventQueue &mQueue;
 };
 
 #endif

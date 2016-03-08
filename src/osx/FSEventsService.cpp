@@ -1,6 +1,6 @@
 #include "../../includes/osx/FSEventsService.h"
 
-FSEventsService::FSEventsService(Queue &queue, std::string path):
+FSEventsService::FSEventsService(EventQueue &queue, std::string path):
   mQueue(queue),
   mWatching(false) {
   mRunLoop = new RunLoop(this, path);

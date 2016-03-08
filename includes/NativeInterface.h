@@ -12,7 +12,7 @@ public:
 
   ~NativeInterface();
 private:
-  Queue mQueue;
+  EventQueue mQueue;
   void *mNativeInterface;
 };
 

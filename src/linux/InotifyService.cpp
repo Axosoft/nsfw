@@ -1,6 +1,6 @@
 #include "../../includes/linux/InotifyService.h"
 
-InotifyService::InotifyService(Queue &queue, std::string path):
+InotifyService::InotifyService(EventQueue &queue, std::string path):
   mQueue(queue) {
   // TODO: add failure catches
   mInotifyInstance = inotify_init();

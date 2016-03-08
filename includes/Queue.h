@@ -20,10 +20,10 @@ struct Event {
   std::string directory, fileA, fileB;
 };
 
-class Queue {
+class EventQueue {
 public:
-  Queue();
-  ~Queue();
+  EventQueue();
+  ~EventQueue();
 
   void clear();
   int count();

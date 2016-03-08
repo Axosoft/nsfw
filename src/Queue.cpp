@@ -1,12 +1,12 @@
 #include "../includes/Queue.h"
 
 #pragma unmanaged
-Queue::Queue() {
+EventQueue::EventQueue() {
   OPA_Queue_init(&mQueue);
   OPA_store_int(&mNumEvents, 0);
 }
 
-Queue::~Queue() {
+EventQueue::~EventQueue() {
   while(!OPA_Queue_is_empty(&mQueue)) {
     EventNode *node;
 
@@ -17,7 +17,7 @@ Queue::~Queue() {
   }
 }
 
-void Queue::clear() {
+void EventQueue::clear() {
   while(!OPA_Queue_is_empty(&mQueue)) {
     EventNode *node;
 
@@ -29,11 +29,11 @@ void Queue::clear() {
   }
 }
 
-int Queue::count() {
+int EventQueue::count() {
   return OPA_load_int(&mNumEvents);
 }
 
-Event *Queue::dequeue() {
+Event *EventQueue::dequeue() {
   if (!OPA_Queue_is_empty(&mQueue)) {
     EventNode *node;
 
@@ -48,7 +48,7 @@ Event *Queue::dequeue() {
   return NULL;
 }
 
-void Queue::enqueue(EventType type, std::string directory, std::string fileA, std::string fileB) {
+void EventQueue::enqueue(EventType type, std::string directory, std::string fileA, std::string fileB) {
   EventNode *node = new EventNode;
 
   OPA_Queue_header_init(&node->header);

@@ -18,3 +18,18 @@ NativeInterface::NativeInterface(std::string path) {
 NativeInterface::~NativeInterface() {
   delete (SERVICE *)mNativeInterface;
 }
+
+std::vector<Event *> *NativeInterface::getEvents() {
+  if (mQueue.count() == 0) {
+    return NULL;
+  }
+
+  int count = mQueue.count();
+  std::vector<Event *> *events = new std::vector<Event *>;
+  events->reserve(count);
+  for (int i = 0; i < count; ++i) {
+    events->push_back(mQueue.dequeue());
+  }
+
+  return events;
+}

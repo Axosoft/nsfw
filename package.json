@@ -1,0 +1,22 @@
+{
+  "name": "nsfw",
+  "version": "0.1.21",
+  "description": "A simple file watcher for Node",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/axosoft/node-simple-file-watcher.git"
+  },
+  "author": "Axosoft, LLC",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
+  },
+  "homepage": "https://github.com/axosoft/node-simple-file-watcher",
+  "dependencies": {
+    "nan": "^2.0.0"
+  },
+  "keywords": [
+    "FileWatcher"
+  ]
+}

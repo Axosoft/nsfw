@@ -16,7 +16,7 @@ enum EventType {
 };
 
 struct Event {
-  Action action;
+  EventType type;
   std::string directory, fileA, fileB;
 };
 
@@ -29,7 +29,7 @@ public:
   int count();
   Event *dequeue(); // Free this pointer when you are done with it
   void enqueue(
-    Event action,
+    EventType type,
     std::string directory,
     std::string fileA,
     std::string fileB = ""

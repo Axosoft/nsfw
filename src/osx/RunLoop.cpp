@@ -9,6 +9,7 @@ void *scheduleRunLoopWork(void *runLoop) {
 
 RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mEventsService(eventsService),
+  mExited(false),
   mPath(path),
   mRunLoop(NULL),
   mStarted(false) {
@@ -26,7 +27,7 @@ RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
 }
 
 bool RunLoop::isLooping() {
-  return mStarted;
+  return mStarted && !mExited;
 }
 
 RunLoop::~RunLoop() {
@@ -86,4 +87,5 @@ void RunLoop::work() {
   CFRelease(fileWatchPath);
 
   CFRunLoopRun();
+  mExited = true;
 }

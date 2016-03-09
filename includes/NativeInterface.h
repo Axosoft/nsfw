@@ -8,7 +8,10 @@ class NativeInterface {
 public:
   NativeInterface(std::string path);
 
+  std::string getError();
   std::vector<Event *> *getEvents();
+  bool hasErrored();
+  bool isWatching();
 
   ~NativeInterface();
 private:

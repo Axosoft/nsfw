@@ -93,7 +93,8 @@
                     "includes/linux/InotifyService.h"
                 ],
                 "cflags": [
-                    "-Wno-unknown-pragmas"
+                    "-Wno-unknown-pragmas",
+                    "-std=c++0x"
                 ]
             }],
             ["OS=='win'", {

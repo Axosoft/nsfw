@@ -19,6 +19,10 @@ NativeInterface::~NativeInterface() {
   delete (SERVICE *)mNativeInterface;
 }
 
+std::string NativeInterface::getError() {
+  return ((SERVICE *)mNativeInterface)->getError();
+}
+
 std::vector<Event *> *NativeInterface::getEvents() {
   if (mQueue.count() == 0) {
     return NULL;
@@ -32,4 +36,12 @@ std::vector<Event *> *NativeInterface::getEvents() {
   }
 
   return events;
+}
+
+bool NativeInterface::hasErrored() {
+  return ((SERVICE *)mNativeInterface)->hasErrored();
+}
+
+bool NativeInterface::isWatching() {
+  return ((SERVICE *)mNativeInterface)->isWatching();
 }

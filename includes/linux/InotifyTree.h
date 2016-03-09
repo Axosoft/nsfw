@@ -15,7 +15,9 @@ public:
   InotifyTree(int inotifyInstance, std::string path);
 
   void addDirectory(int wd, std::string name);
+  std::string getError();
   bool getPath(std::string &out, int wd);
+  bool hasErrored();
   bool isRootAlive();
   bool nodeExists(int wd);
   void removeDirectory(int wd);
@@ -67,9 +69,11 @@ private:
     bool mWatchDescriptorInitialized;
   };
 
+  void setError(std::string error);
   void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
   void removeNodeReferenceByWD(int watchDescriptor);
 
+  std::string mError;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   InotifyNode *mRoot;

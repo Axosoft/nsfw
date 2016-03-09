@@ -5,6 +5,14 @@ FSWatcherWrapper::FSWatcherWrapper(EventQueue &queue, std::string path): mQueue(
   mWD = createFileWatcher(queue, path);
 }
 
+std::string FSWatcherWrapper::getError() {
+  return getFileWatcherError(mWD);
+}
+
+bool FSWatcherWrapper::hasErrored() {
+  return didFileWatcherError(mWD);
+}
+
 bool FSWatcherWrapper::isWatching() {
   return mWD >= 0;
 }

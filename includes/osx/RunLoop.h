@@ -33,6 +33,7 @@ private:
 
   FSEventsService *mEventsService;
   FSEventStreamRef mEventStream;
+  bool mExited;
   std::string mPath;
   CFRunLoopRef mRunLoop;
   pthread_t mRunLoopThread;

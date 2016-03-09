@@ -10,7 +10,6 @@
 #include <map>
 #include <vector>
 #include <string>
-#include <iostream>
 
 void FSEventsServiceCallback(
   ConstFSEventStreamRef streamRef,
@@ -35,6 +34,8 @@ public:
     const FSEventStreamEventFlags eventFlags[],
     const FSEventStreamEventId eventIds[]
   );
+  std::string getError();
+  bool hasErrored();
   bool isWatching();
 
   ~FSEventsService();
@@ -47,8 +48,8 @@ private:
   void rename(std::vector<std::string> *paths);
   void splitFilePath(std::string &directory, std::string &name, std::string path);
 
+  std::string mPath;
   RunLoop *mRunLoop;
-  bool mWatching;
   EventQueue &mQueue;
 };
 

@@ -31,6 +31,7 @@ void EventQueue::clear() {
 
 int EventQueue::count() {
   return OPA_load_int(&mNumEvents);
+  return 0;
 }
 
 Event *EventQueue::dequeue() {

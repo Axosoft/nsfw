@@ -1,8 +1,8 @@
 #include "../../includes/osx/FSEventsService.h"
+#include <iostream>
 
 FSEventsService::FSEventsService(EventQueue &queue, std::string path):
-  mQueue(queue),
-  mWatching(false) {
+  mPath(path), mQueue(queue) {
   mRunLoop = new RunLoop(this, path);
 
   if (!mRunLoop->isLooping()) {
@@ -81,12 +81,21 @@ void FSEventsService::dispatch(EventType action, std::string path) {
   mQueue.enqueue(action, directory, name);
 }
 
-void FSEventsService::modify(std::string path) {
-  dispatch(MODIFIED, path);
+std::string FSEventsService::getError() {
+  return "Service shutdown unexpectedly";
+}
+
+bool FSEventsService::hasErrored() {
+  struct stat root;
+  return !isWatching() || stat(mPath.c_str(), &root) < 0;
 }
 
 bool FSEventsService::isWatching() {
   return mRunLoop != NULL && mRunLoop->isLooping();
+}
+
+void FSEventsService::modify(std::string path) {
+  dispatch(MODIFIED, path);
 }
 
 void FSEventsService::remove(std::string path) {

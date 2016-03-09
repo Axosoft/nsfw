@@ -13,17 +13,21 @@ public:
   static NAN_MODULE_INIT(Init);
 
   static void cleanupEventCallback(void *arg);
+  static void fireErrorCallback(uv_async_t *handle);
   static void fireEventCallback(uv_async_t *handle);
   static void pollForEvents(void *arg);
 
+  uv_async_t mErrorCallbackAsync;
+  uv_async_t mEventCallbackAsync;
   uint32_t mDebounceMS;
+  Callback *mErrorCallback;
   Callback *mEventCallback;
   NativeInterface *mInterface;
   std::string mPath;
   uv_thread_t mPollThread;
   bool mRunning;
 private:
-  NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback);
+  NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
   ~NSFW();
 
   struct EventBaton {

@@ -1,5 +1,4 @@
 #include "../../includes/linux/InotifyEventLoop.h"
-#include <iostream>
 
 InotifyEventLoop::InotifyEventLoop(
   int inotifyInstance,
@@ -18,6 +17,7 @@ InotifyEventLoop::InotifyEventLoop(
     NULL,
     [](void *eventLoop)->void * {
       ((InotifyEventLoop *)eventLoop)->work();
+      return NULL;
     },
     (void *)this
   );
@@ -135,6 +135,9 @@ void InotifyEventLoop::work() {
         }
 
         renameStart();
+      } else if (event->mask & (uint32_t)IN_MOVE_SELF) {
+        inotifyService->remove(event->wd, strdup(event->name));
+        inotifyService->removeDirectory(event->wd);
       }
     } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);
     position = 0;

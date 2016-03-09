@@ -6,7 +6,6 @@ extern "C" {
 #  include <opa_queue.h>
 #  include <opa_primitives.h>
 }
-#include <iostream>
 
 enum EventType {
   CREATED = 0,

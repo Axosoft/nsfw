@@ -1,7 +1,5 @@
 #include "../../includes/osx/RunLoop.h"
 
-#include <iostream>
-
 void *scheduleRunLoopWork(void *runLoop) {
   ((RunLoop *)runLoop)->work();
   return NULL;

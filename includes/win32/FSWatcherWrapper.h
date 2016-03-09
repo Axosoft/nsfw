@@ -7,6 +7,8 @@ class FSWatcherWrapper {
 public:
   FSWatcherWrapper(EventQueue &queue, std::string path);
 
+  std::string getError();
+  bool hasErrored();
   bool isWatching();
 
   ~FSWatcherWrapper();

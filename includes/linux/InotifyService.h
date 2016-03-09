@@ -6,7 +6,6 @@
 #include "../Queue.h"
 #include <queue>
 #include <map>
-#include <iostream>
 
 class InotifyEventLoop;
 class InotifyTree;
@@ -15,6 +14,8 @@ class InotifyService {
 public:
   InotifyService(EventQueue &queue, std::string path);
 
+  std::string getError();
+  bool hasErrored();
   bool isWatching();
 
   ~InotifyService();

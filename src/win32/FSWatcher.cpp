@@ -6,14 +6,13 @@ static void beginDispatchThread(Object ^fsWatcher) {
 }
 
 FSWatcher::FSWatcher(EventQueue &queue, System::String ^path):
-  mDispatchExit(false),
   mDispatching(false),
   mQueue(queue) {
   mDispatchQueue = gcnew ConcurrentQueue< Tuple<Int32, Object ^> ^>();
 
-  Thread ^dispatchThread = gcnew Thread(gcnew ParameterizedThreadStart(&beginDispatchThread));
-  dispatchThread->IsBackground = true;
-  dispatchThread->Start(this);
+  mDispatchThread = gcnew Thread(gcnew ParameterizedThreadStart(&beginDispatchThread));
+  mDispatchThread->IsBackground = true;
+  mDispatchThread->Start(this);
 
   mWatcher = gcnew FileSystemWatcher();
   mWatcher->Path = path;
@@ -40,7 +39,7 @@ FSWatcher::FSWatcher(EventQueue &queue, System::String ^path):
 FSWatcher::~FSWatcher() {
   delete mWatcher;
   mDispatching = false;
-  while (mDispatchExit) {}
+  mDispatchThread->Join();
 }
 
 void FSWatcher::dispatchSetup() {
@@ -64,7 +63,6 @@ void FSWatcher::dispatchSetup() {
       }
     }
   }
-  mDispatchExit = true;
 }
 
 System::String^ getDirectoryName(System::String^ path)
@@ -117,6 +115,14 @@ void FSWatcher::eventHandlerHelper(EventType event, FileSystemEventArgs ^e) {
   Marshal::FreeHGlobal(IntPtr(file));
 }
 
+System::String ^FSWatcher::getError() {
+  return mError;
+}
+
+bool FSWatcher::hasErrored() {
+  return !System::String::IsNullOrEmpty(mError);
+}
+
 void FSWatcher::onChangedDispatch(Object ^source, FileSystemEventArgs ^e) {
   mDispatchQueue->Enqueue(gcnew Tuple<Int32, Object ^>(MODIFIED, e));
 }
@@ -129,10 +135,11 @@ void FSWatcher::onDeletedDispatch(Object ^source, FileSystemEventArgs ^e) {
   mDispatchQueue->Enqueue(gcnew Tuple<Int32, Object ^>(DELETED, e));
 }
 
-// TODO error handling
-void FSWatcher::onErrorDispatch(Object ^source, ErrorEventArgs ^e) {}
-
-void FSWatcher::onError(ErrorEventArgs ^e) {}
+void FSWatcher::onErrorDispatch(Object ^source, ErrorEventArgs ^e) {
+  mDispatching = false;
+  mWatcher->EnableRaisingEvents = false;
+  mError = e->GetException()->Message;
+}
 
 void FSWatcher::onRenamedDispatch(Object ^source, RenamedEventArgs ^e) {
   mDispatchQueue->Enqueue(gcnew Tuple<Int32, Object ^>(RENAMED, e));

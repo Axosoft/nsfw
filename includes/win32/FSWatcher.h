@@ -21,17 +21,19 @@ public:
   ~FSWatcher();
   void dispatchSetup();
   void eventHandlerHelper(EventType action, FileSystemEventArgs ^e);
+  System::String ^getError();
+  bool hasErrored();
   void onChangedDispatch(Object ^source, FileSystemEventArgs ^e);
   void onCreatedDispatch(Object ^source, FileSystemEventArgs ^e);
   void onDeletedDispatch(Object ^source, FileSystemEventArgs ^e);
-  void onError(ErrorEventArgs ^e);
   void onErrorDispatch(Object ^source, ErrorEventArgs ^e);
   void onRenamed(RenamedEventArgs ^e);
   void onRenamedDispatch(Object ^source, RenamedEventArgs ^e);
 private:
   ConcurrentQueue< Tuple<Int32, Object ^> ^> ^mDispatchQueue;
   bool mDispatching;
-  bool mDispatchExit;
+  Thread ^mDispatchThread;
+  System::String ^mError;
   FileSystemWatcher ^mWatcher;
   EventQueue &mQueue;
 };

@@ -3,6 +3,7 @@
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
 InotifyTree::InotifyTree(int inotifyInstance, std::string path):
+  mError(""),
   mInotifyInstance(inotifyInstance) {
   mInotifyNodeByWatchDescriptor = new std::map<int, InotifyNode *>;
 
@@ -49,6 +50,10 @@ void InotifyTree::addNodeReferenceByWD(int wd, InotifyNode *node) {
   (*mInotifyNodeByWatchDescriptor)[wd] = node;
 }
 
+std::string InotifyTree::getError() {
+  return mError;
+}
+
 bool InotifyTree::getPath(std::string &out, int wd) {
   auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
   if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {
@@ -57,6 +62,10 @@ bool InotifyTree::getPath(std::string &out, int wd) {
 
   out = nodeIterator->second->getFullPath();
   return true;
+}
+
+bool InotifyTree::hasErrored() {
+  return mError != "";
 }
 
 bool InotifyTree::isRootAlive() {
@@ -101,6 +110,10 @@ void InotifyTree::renameDirectory(int wd, std::string oldName, std::string newNa
   nodeIterator->second->renameChild(oldName, newName);
 }
 
+void InotifyTree::setError(std::string error) {
+  mError = error;
+}
+
 InotifyTree::~InotifyTree() {
   if (isRootAlive()) {
     delete mRoot;
@@ -141,7 +154,7 @@ InotifyTree::InotifyNode::InotifyNode(
     return;
   }
 
-  for (uint32_t i = 0; i < resultCountOrError; ++i) {
+  for (int i = 0; i < resultCountOrError; ++i) {
     std::string fileName = directoryContents[i]->d_name;
 
     if (
@@ -177,7 +190,7 @@ InotifyTree::InotifyNode::InotifyNode(
     }
   }
 
-  for (uint32_t i = 0; i < resultCountOrError; ++i) {
+  for (int i = 0; i < resultCountOrError; ++i) {
     delete directoryContents[i];
   }
 
@@ -249,43 +262,62 @@ InotifyTree::InotifyNode *InotifyTree::InotifyNode::getParent() {
 }
 
 bool InotifyTree::InotifyNode::inotifyInit() {
-  // TODO: error handling
+  if (mTree->hasErrored()) {
+    mAlive = false;
+    return false;
+  }
+
+  int attr = mParent != NULL
+           ? ATTRIBUTES
+           : ATTRIBUTES | IN_MOVE_SELF;
+
   mWatchDescriptor = inotify_add_watch(
     mInotifyInstance,
     mFullPath.c_str(),
-    ATTRIBUTES
+    attr
   );
 
   mAlive = (mWatchDescriptor != -1);
 
-  if (mAlive) {
-    auto *childrenToRemove = new std::vector<std::string>;
-    childrenToRemove->reserve(mChildren->size());
-    for (auto i = mChildren->begin(); i != mChildren->end(); ++i) {
-      if (!i->second->inotifyInit()) {
-        childrenToRemove->push_back(i->second->getName());
-      }
+  if (!mAlive) {
+    if (errno == ENOSPC) {
+      mTree->setError("Inotify limit reached");
+    } else if (errno == ENOMEM) {
+      mTree->setError("Kernel out of memory");
+    } else if (errno == EBADF || errno == EINVAL) {
+      mTree->setError("Invalid file descriptor");
     }
+    return false;
+  }
 
-    if (childrenToRemove->size() > 0) {
-      struct stat file;
+  auto *childrenToRemove = new std::vector<std::string>;
+  childrenToRemove->reserve(mChildren->size());
+  for (auto i = mChildren->begin(); i != mChildren->end(); ++i) {
+    if (!i->second->inotifyInit()) {
+      childrenToRemove->push_back(i->second->getName());
+    }
+  }
 
-      if (
-        stat(mFullPath.c_str(), &file) < 0 ||
-        !S_ISDIR(file.st_mode)
-      ) {
-        mAlive = false;
-      } else {
-        for (auto i = childrenToRemove->begin(); i != childrenToRemove->end(); ++i) {
-          removeChild(*i);
-        }
-        mTree->addNodeReferenceByWD(mWatchDescriptor, this);
-      }
+  if (childrenToRemove->size() > 0) {
+    struct stat file;
+
+    if (
+      stat(mFullPath.c_str(), &file) < 0 ||
+      !S_ISDIR(file.st_mode)
+    ) {
+      mAlive = false;
     } else {
+      for (auto i = childrenToRemove->begin(); i != childrenToRemove->end(); ++i) {
+        removeChild(*i);
+      }
       mTree->addNodeReferenceByWD(mWatchDescriptor, this);
     }
-    delete childrenToRemove;
+  } else {
+    mTree->addNodeReferenceByWD(mWatchDescriptor, this);
   }
+  delete childrenToRemove;
+
+  return mAlive;
 }
 
 void InotifyTree::InotifyNode::removeChild(std::string name) {

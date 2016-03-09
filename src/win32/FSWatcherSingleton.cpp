@@ -14,7 +14,6 @@ int FSWatcherSingleton::createFileWatcher(EventQueue &queue, System::String ^pat
     mWatcherMap[wd] = watcher;
     return wd;
   } catch (System::Exception ^e) {
-    // TODO: return this error to javascript
     return -1;
   }
 }
@@ -29,10 +28,39 @@ void FSWatcherSingleton::destroyFileWatcher(Int32 wd) {
   delete watcher;
 }
 
+bool FSWatcherSingleton::didFileWatcherError(Int32 wd) {
+  if (!mWatcherMap->ContainsKey(wd)) {
+    return true;
+  }
+
+  return mWatcherMap[wd]->hasErrored();
+}
+
+System::String ^FSWatcherSingleton::getFileWatcherError(int wd) {
+  if (!mWatcherMap->ContainsKey(wd)) {
+    return "";
+  }
+
+  return mWatcherMap[wd]->getError();
+}
+
 int createFileWatcher(EventQueue &queue, std::string path) {
   return FSWatcherSingleton::Instance->createFileWatcher(queue, gcnew System::String(path.c_str()));
 }
 
 void destroyFileWatcher(int wd) {
   FSWatcherSingleton::Instance->destroyFileWatcher(wd);
+}
+
+bool didFileWatcherError(int wd) {
+  return FSWatcherSingleton::Instance->didFileWatcherError(wd);
+}
+
+std::string getFileWatcherError(int wd) {
+  char *ptr = (char *)Marshal::StringToHGlobalAnsi(
+    FSWatcherSingleton::Instance->getFileWatcherError(wd)
+  ).ToPointer();
+  std::string error = ptr;
+  Marshal::FreeHGlobal(IntPtr(ptr));
+  return error;
 }

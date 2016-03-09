@@ -1,9 +1,14 @@
 #include "../../includes/linux/InotifyService.h"
 
 InotifyService::InotifyService(EventQueue &queue, std::string path):
-  mQueue(queue) {
-  // TODO: add failure catches
+  mEventLoop(NULL),
+  mQueue(queue),
+  mTree(NULL) {
   mInotifyInstance = inotify_init();
+
+  if (mInotifyInstance == -1) {
+    return;
+  }
 
   mTree = new InotifyTree(mInotifyInstance, path);
   if (!mTree->isRootAlive()) {
@@ -26,6 +31,8 @@ InotifyService::~InotifyService() {
   if (mTree != NULL) {
     delete mTree;
   }
+
+  close(mInotifyInstance);
 }
 
 void InotifyService::create(int wd, std::string name) {
@@ -48,6 +55,22 @@ void InotifyService::dispatchRename(int wd, std::string oldName, std::string new
   }
 
   mQueue.enqueue(RENAMED, path, oldName, newName);
+}
+
+std::string InotifyService::getError() {
+  if (!isWatching()) {
+    return "Service shutdown unexpectedly";
+  }
+
+  if (mTree->hasErrored()) {
+    return mTree->getError();
+  }
+
+  return "";
+}
+
+bool InotifyService::hasErrored() {
+  return !isWatching() || (mTree == NULL ? false : mTree->hasErrored());
 }
 
 bool InotifyService::isWatching() {

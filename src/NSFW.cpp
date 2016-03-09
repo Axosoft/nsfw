@@ -11,14 +11,20 @@
 #pragma unmanaged
 Persistent<v8::Function> NSFW::constructor;
 
-NSFW::NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback):
-  mDebounceMS(debounceMS), mEventCallback(eventCallback), mInterface(NULL), mPath(path), mRunning(false) {}
+NSFW::NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback):
+  mDebounceMS(debounceMS),
+  mErrorCallback(errorCallback),
+  mEventCallback(eventCallback),
+  mInterface(NULL),
+  mPath(path),
+  mRunning(false) {}
 
 NSFW::~NSFW() {
   if (mInterface != NULL) {
     delete mInterface;
   }
   delete mEventCallback;
+  delete mErrorCallback;
 }
 
 void NSFW::cleanupEventCallback(void *arg) {
@@ -31,13 +37,21 @@ void NSFW::cleanupEventCallback(void *arg) {
   delete baton;
 }
 
+void NSFW::fireErrorCallback(uv_async_t *handle) {
+  Nan::HandleScope scope;
+  NSFW *nsfw = (NSFW *)handle->data;
+  v8::Local<v8::Value> argv[] = {
+    New<v8::String>(nsfw->mInterface->getError()).ToLocalChecked()
+  };
+  nsfw->mErrorCallback->Call(1, argv);
+}
+
 void NSFW::fireEventCallback(uv_async_t *handle) {
   Nan::HandleScope scope;
   EventBaton *baton = (EventBaton *)handle->data;
   if (baton->events->empty()) {
-    v8::Local<v8::Value> argv[] = { New<v8::Array>(0) };
-
-    baton->nsfw->mEventCallback->Call(1, argv);
+    uv_thread_t cleanup;
+    uv_thread_create(&cleanup, NSFW::cleanupEventCallback, baton);
     return;
   }
 
@@ -81,28 +95,32 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
 void NSFW::pollForEvents(void *arg) {
   NSFW *nsfw = (NSFW *)arg;
   while(nsfw->mRunning) {
+    if (nsfw->mInterface->hasErrored()) {
+      nsfw->mErrorCallbackAsync.data = (void *)nsfw;
+      uv_async_send(&nsfw->mErrorCallbackAsync);
+      nsfw->mRunning = false;
+      break;
+    }
     std::vector<Event *> *events = nsfw->mInterface->getEvents();
     if (events == NULL) {
+      sleep_for_ms(50);
       continue;
     }
-
-    uv_async_t async;
-    uv_async_init(uv_default_loop(), &async, &NSFW::fireEventCallback);
 
     EventBaton *baton = new EventBaton;
     baton->nsfw = nsfw;
     baton->events = events;
 
-    async.data = (void *)baton;
-    uv_async_send(&async);
+    nsfw->mEventCallbackAsync.data = (void *)baton;
+    uv_async_send(&nsfw->mEventCallbackAsync);
 
     sleep_for_ms(nsfw->mDebounceMS);
   }
-  delete nsfw->mInterface;
-  nsfw->mInterface = NULL;
 }
 
 NAN_MODULE_INIT(NSFW::Init) {
+  Nan::HandleScope scope;
+
   v8::Local<v8::FunctionTemplate> tpl = New<v8::FunctionTemplate>(JSNew);
   tpl->SetClassName(New<v8::String>("NSFW").ToLocalChecked());
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
@@ -122,26 +140,31 @@ NAN_METHOD(NSFW::JSNew) {
   }
 
   if (info.Length() < 1 || !info[0]->IsUint32()) {
-    return ThrowError("First argument of constructor must be a path.");
+    return ThrowError("First argument of constructor must be a positive integer.");
   }
   if (info.Length() < 2 || !info[1]->IsString()) {
-    return ThrowError("First argument of constructor must be a path.");
+    return ThrowError("Second argument of constructor must be a path.");
   }
   if (info.Length() < 3 || !info[2]->IsFunction()) {
-    return ThrowError("Second argument of constructor must be a callback.");
+    return ThrowError("Third argument of constructor must be a callback.");
+  }
+  if (info.Length() < 4 || !info[3]->IsFunction()) {
+    return ThrowError("Fourth argument of constructor must be a callback.");
   }
 
   uint32_t debounceMS = info[0]->Uint32Value();
   v8::String::Utf8Value utf8Value(info[1]->ToString());
   std::string path = std::string(*utf8Value);
-  Callback *callback = new Callback(info[2].As<v8::Function>());
+  Callback *eventCallback = new Callback(info[2].As<v8::Function>());
+  Callback *errorCallback = new Callback(info[3].As<v8::Function>());
 
-  NSFW *nsfw = new NSFW(debounceMS, path, callback);
+  NSFW *nsfw = new NSFW(debounceMS, path, eventCallback, errorCallback);
   nsfw->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
 
 NAN_METHOD(NSFW::Start) {
+  Nan::HandleScope scope;
   if (
     info.Length() < 1 ||
     !info[0]->IsFunction()
@@ -149,14 +172,15 @@ NAN_METHOD(NSFW::Start) {
     return ThrowError("Must provide callback to start.");
   }
 
-  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
   Callback *callback = new Callback(info[0].As<v8::Function>());
+  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
 
   if (nsfw->mInterface != NULL) {
     v8::Local<v8::Value> argv[1] = {
       Nan::Error("This NSFW cannot be started, because it is already running.")
     };
     callback->Call(1, argv);
+    delete callback;
     return;
   }
 
@@ -168,17 +192,32 @@ NSFW::StartWorker::StartWorker(NSFW *nsfw, Callback *callback):
 
 void NSFW::StartWorker::Execute() {
   mNSFW->mInterface = new NativeInterface(mNSFW->mPath);
-  // TODO: check to see if it was actually started
-  mNSFW->mRunning = true;
-  uv_thread_create(&mNSFW->mPollThread, NSFW::pollForEvents, mNSFW);
+  if (mNSFW->mInterface->isWatching()) {
+    mNSFW->mRunning = true;
+
+    uv_async_init(uv_default_loop(), &mNSFW->mErrorCallbackAsync, &NSFW::fireErrorCallback);
+    uv_async_init(uv_default_loop(), &mNSFW->mEventCallbackAsync, &NSFW::fireEventCallback);
+    uv_thread_create(&mNSFW->mPollThread, NSFW::pollForEvents, mNSFW);
+  } else {
+    delete mNSFW->mInterface;
+    mNSFW->mInterface = NULL;
+  }
 }
 
 void NSFW::StartWorker::HandleOKCallback() {
   HandleScope();
-  callback->Call(0, NULL);
+  if (mNSFW->mInterface == NULL) {
+    v8::Local<v8::Value> argv[1] = {
+      Nan::Error("NSFW was unable to start watching that directory.")
+    };
+    callback->Call(1, argv);
+  } else {
+    callback->Call(0, NULL);
+  }
 }
 
 NAN_METHOD(NSFW::Stop) {
+  Nan::HandleScope scope;
   if (
     info.Length() < 1 ||
     !info[0]->IsFunction()
@@ -194,6 +233,7 @@ NAN_METHOD(NSFW::Stop) {
       Nan::Error("This NSFW cannot be stopped, because it is not running.")
     };
     callback->Call(1, argv);
+    delete callback;
     return;
   }
 
@@ -205,7 +245,13 @@ NSFW::StopWorker::StopWorker(NSFW *nsfw, Callback *callback):
 
 void NSFW::StopWorker::Execute() {
   mNSFW->mRunning = false;
+
   uv_thread_join(&mNSFW->mPollThread);
+  uv_close((uv_handle_t*) &mNSFW->mErrorCallbackAsync, NULL);
+  uv_close((uv_handle_t*) &mNSFW->mEventCallbackAsync, NULL);
+
+  delete mNSFW->mInterface;
+  mNSFW->mInterface = NULL;
 }
 
 void NSFW::StopWorker::HandleOKCallback() {

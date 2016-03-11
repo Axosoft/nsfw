@@ -2,13 +2,13 @@
   "name": "nsfw",
   "version": "1.0.3",
   "description": "A simple file watcher for Node",
-  "main": "build/src/index.js",
+  "main": "lib/src/index.js",
   "scripts": {
-    "compile": "babel --sourceMaps --presets es2015 -d ./build/spec ./spec && babel --sourceMaps --presets es2015 -d ./build/src ./lib",
-    "eslint": "eslint lib spec",
-    "prepublish": "babel --presets es2015 -d ./build/src ./lib",
-    "debug-test": "npm run eslint && npm run compile && node-debug --debug-brk jasmine-node build/spec",
-    "test": "npm run eslint && npm run compile && jasmine-node build/spec --verbose"
+    "compile": "babel --sourceMaps --presets es2015 -d ./lib/spec ./js/spec && babel --sourceMaps --presets es2015 -d ./lib/src ./js/src",
+    "eslint": "eslint js/src js/spec",
+    "prepublish": "babel --presets es2015 -d ./lib/src ./js/src",
+    "debug-test": "npm run eslint && npm run compile && node-debug --debug-brk jasmine-node lib/spec",
+    "test": "npm run eslint && npm run compile && jasmine-node lib/spec --verbose"
   },
   "repository": {
     "type": "git",
@@ -20,7 +20,7 @@
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
   },
   "files": [
-    "build/src",
+    "lib",
     "src",
     "includes",
     "openpa",

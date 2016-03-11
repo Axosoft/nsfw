@@ -1,4 +1,4 @@
-const { NSFW } = require('../Release/nsfw.node');
+const { NSFW } = require('../../build/Release/nsfw.node');
 const fse = require('promisify-node')(require('fs-extra'));
 const path = require('path');
 const _ = require('lodash');

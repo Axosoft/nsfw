@@ -5,7 +5,7 @@ const fse = promisify(require('fs-extra'));
 const exec = promisify((command, options, callback) =>
   require('child_process').exec(command, options, callback));
 
-jasmine.DEFAULT_TIMEOUT_INTERVAL = 40000;
+jasmine.DEFAULT_TIMEOUT_INTERVAL = 120000;
 
 const DEBOUNCE = 1000;
 const TIMEOUT_PER_STEP = 3000;
@@ -43,7 +43,7 @@ describe('Node Sentinel File Watcher', function() {
       .then(done);
   });
 
-  xdescribe('Basic', function() {
+  describe('Basic', function() {
     it('can watch a single file', function(done) {
       const file = 'testing1.file';
       const inPath = path.resolve(workDir, 'test1');
@@ -322,7 +322,7 @@ describe('Node Sentinel File Watcher', function() {
     });
   });
 
-  xdescribe('Recursive', function() {
+  describe('Recursive', function() {
     it('can listen for the creation of a deeply nested file', function(done) {
       const paths = ['d', 'e', 'e', 'p', 'f', 'o', 'l', 'd', 'e', 'r'];
       const file = 'a_file.txt';
@@ -420,7 +420,7 @@ describe('Node Sentinel File Watcher', function() {
     });
   });
 
-  xdescribe('Errors', function() {
+  describe('Errors', function() {
     it('can gracefully recover when the watch folder is deleted', function(done) {
       const inPath = path.join(workDir, 'test4');
       let erroredOut = false;
@@ -463,7 +463,10 @@ describe('Node Sentinel File Watcher', function() {
       let count = 0;
       let watch;
 
-      return nsfw(stressRepoPath, () => { count++; })
+      return nsfw(
+        stressRepoPath,
+        () => { count++; },
+        { errorCallback() {} })
         .then(_w => {
           watch = _w;
           return watch.start();
@@ -475,12 +478,16 @@ describe('Node Sentinel File Watcher', function() {
         })
         .then(() => fse.remove(stressRepoPath))
         .then(() => fse.mkdir(stressRepoPath))
-        .then(() => nsfw(stressRepoPath, () => { count++; }))
+        .then(() => nsfw(
+          stressRepoPath,
+          () => { count++; },
+          { errorCallback() {} }))
         .then(_w => {
           watch = _w;
           count = 0;
           return watch.start();
         })
+        .then(() => new Promise(resolve => setTimeout(resolve, TIMEOUT_PER_STEP)))
         .then(() =>
           exec('git clone https://github.com/implausible/nsfw-stress-test ' + path.join('nsfw-stress-test', 'test')))
         .then(() => fse.stat(path.join(stressRepoPath, 'test')))

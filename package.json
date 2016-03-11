@@ -19,6 +19,9 @@
   "bugs": {
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
   },
+  "files": [
+    "build/src"
+  ],
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
     "fs-extra": "^0.26.5",

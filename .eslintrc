@@ -1,0 +1,25 @@
+{
+  "env": {
+    "es6": true,
+    "jasmine": true,
+    "node": true
+  },
+  "extends": "eslint:recommended",
+  "rules": {
+    "max-len": [2, 120],
+    "indent": [2, 2],
+    "no-console": 1,
+    "no-const-assign": 2,
+    "no-mixed-spaces-and-tabs": 2,
+    "no-multi-spaces": 2,
+    "no-trailing-spaces": 2,
+    "no-var": 2,
+    "prefer-const": 2,
+    "quotes": [2, "single"],
+    "semi": [2, "always"],
+    "sort-vars": 2,
+    "space-in-parens": [2, "never"],
+    "space-unary-ops": [2, { "words": true, "nonwords": false }],
+    "valid-jsdoc": 2
+  }
+}

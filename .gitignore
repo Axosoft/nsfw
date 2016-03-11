@@ -29,3 +29,7 @@ build
 
 # extraneous operating system items
 .DS_Store
+
+# ignore test folders
+nsfw-stress-test
+mockfs

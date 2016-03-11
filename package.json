@@ -2,7 +2,14 @@
   "name": "nsfw",
   "version": "0.1.21",
   "description": "A simple file watcher for Node",
-  "main": "index.js",
+  "main": "build/src/index.js",
+  "scripts": {
+    "compile": "babel --sourceMaps --presets es2015 -d ./build/spec ./spec && babel --sourceMaps --presets es2015 -d ./build/src ./lib",
+    "eslint": "eslint lib spec",
+    "prepublish": "babel --presets es2015 -d ./build/src ./lib",
+    "debug-test": "npm run eslint && npm run compile && node-debug --debug-brk jasmine-node build/spec",
+    "test": "npm run eslint && npm run compile && jasmine-node build/spec --verbose"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/axosoft/node-simple-file-watcher.git"
@@ -14,9 +21,24 @@
   },
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
-    "nan": "^2.0.0"
+    "fs-extra": "^0.26.5",
+    "lodash": "^4.6.1",
+    "nan": "^2.0.0",
+    "promisify-node": "^0.3.0"
+  },
+  "devDependencies": {
+    "babel-cli": "^6.5.1",
+    "babel-preset-es2015": "^6.5.0",
+    "eslint": "^2.2.0",
+    "jasmine-node": "^2.0.0"
   },
   "keywords": [
-    "FileWatcher"
+    "FileWatcher",
+    "files",
+    "watch",
+    "filewatch",
+    "file",
+    "inotify",
+    "fsevents"
   ]
 }

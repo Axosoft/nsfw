@@ -1,6 +1,6 @@
 {
   "name": "nsfw",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A simple file watcher for Node",
   "main": "build/src/index.js",
   "scripts": {
@@ -20,7 +20,11 @@
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
   },
   "files": [
-    "build/src"
+    "build/src",
+    "src",
+    "includes",
+    "openpa",
+    "binding.gyp"
   ],
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {

@@ -462,16 +462,18 @@ describe('Node Sentinel File Watcher', function() {
     it('does not segfault under stress', function(done) {
       let count = 0;
       let watch;
+      let errorRestart = Promise.resolve();
 
       return nsfw(
         stressRepoPath,
         () => { count++; },
-        { errorCallback() {} })
+        { errorCallback() { errorRestart = watch.stop().then(watch.start); } })
         .then(_w => {
           watch = _w;
           return watch.start();
         })
         .then(() => fse.remove(path.join(stressRepoPath, 'folder')))
+        .then(() => errorRestart)
         .then(() => {
           expect(count).toBeGreaterThan(0);
           return watch.stop();
@@ -481,10 +483,11 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => nsfw(
           stressRepoPath,
           () => { count++; },
-          { errorCallback() {} }))
+          { errorCallback() { errorRestart = watch.stop().then(watch.start); } }))
         .then(_w => {
           watch = _w;
           count = 0;
+          errorRestart = Promise.resolve();
           return watch.start();
         })
         .then(() => new Promise(resolve => setTimeout(resolve, TIMEOUT_PER_STEP)))
@@ -492,6 +495,7 @@ describe('Node Sentinel File Watcher', function() {
           exec('git clone https://github.com/implausible/nsfw-stress-test ' + path.join('nsfw-stress-test', 'test')))
         .then(() => fse.stat(path.join(stressRepoPath, 'test')))
         .then(() => fse.remove(path.join(stressRepoPath, 'test')))
+        .then(() => errorRestart)
         .then(() => {
           expect(count).toBeGreaterThan(0);
           count = 0;

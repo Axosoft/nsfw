@@ -16,8 +16,11 @@ NSFW::NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callb
   mErrorCallback(errorCallback),
   mEventCallback(eventCallback),
   mInterface(NULL),
+  mInterfaceLockValid(false),
   mPath(path),
-  mRunning(false) {}
+  mRunning(false) {
+    mInterfaceLockValid = uv_mutex_init(&mInterfaceLock) == 0;
+  }
 
 NSFW::~NSFW() {
   if (mInterface != NULL) {
@@ -25,6 +28,10 @@ NSFW::~NSFW() {
   }
   delete mEventCallback;
   delete mErrorCallback;
+
+  if (mInterfaceLockValid) {
+    uv_mutex_destroy(&mInterfaceLock);
+  }
 }
 
 void NSFW::cleanupEventCallback(void *arg) {
@@ -39,11 +46,12 @@ void NSFW::cleanupEventCallback(void *arg) {
 
 void NSFW::fireErrorCallback(uv_async_t *handle) {
   Nan::HandleScope scope;
-  NSFW *nsfw = (NSFW *)handle->data;
+  ErrorBaton *baton = (ErrorBaton *)handle->data;
   v8::Local<v8::Value> argv[] = {
-    New<v8::String>(nsfw->mInterface->getError()).ToLocalChecked()
+    New<v8::String>(baton->error).ToLocalChecked()
   };
-  nsfw->mErrorCallback->Call(1, argv);
+  baton->nsfw->mErrorCallback->Call(1, argv);
+  delete baton;
 }
 
 void NSFW::fireEventCallback(uv_async_t *handle) {
@@ -95,14 +103,22 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
 void NSFW::pollForEvents(void *arg) {
   NSFW *nsfw = (NSFW *)arg;
   while(nsfw->mRunning) {
+    uv_mutex_lock(&nsfw->mInterfaceLock);
+
     if (nsfw->mInterface->hasErrored()) {
-      nsfw->mErrorCallbackAsync.data = (void *)nsfw;
+      ErrorBaton *baton = new ErrorBaton;
+      baton->nsfw = nsfw;
+      baton->error = nsfw->mInterface->getError();
+
+      nsfw->mErrorCallbackAsync.data = (void *)baton;
       uv_async_send(&nsfw->mErrorCallbackAsync);
       nsfw->mRunning = false;
+      uv_mutex_unlock(&nsfw->mInterfaceLock);
       break;
     }
     std::vector<Event *> *events = nsfw->mInterface->getEvents();
     if (events == NULL) {
+      uv_mutex_unlock(&nsfw->mInterfaceLock);
       sleep_for_ms(50);
       continue;
     }
@@ -113,6 +129,8 @@ void NSFW::pollForEvents(void *arg) {
 
     nsfw->mEventCallbackAsync.data = (void *)baton;
     uv_async_send(&nsfw->mEventCallbackAsync);
+
+    uv_mutex_unlock(&nsfw->mInterfaceLock);
 
     sleep_for_ms(nsfw->mDebounceMS);
   }
@@ -165,6 +183,12 @@ NAN_METHOD(NSFW::JSNew) {
 
 NAN_METHOD(NSFW::Start) {
   Nan::HandleScope scope;
+
+  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
+  if (!nsfw->mInterfaceLockValid) {
+    return ThrowError("NSFW failed to initialize properly. Try creating a new NSFW.");
+  }
+
   if (
     info.Length() < 1 ||
     !info[0]->IsFunction()
@@ -173,7 +197,6 @@ NAN_METHOD(NSFW::Start) {
   }
 
   Callback *callback = new Callback(info[0].As<v8::Function>());
-  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
 
   if (nsfw->mInterface != NULL) {
     v8::Local<v8::Value> argv[1] = {
@@ -191,6 +214,13 @@ NSFW::StartWorker::StartWorker(NSFW *nsfw, Callback *callback):
   AsyncWorker(callback), mNSFW(nsfw) {}
 
 void NSFW::StartWorker::Execute() {
+  uv_mutex_lock(&mNSFW->mInterfaceLock);
+
+  if (mNSFW->mInterface != NULL) {
+    uv_mutex_unlock(&mNSFW->mInterfaceLock);
+    return;
+  }
+
   mNSFW->mInterface = new NativeInterface(mNSFW->mPath);
   if (mNSFW->mInterface->isWatching()) {
     mNSFW->mRunning = true;
@@ -202,6 +232,8 @@ void NSFW::StartWorker::Execute() {
     delete mNSFW->mInterface;
     mNSFW->mInterface = NULL;
   }
+
+  uv_mutex_unlock(&mNSFW->mInterfaceLock);
 }
 
 void NSFW::StartWorker::HandleOKCallback() {
@@ -218,6 +250,12 @@ void NSFW::StartWorker::HandleOKCallback() {
 
 NAN_METHOD(NSFW::Stop) {
   Nan::HandleScope scope;
+
+  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
+  if (!nsfw->mInterfaceLockValid) {
+    return ThrowError("NSFW failed to initialize properly. Try creating a new NSFW.");
+  }
+
   if (
     info.Length() < 1 ||
     !info[0]->IsFunction()
@@ -225,7 +263,6 @@ NAN_METHOD(NSFW::Stop) {
     return ThrowError("Must provide callback to stop.");
   }
 
-  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
   Callback *callback = new Callback(info[0].As<v8::Function>());
 
   if (nsfw->mInterface == NULL) {
@@ -244,6 +281,13 @@ NSFW::StopWorker::StopWorker(NSFW *nsfw, Callback *callback):
   AsyncWorker(callback), mNSFW(nsfw) {}
 
 void NSFW::StopWorker::Execute() {
+  uv_mutex_lock(&mNSFW->mInterfaceLock);
+
+  if (mNSFW->mInterface == NULL) {
+    uv_mutex_unlock(&mNSFW->mInterfaceLock);
+    return;
+  }
+
   mNSFW->mRunning = false;
 
   uv_thread_join(&mNSFW->mPollThread);
@@ -252,6 +296,8 @@ void NSFW::StopWorker::Execute() {
 
   delete mNSFW->mInterface;
   mNSFW->mInterface = NULL;
+
+  uv_mutex_unlock(&mNSFW->mInterfaceLock);
 }
 
 void NSFW::StopWorker::HandleOKCallback() {

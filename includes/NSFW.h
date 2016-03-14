@@ -17,18 +17,25 @@ public:
   static void fireEventCallback(uv_async_t *handle);
   static void pollForEvents(void *arg);
 
+  uint32_t mDebounceMS;
   uv_async_t mErrorCallbackAsync;
   uv_async_t mEventCallbackAsync;
-  uint32_t mDebounceMS;
   Callback *mErrorCallback;
   Callback *mEventCallback;
   NativeInterface *mInterface;
+  uv_mutex_t mInterfaceLock;
+  bool mInterfaceLockValid;
   std::string mPath;
   uv_thread_t mPollThread;
   bool mRunning;
 private:
   NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
   ~NSFW();
+
+  struct ErrorBaton {
+    NSFW *nsfw;
+    std::string error;
+  };
 
   struct EventBaton {
     NSFW *nsfw;

@@ -48,15 +48,22 @@ void FSWatcher::dispatchSetup() {
   while (mDispatching) {
     Int32 count = mDispatchQueue->Count;
     if (count == 0) {
+      Sleep(50);
       continue;
     }
 
     for (Int32 i = 0; i < count; ++i) {
       if (!mDispatching) {
-        break;
+        return;
       }
       Tuple<Int32, Object^> ^toDispatch;
-      while (!mDispatchQueue->TryDequeue(toDispatch)) {}
+      while (!mDispatchQueue->TryDequeue(toDispatch)) {
+        if (!mDispatching) {
+          return;
+        }
+        Sleep(1);
+      }
+
       if (toDispatch->Item1 == RENAMED) {
         onRenamed(safe_cast<RenamedEventArgs ^>(toDispatch->Item2));
       } else {

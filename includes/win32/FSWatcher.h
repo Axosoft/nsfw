@@ -14,6 +14,7 @@ using namespace System::Runtime::InteropServices;
 using namespace System::Collections::Generic;
 using namespace System::Collections::Concurrent;
 using namespace System::Threading;
+using namespace System::Security::Permissions;
 
 ref class FSWatcher {
 public:

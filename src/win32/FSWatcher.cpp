@@ -5,6 +5,7 @@ static void beginDispatchThread(Object ^fsWatcher) {
   ((FSWatcher ^)fsWatcher)->dispatchSetup();
 }
 
+[PermissionSet(SecurityAction::Demand, Name="FullTrust")]
 FSWatcher::FSWatcher(EventQueue &queue, System::String ^path):
   mDispatching(false),
   mQueue(queue) {

@@ -17,6 +17,7 @@ public:
   static void fireEventCallback(uv_async_t *handle);
   static void pollForEvents(void *arg);
 
+  Persistent<v8::Object> mPersistentHandle;
   uint32_t mDebounceMS;
   uv_async_t mErrorCallbackAsync;
   uv_async_t mEventCallbackAsync;

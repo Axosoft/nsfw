@@ -19,6 +19,9 @@ NSFW::NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callb
   mInterfaceLockValid(false),
   mPath(path),
   mRunning(false) {
+    HandleScope scope;
+    v8::Local<v8::Object> obj = New<v8::Object>();
+    mPersistentHandle.Reset(obj);
     mInterfaceLockValid = uv_mutex_init(&mInterfaceLock) == 0;
   }
 
@@ -207,6 +210,8 @@ NAN_METHOD(NSFW::Start) {
     return;
   }
 
+  New(nsfw->mPersistentHandle)->Set(New("nsfw").ToLocalChecked(), info.This());
+
   AsyncQueueWorker(new StartWorker(nsfw, callback));
 }
 
@@ -239,6 +244,10 @@ void NSFW::StartWorker::Execute() {
 void NSFW::StartWorker::HandleOKCallback() {
   HandleScope();
   if (mNSFW->mInterface == NULL) {
+    if (!mNSFW->mPersistentHandle.IsEmpty()) {
+      v8::Local<v8::Object> obj = New<v8::Object>();
+      mNSFW->mPersistentHandle.Reset(obj);
+    }
     v8::Local<v8::Value> argv[1] = {
       Nan::Error("NSFW was unable to start watching that directory.")
     };
@@ -302,6 +311,12 @@ void NSFW::StopWorker::Execute() {
 
 void NSFW::StopWorker::HandleOKCallback() {
   HandleScope();
+
+  if (!mNSFW->mPersistentHandle.IsEmpty()) {
+    v8::Local<v8::Object> obj = New<v8::Object>();
+    mNSFW->mPersistentHandle.Reset(obj);
+  }
+
   callback->Call(0, NULL);
 }
 

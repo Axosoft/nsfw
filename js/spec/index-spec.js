@@ -510,4 +510,56 @@ describe('Node Sentinel File Watcher', function() {
         .then(done);
     });
   });
+
+  describe('Unicode support', function() {
+    const watchPath = path.join(workDir, 'は');
+    beforeEach(function(done) {
+      return fse.mkdir(watchPath)
+        .then(done);
+    });
+
+    it('supports watching unicode directories', function(done) {
+      const file = 'unicoded_right_in_the.talker';
+      let eventFound = false;
+
+      function findEvent(element) {
+        if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === watchPath &&
+          element.file === file
+        ) {
+          eventFound = true;
+        }
+      }
+
+      let watch;
+
+      return nsfw(
+        workDir,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      )
+        .then(_w => {
+          watch = _w;
+          return watch.start();
+        })
+        .then(() => new Promise(resolve => {
+          setTimeout(resolve, TIMEOUT_PER_STEP);
+        }))
+        .then(() => fse.open(path.join(watchPath, file), 'w'))
+        .then(fd => {
+          return fse.write(fd, 'Unicode though.').then(() => fd);
+        })
+        .then(fd => fse.close(fd))
+        .then(() => new Promise(resolve => {
+          setTimeout(resolve, TIMEOUT_PER_STEP);
+        }))
+        .then(() => {
+          expect(eventFound).toBe(true);
+          return watch.stop();
+        })
+        .then(done, () =>
+          watch.stop().then((err) => done.fail(err)));
+    });
+  });
 });

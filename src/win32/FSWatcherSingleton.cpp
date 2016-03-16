@@ -45,7 +45,12 @@ System::String ^FSWatcherSingleton::getFileWatcherError(int wd) {
 }
 
 int createFileWatcher(EventQueue &queue, std::string path) {
-  return FSWatcherSingleton::Instance->createFileWatcher(queue, gcnew System::String(path.c_str()));
+  array<Byte> ^buffer = gcnew array<Byte>(path.length());
+  System::Text::Encoding ^encoding = System::Text::Encoding::UTF8;
+  for (int i = 0; i < path.length(); ++i) {
+    buffer[i] = path[i];
+  }
+  return FSWatcherSingleton::Instance->createFileWatcher(queue, encoding->GetString(buffer));
 }
 
 void destroyFileWatcher(int wd) {

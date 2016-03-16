@@ -13,10 +13,10 @@ function nsfw() {
   const _nsfw = new NSFW(...arguments);
 
   this.start = function start() {
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       _nsfw.start(err => {
         if (err) {
-          throw err;
+          reject(err);
         }
         resolve();
       });

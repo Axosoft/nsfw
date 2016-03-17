@@ -4,6 +4,8 @@ const promisify = require('promisify-node');
 const fse = promisify(require('fs-extra'));
 const exec = promisify((command, options, callback) =>
   require('child_process').exec(command, options, callback));
+const segfaultHandler = require('segfault-handler');
+segfaultHandler.registerHandler();
 
 jasmine.DEFAULT_TIMEOUT_INTERVAL = 120000;
 

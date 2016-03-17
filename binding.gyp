@@ -22,42 +22,17 @@
         "conditions": [
             ["OS=='win'", {
                 "sources": [
-                    "src/win32/FSWatcher.cpp",
-                    "src/win32/FSWatcherSingleton.cpp",
-                    "src/win32/FSWatcherWrapper.cpp",
-                    "includes/win32/FSWatcher.h",
-                    "includes/win32/FSWatcherSingleton.h",
-                    "includes/win32/FSWatcherWrapper.h"
+                    "src/win32/ReadLoop.cpp",
+                    "src/win32/ReadLoopRunner.cpp",
+                    "includes/win32/ReadLoop.h",
+                    "includes/win32/ReadLoopRunner.h",
                 ],
                 "msvs_settings": {
                     "VCCLCompilerTool": {
-                        "AdditionalOptions": [ "/clr" ],
                         "DisableSpecificWarnings": [ "4506", "4538", "4793" ]
                     },
                     "VCLinkerTool": {
                         "AdditionalOptions": [ "/ignore:4248" ]
-                    }
-                },
-                "configurations" : {
-                    "Release": {
-                        "msvs_settings": {
-                            "VCCLCompilerTool": {
-                                "RuntimeLibrary": 2,
-                                "RuntimeTypeInfo": "true"
-                            },
-                            "VCLinkerTool": {
-                                "LinkTimeCodeGeneration": 0
-                            }
-                        }
-                    },
-                    "Debug": {
-                        "msvs_settings": {
-                            "VCCLCompilerTool": {
-                                "RuntimeLibrary": 3,
-                                "BasicRuntimeChecks": 0,
-                                "ExceptionHandling": 0
-                            }
-                        }
                     }
                 }
             }],

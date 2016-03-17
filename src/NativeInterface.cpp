@@ -1,8 +1,8 @@
 #include "../includes/NativeInterface.h"
 
 #if defined(_WIN32)
-#define SERVICE FSWatcherWrapper
-#include "../includes/win32/FSWatcherWrapper.h"
+#define SERVICE ReadLoop
+#include "../includes/win32/ReadLoop.h"
 #elif defined(__APPLE_CC__) || defined(BSD)
 #define SERVICE FSEventsService
 #include "../includes/osx/FSEventsService.h"

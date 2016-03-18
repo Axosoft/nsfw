@@ -310,9 +310,11 @@ bool InotifyTree::InotifyNode::inotifyInit() {
       for (auto i = childrenToRemove->begin(); i != childrenToRemove->end(); ++i) {
         removeChild(*i);
       }
+      mWatchDescriptorInitialized = true;
       mTree->addNodeReferenceByWD(mWatchDescriptor, this);
     }
   } else {
+    mWatchDescriptorInitialized = true;
     mTree->addNodeReferenceByWD(mWatchDescriptor, this);
   }
   delete childrenToRemove;

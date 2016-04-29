@@ -4,8 +4,7 @@ const promisify = require('promisify-node');
 const fse = promisify(require('fs-extra'));
 const exec = promisify((command, options, callback) =>
   require('child_process').exec(command, options, callback));
-const segfaultHandler = require('segfault-handler');
-segfaultHandler.registerHandler();
+const temp = require('temp').track();
 
 jasmine.DEFAULT_TIMEOUT_INTERVAL = 120000;
 
@@ -13,7 +12,7 @@ const DEBOUNCE = 1000;
 const TIMEOUT_PER_STEP = 3000;
 
 describe('Node Sentinel File Watcher', function() {
-  const workDir = path.resolve('./mockfs');
+  const workDir = fse.realpathSync(temp.mkdirSync('./mockfs'));
 
   beforeEach(function(done) {
     function makeDir(identifier) {

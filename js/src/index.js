@@ -62,10 +62,11 @@ _private.buildNSFW = function buildNSFW(watchPath, eventCallback, options) {
 
   return fse.stat(watchPath)
     .then(stats => {
+      const realPath = fse.realpathSync(watchPath);
       if (stats.isDirectory()) {
-        return new nsfw(debounceMS, watchPath, eventCallback, errorCallback);
+        return new nsfw(debounceMS, realPath, eventCallback, errorCallback);
       } else if (stats.isFile()) {
-        return new _private.nsfwFilePoller(debounceMS, watchPath, eventCallback);
+        return new _private.nsfwFilePoller(debounceMS, realPath, eventCallback);
       } else {
         throw new Error('Path must be a valid path to a file or a directory.');
       }

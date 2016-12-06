@@ -64,9 +64,7 @@ void RunLoop::work() {
     1,
     NULL
   );
-  FSEventStreamContext callbackInfo;
-  callbackInfo.version = 0;
-  callbackInfo.info = (void *)mEventsService;
+  FSEventStreamContext callbackInfo {0, (void *)mEventsService, nullptr, nullptr, nullptr};
 
   mRunLoop = CFRunLoopGetCurrent();
   mEventStream = FSEventStreamCreate(

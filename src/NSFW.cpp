@@ -216,7 +216,10 @@ NAN_METHOD(NSFW::Start) {
 }
 
 NSFW::StartWorker::StartWorker(NSFW *nsfw, Callback *callback):
-  AsyncWorker(callback), mNSFW(nsfw) {}
+  AsyncWorker(callback), mNSFW(nsfw) {
+    uv_async_init(uv_default_loop(), &nsfw->mErrorCallbackAsync, &NSFW::fireErrorCallback);
+    uv_async_init(uv_default_loop(), &nsfw->mEventCallbackAsync, &NSFW::fireEventCallback);
+  }
 
 void NSFW::StartWorker::Execute() {
   uv_mutex_lock(&mNSFW->mInterfaceLock);
@@ -229,9 +232,6 @@ void NSFW::StartWorker::Execute() {
   mNSFW->mInterface = new NativeInterface(mNSFW->mPath);
   if (mNSFW->mInterface->isWatching()) {
     mNSFW->mRunning = true;
-
-    uv_async_init(uv_default_loop(), &mNSFW->mErrorCallbackAsync, &NSFW::fireErrorCallback);
-    uv_async_init(uv_default_loop(), &mNSFW->mEventCallbackAsync, &NSFW::fireEventCallback);
     uv_thread_create(&mNSFW->mPollThread, NSFW::pollForEvents, mNSFW);
   } else {
     delete mNSFW->mInterface;
@@ -300,8 +300,6 @@ void NSFW::StopWorker::Execute() {
   mNSFW->mRunning = false;
 
   uv_thread_join(&mNSFW->mPollThread);
-  uv_close((uv_handle_t*) &mNSFW->mErrorCallbackAsync, NULL);
-  uv_close((uv_handle_t*) &mNSFW->mEventCallbackAsync, NULL);
 
   delete mNSFW->mInterface;
   mNSFW->mInterface = NULL;
@@ -316,6 +314,9 @@ void NSFW::StopWorker::HandleOKCallback() {
     v8::Local<v8::Object> obj = New<v8::Object>();
     mNSFW->mPersistentHandle.Reset(obj);
   }
+
+  uv_close(reinterpret_cast<uv_handle_t*>(&mNSFW->mErrorCallbackAsync), nullptr);
+  uv_close(reinterpret_cast<uv_handle_t*>(&mNSFW->mEventCallbackAsync), nullptr);
 
   callback->Call(0, NULL);
 }

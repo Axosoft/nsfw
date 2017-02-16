@@ -31,19 +31,26 @@ So why NSFW? Because it has a consistent and minimal footprint in the Javascript
 
 ```js
 var nsfw = require('nsfw');
+
+var watcher1;
 return nsfw(
   'dir1',
   function(events) {
     // handle events
   })
   .then(function(watcher) {
+    watcher1 = watcher;
     return watcher.start();
   })
   .then(function() {
     // we are now watching dir1 for events!
+    
+    // To stop watching
+    watcher1.stop()
   });
 
 // With options
+var watcher2;
 return nsfw(
   'dir2',
   function(events) {
@@ -56,11 +63,16 @@ return nsfw(
     }
   })
   .then(function(watcher) {
+    watcher2 = watcher;
     return watcher.start();
   })
   .then(function() {
-    // we are now watching dir1 for events!
-  });
+    // we are now watching dir2 for events!
+  })
+  .then(function() {
+    // To stop watching
+    watcher2.stop();
+  })
 ```
 
 ## Callback Argument

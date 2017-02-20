@@ -24,6 +24,7 @@ public:
   void setError(std::string error);
   void setSharedPointer(std::shared_ptr<ReadLoopRunner> *pointer);
   void swap(DWORD numBytes);
+  void prepareForShutdown();
 
 private:
   unsigned int mBufferSize;

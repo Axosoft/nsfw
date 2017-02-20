@@ -192,6 +192,10 @@ bool ReadLoopRunner::hasErrored() {
 BOOL ReadLoopRunner::read() {
   DWORD bytes;
 
+  if (mDirectoryHandle == NULL) {
+    return FALSE;
+  }
+
   if (!ReadDirectoryChangesW(
     mDirectoryHandle,
     mBuffer,
@@ -234,4 +238,8 @@ void ReadLoopRunner::setSharedPointer(std::shared_ptr<ReadLoopRunner> *ptr) {
 
 void ReadLoopRunner::swap(DWORD numBytes) {
   memcpy(mSwap, mBuffer, numBytes);
+}
+
+void ReadLoopRunner::prepareForShutdown() {
+  mDirectoryHandle = NULL;
 }

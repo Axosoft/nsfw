@@ -118,6 +118,7 @@ void CALLBACK ReadLoop::killReadLoop(__in ULONG_PTR arg) {
 
 void ReadLoop::shutdown() {
 	if (mRunner != NULL) {
+		mRunner->get()->prepareForShutdown();
 		delete mRunner;
 		mRunner = NULL;
 	}

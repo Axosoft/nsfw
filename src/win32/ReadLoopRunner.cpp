@@ -25,7 +25,9 @@ VOID CALLBACK ReadLoopRunner::eventCallback(DWORD errorCode, DWORD numBytes, LPO
     } else if (errorCode == ERROR_INVALID_PARAMETER) {
       // resize the buffers because we're over the network, 64kb is the max buffer size for networked transmission
       runner->get()->resizeBuffers(64);
-      runner->get()->read();
+      if (!runner->get()->read()) {
+        delete (std::shared_ptr<ReadLoopRunner> *)runner;
+      }
       return;
     } else {
       runner->get()->setError("Service shutdown unexpectedly");
@@ -35,8 +37,12 @@ VOID CALLBACK ReadLoopRunner::eventCallback(DWORD errorCode, DWORD numBytes, LPO
   }
 
   runner->get()->swap(numBytes);
-  runner->get()->read();
+  BOOL readRequested = runner->get()->read();
   runner->get()->handleEvents();
+
+  if (!readRequested) {
+    delete (std::shared_ptr<ReadLoopRunner> *)runner;
+  }
 }
 
 std::string ReadLoopRunner::getError() {
@@ -183,8 +189,12 @@ bool ReadLoopRunner::hasErrored() {
   return mErrorMessage != "";
 }
 
-void ReadLoopRunner::read() {
+BOOL ReadLoopRunner::read() {
   DWORD bytes;
+
+  if (mDirectoryHandle == NULL) {
+    return FALSE;
+  }
 
   if (!ReadDirectoryChangesW(
     mDirectoryHandle,
@@ -204,8 +214,10 @@ void ReadLoopRunner::read() {
     &ReadLoopRunner::eventCallback
   )) {
     setError("Service shutdown unexpectedly");
-    delete (std::shared_ptr<ReadLoopRunner> *)mOverlapped.hEvent;
+    return FALSE;
   }
+
+  return TRUE;
 }
 
 void ReadLoopRunner::resizeBuffers(unsigned int bufferSize) {
@@ -226,4 +238,8 @@ void ReadLoopRunner::setSharedPointer(std::shared_ptr<ReadLoopRunner> *ptr) {
 
 void ReadLoopRunner::swap(DWORD numBytes) {
   memcpy(mSwap, mBuffer, numBytes);
+}
+
+void ReadLoopRunner::prepareForShutdown() {
+  mDirectoryHandle = NULL;
 }

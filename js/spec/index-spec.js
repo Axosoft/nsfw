@@ -505,6 +505,25 @@ describe('Node Sentinel File Watcher', function() {
           watch.stop().then((err) => done.fail(err)));
     });
 
+    it('creates and destroys many watchers', function(done) {
+      let watcher = null;
+      let promiseChain = Promise.resolve();
+
+      for (let i = 0; i < 100; i++) {
+        promiseChain = promiseChain
+          .then(() => nsfw(stressRepoPath, () => {}))
+          .then(w => {
+            watcher = w;
+            return watcher.start();
+          })
+          .then(() => {
+            return watcher.stop();
+          });
+      }
+
+      promiseChain.then(done, err => done.fail(err));
+    });
+
     afterEach(function(done) {
       return fse.remove(stressRepoPath)
         .then(done);

@@ -19,11 +19,12 @@ public:
   std::string getUTF8Directory(std::wstring path);
   void handleEvents();
   bool hasErrored();
-  void read();
+  BOOL read();
   void resizeBuffers(unsigned int bufferSize);
   void setError(std::string error);
   void setSharedPointer(std::shared_ptr<ReadLoopRunner> *pointer);
   void swap(DWORD numBytes);
+  void prepareForShutdown();
 
 private:
   unsigned int mBufferSize;

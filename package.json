@@ -29,7 +29,8 @@
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
     "fs-extra": "^0.26.5",
-    "lodash": "^4.6.1",
+    "lodash.isinteger": "^4.0.4",
+    "lodash.isundefined": "^3.0.1",
     "nan": "^2.0.0",
     "promisify-node": "^0.3.0"
   },

@@ -11,7 +11,7 @@ RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mPath(path),
   mRunLoop(NULL),
   mStarted(false) {
-  if (pthread_mutex_init(&mMutex, NULL) != 0) {
+  if (uv_sem_init(&mReadyForCleanup, 0) != 0) {
     mStarted = false;
     return;
   }
@@ -33,25 +33,15 @@ RunLoop::~RunLoop() {
     return;
   }
 
-  FSEventStreamStop(mEventStream);
-  FSEventStreamInvalidate(mEventStream);
-  FSEventStreamRelease(mEventStream);
+  uv_sem_wait(&mReadyForCleanup);
 
-  while(!CFRunLoopIsWaiting(mRunLoop)) {}
   CFRunLoopStop(mRunLoop);
 
-  {
-    Lock syncWithWork(this->mMutex);
-    pthread_cancel(mRunLoopThread);
-  }
-
   pthread_join(mRunLoopThread, NULL);
-  pthread_mutex_destroy(&mMutex);
+  uv_sem_destroy(&mReadyForCleanup);
 }
 
 void RunLoop::work() {
-  Lock syncWithDestructor(this->mMutex);
-
   CFAbsoluteTime latency = 0.001;
   CFStringRef fileWatchPath = CFStringCreateWithCString(
     NULL,
@@ -67,6 +57,14 @@ void RunLoop::work() {
   FSEventStreamContext callbackInfo {0, (void *)mEventsService, nullptr, nullptr, nullptr};
 
   mRunLoop = CFRunLoopGetCurrent();
+
+  __block uv_sem_t *runLoopHasStarted = &mReadyForCleanup;
+  CFRunLoopPerformBlock(mRunLoop, kCFRunLoopDefaultMode, ^ {
+    uv_sem_post(runLoopHasStarted);
+  });
+
+  CFRunLoopWakeUp(mRunLoop);
+
   mEventStream = FSEventStreamCreate(
     NULL,
     &FSEventsServiceCallback,
@@ -83,5 +81,11 @@ void RunLoop::work() {
   CFRelease(fileWatchPath);
 
   CFRunLoopRun();
+
+  FSEventStreamStop(mEventStream);
+  FSEventStreamUnscheduleFromRunLoop(mEventStream, mRunLoop, kCFRunLoopDefaultMode);
+  FSEventStreamInvalidate(mEventStream);
+  FSEventStreamRelease(mEventStream);
+
   mExited = true;
 }

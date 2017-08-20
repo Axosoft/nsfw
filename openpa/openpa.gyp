@@ -33,19 +33,19 @@
                         ["target_arch=='x64'", {
                             "VCLibrarianTool": {
                               "AdditionalOptions": [
-                                "/MACHINE:X64",
-                              ],
-                            },
+                                "/MACHINE:X64"
+                              ]
+                            }
                         }, {
                             "VCLibrarianTool": {
                               "AdditionalOptions": [
-                                "/MACHINE:x86",
-                              ],
-                            },
-                        }],
+                                "/MACHINE:x86"
+                              ]
+                            }
+                        }]
                     ]
                 }],
-                ["OS=='mac' or OS=='linux'", {
+                ["OS=='mac' or OS=='linux' or OS=='freebsd'", {
                     "sources": [
                         "src/primitives/opa_gcc_intrinsics.h"
                     ],

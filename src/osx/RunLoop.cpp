@@ -11,11 +11,6 @@ RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mPath(path),
   mRunLoop(NULL),
   mStarted(false) {
-  if (uv_sem_init(&mReadyForCleanup, 0) != 0) {
-    mStarted = false;
-    return;
-  }
-
   mStarted = !pthread_create(
     &mRunLoopThread,
     NULL,
@@ -33,12 +28,12 @@ RunLoop::~RunLoop() {
     return;
   }
 
-  uv_sem_wait(&mReadyForCleanup);
+  std::unique_lock<std::mutex> lk(mReadyForCleanupMutex);
+  mReadyForCleanup.wait(lk);
 
   CFRunLoopStop(mRunLoop);
 
   pthread_join(mRunLoopThread, NULL);
-  uv_sem_destroy(&mReadyForCleanup);
 }
 
 void RunLoop::work() {
@@ -58,9 +53,9 @@ void RunLoop::work() {
 
   mRunLoop = CFRunLoopGetCurrent();
 
-  __block uv_sem_t *runLoopHasStarted = &mReadyForCleanup;
+  __block auto *runLoopHasStarted = &mReadyForCleanup;
   CFRunLoopPerformBlock(mRunLoop, kCFRunLoopDefaultMode, ^ {
-    uv_sem_post(runLoopHasStarted);
+    runLoopHasStarted->notify_all();
   });
 
   CFRunLoopWakeUp(mRunLoop);

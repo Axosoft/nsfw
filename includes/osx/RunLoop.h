@@ -6,7 +6,7 @@
 
 #include <CoreServices/CoreServices.h>
 #include <pthread.h>
-#include <uv.h>
+#include <condition_variable>
 #include <string>
 
 void *scheduleRunLoopWork(void *runLoop);
@@ -38,7 +38,8 @@ private:
   std::string mPath;
   CFRunLoopRef mRunLoop;
   pthread_t mRunLoopThread;
-  uv_sem_t mReadyForCleanup;
+  std::condition_variable mReadyForCleanup;
+  std::mutex mReadyForCleanupMutex;
   bool mStarted;
 };
 

@@ -4,6 +4,10 @@ NativeInterface::NativeInterface(const std::string &path) {
   mNativeInterface.reset(new NativeImplementation(mQueue, path));
 }
 
+NativeInterface::~NativeInterface() {
+  mNativeInterface.reset();
+}
+
 std::string NativeInterface::getError() {
   return mNativeInterface->getError();
 }

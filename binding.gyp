@@ -41,6 +41,12 @@
                     "includes/osx/RunLoop.h",
                     "includes/osx/FSEventsService.h"
                 ],
+                "xcode_settings": {
+                    "OTHER_CFLAGS": [
+                        "-std=c++0x",
+                        "-stdlib=libc++"
+                    ],
+                },
                 "link_settings": {
                     "xcode_settings": {
                         "OTHER_LDFLAGS": [

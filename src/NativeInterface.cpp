@@ -1,6 +1,6 @@
 #include "../includes/NativeInterface.h"
 
-NativeInterface::NativeInterface(std::string path) {
+NativeInterface::NativeInterface(const std::string &path) {
   mNativeInterface.reset(new NativeImplementation(mQueue, path));
 }
 

@@ -17,7 +17,7 @@ using NativeImplementation = InotifyService;
 
 class NativeInterface {
 public:
-  NativeInterface(const std::string path);
+  NativeInterface(const std::string &path);
 
   std::string getError();
   std::vector<Event *>* getEvents();

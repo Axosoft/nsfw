@@ -38,8 +38,9 @@ private:
   std::string mPath;
   CFRunLoopRef mRunLoop;
   pthread_t mRunLoopThread;
-  std::condition_variable mReadyForCleanup;
+  std::condition_variable mReadyForCleanupCond;
   std::mutex mReadyForCleanupMutex;
+  bool mReadyForCleanup;
   bool mStarted;
 };
 

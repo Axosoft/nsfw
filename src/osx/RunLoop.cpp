@@ -10,6 +10,7 @@ RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mExited(false),
   mPath(path),
   mRunLoop(NULL),
+  mReadyForCleanup(false),
   mStarted(false) {
   mStarted = !pthread_create(
     &mRunLoopThread,
@@ -28,8 +29,12 @@ RunLoop::~RunLoop() {
     return;
   }
 
-  std::unique_lock<std::mutex> lk(mReadyForCleanupMutex);
-  mReadyForCleanup.wait(lk);
+  {
+    std::unique_lock<std::mutex> lk(mReadyForCleanupMutex);
+    while (!mReadyForCleanup) {
+      mReadyForCleanupCond.wait(lk);
+    }
+  }
 
   CFRunLoopStop(mRunLoop);
 
@@ -53,9 +58,13 @@ void RunLoop::work() {
 
   mRunLoop = CFRunLoopGetCurrent();
 
-  __block auto *runLoopHasStarted = &mReadyForCleanup;
+  __block auto *runLoopHasStartedMutex = &mReadyForCleanupMutex;
+  __block auto *runLoopHasStartedCond  = &mReadyForCleanupCond;
+  __block auto *runLoopHasStarted      = &mReadyForCleanup;
   CFRunLoopPerformBlock(mRunLoop, kCFRunLoopDefaultMode, ^ {
-    runLoopHasStarted->notify_all();
+    std::unique_lock<std::mutex> lk(*runLoopHasStartedMutex);
+    *runLoopHasStarted = true;
+    runLoopHasStartedCond->notify_all();
   });
 
   CFRunLoopWakeUp(mRunLoop);

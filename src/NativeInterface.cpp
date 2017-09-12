@@ -3,10 +3,10 @@
 #if defined(_WIN32)
 #define SERVICE ReadLoop
 #include "../includes/win32/ReadLoop.h"
-#elif defined(__APPLE_CC__) || defined(BSD)
+#elif defined(__APPLE_CC__)
 #define SERVICE FSEventsService
 #include "../includes/osx/FSEventsService.h"
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
 #define SERVICE InotifyService
 #include "../includes/linux/InotifyService.h"
 #endif

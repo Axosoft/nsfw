@@ -1,9 +1,6 @@
 #ifndef NSFW_NATIVE_INTERFACE_H
 #define NSFW_NATIVE_INTERFACE_H
 
-#include "Queue.h"
-#include <vector>
-
 #if defined(_WIN32)
 #include "../includes/win32/ReadLoop.h"
 using NativeImplementation = ReadLoop;
@@ -14,6 +11,9 @@ using NativeImplementation = FSEventsService;
 #include "../includes/linux/InotifyService.h"
 using NativeImplementation = InotifyService;
 #endif
+
+#include "Queue.h"
+#include <vector>
 
 class NativeInterface {
 public:

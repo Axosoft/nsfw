@@ -7,7 +7,7 @@ void EventQueue::clear() {
     queue.clear();
 }
 
-int EventQueue::count() {
+std::size_t EventQueue::count() {
     std::lock_guard<std::mutex> lock(mutex);
     return queue.size();
 }

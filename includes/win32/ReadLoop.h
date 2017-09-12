@@ -1,13 +1,15 @@
 #ifndef READ_LOOP_H
 #define READ_LOOP_H
 
+#include <WinSock2.h>
 #include <windows.h>
+#include "ReadLoopRunner.h"
+
 #include <memory>
 #include <process.h>
 #include <string>
 
 #include "../Queue.h"
-#include "ReadLoopRunner.h"
 
 class ReadLoop {
 public:

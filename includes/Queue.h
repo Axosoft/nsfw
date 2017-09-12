@@ -25,7 +25,7 @@ class EventQueue {
 public:
 
   void clear();
-  int count();
+  std::size_t count();
   std::unique_ptr<Event> dequeue();
   std::unique_ptr<std::vector<Event*>> dequeueAll();
   void enqueue(

@@ -4,19 +4,29 @@
 #include "Queue.h"
 #include <vector>
 
+#if defined(_WIN32)
+#include "../includes/win32/ReadLoop.h"
+using NativeImplementation = ReadLoop;
+#elif defined(__APPLE_CC__) || defined(BSD)
+#include "../includes/osx/FSEventsService.h"
+using NativeImplementation = FSEventsService;
+#elif defined(__linux__)
+#include "../includes/linux/InotifyService.h"
+using NativeImplementation = InotifyService;
+#endif
+
 class NativeInterface {
 public:
-  NativeInterface(std::string path);
+  NativeInterface(const std::string path);
 
   std::string getError();
-  std::vector<Event *> *getEvents();
+  std::vector<Event *>* getEvents();
   bool hasErrored();
   bool isWatching();
 
-  ~NativeInterface();
 private:
   EventQueue mQueue;
-  void *mNativeInterface;
+  std::unique_ptr<NativeImplementation> mNativeInterface;
 };
 
 #endif

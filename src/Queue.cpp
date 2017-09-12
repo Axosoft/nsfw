@@ -1,65 +1,48 @@
 #include "../includes/Queue.h"
 
 #pragma unmanaged
-EventQueue::EventQueue() {
-  OPA_Queue_init(&mQueue);
-  OPA_store_int(&mNumEvents, 0);
-}
-
-EventQueue::~EventQueue() {
-  while(!OPA_Queue_is_empty(&mQueue)) {
-    EventNode *node;
-
-    OPA_Queue_dequeue(&mQueue, node, EventNode, header);
-
-    delete node->event;
-    delete node;
-  }
-}
 
 void EventQueue::clear() {
-  while(!OPA_Queue_is_empty(&mQueue)) {
-    EventNode *node;
-
-    OPA_decr_int(&mNumEvents);
-    OPA_Queue_dequeue(&mQueue, node, EventNode, header);
-
-    delete node->event;
-    delete node;
-  }
+    std::lock_guard<std::mutex> lock(mutex);
+    queue.clear();
 }
 
 int EventQueue::count() {
-  return OPA_load_int(&mNumEvents);
-  return 0;
+    std::lock_guard<std::mutex> lock(mutex);
+    return queue.size();
 }
 
-Event *EventQueue::dequeue() {
-  if (!OPA_Queue_is_empty(&mQueue)) {
-    EventNode *node;
-
-    OPA_decr_int(&mNumEvents);
-    OPA_Queue_dequeue(&mQueue, node, EventNode, header);
-
-    Event *event = node->event;
-    delete node;
-
-    return event;
+std::unique_ptr<Event> EventQueue::dequeue() {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (queue.empty()) {
+      return nullptr;
   }
-  return NULL;
+
+  auto& front = queue.front();
+  auto retVal = std::move(front);
+  queue.pop_front();
+
+  return retVal;
 }
 
-void EventQueue::enqueue(EventType type, std::string directory, std::string fileA, std::string fileB) {
-  EventNode *node = new EventNode;
+std::unique_ptr<std::vector<Event*>> EventQueue::dequeueAll() {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (queue.empty()) {
+      return nullptr;
+  }
 
-  OPA_Queue_header_init(&node->header);
+  const auto queueSize = queue.size();
+  std::unique_ptr<std::vector<Event*>> events(new std::vector<Event*>(queueSize, nullptr));
+  for (auto i = 0; i < queueSize; ++i) {
+      auto& front = queue.front();
+      (*events)[i] = front.release();
+      queue.pop_front();
+  }
 
-  node->event = new Event;
-  node->event->type = type;
-  node->event->directory = directory;
-  node->event->fileA = fileA;
-  node->event->fileB = fileB;
+  return events;
+}
 
-  OPA_Queue_enqueue(&mQueue, node, EventNode, header);
-  OPA_incr_int(&mNumEvents);
+void EventQueue::enqueue(const EventType type, const std::string& directory, const std::string& fileA, const std::string& fileB) {
+  std::lock_guard<std::mutex> lock(mutex);
+  queue.emplace_back(std::unique_ptr<Event>(new Event(type, directory, fileA, fileB)));
 }

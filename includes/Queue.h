@@ -2,10 +2,10 @@
 #define NSFW_QUEUE_H
 
 #include <string>
-extern "C" {
-#  include <opa_queue.h>
-#  include <opa_primitives.h>
-}
+#include <memory>
+#include <deque>
+#include <vector>
+#include <mutex>
 
 enum EventType {
   CREATED = 0,
@@ -15,32 +15,30 @@ enum EventType {
 };
 
 struct Event {
+  Event(const EventType type, const std::string& directory, const std::string& fileA, const std::string& fileB) :
+      type(type), directory(directory), fileA(fileA), fileB(fileB) {}
   EventType type;
   std::string directory, fileA, fileB;
 };
 
 class EventQueue {
 public:
-  EventQueue();
-  ~EventQueue();
 
   void clear();
   int count();
-  Event *dequeue(); // Free this pointer when you are done with it
+  std::unique_ptr<Event> dequeue();
+  std::unique_ptr<std::vector<Event*>> dequeueAll();
   void enqueue(
     EventType type,
-    std::string directory,
-    std::string fileA,
-    std::string fileB = ""
+    const std::string& directory,
+    const std::string& fileA,
+    const std::string& fileB = ""
   );
 
 private:
-  struct EventNode {
-    OPA_Queue_element_hdr_t header;
-    Event *event;
-  };
-  OPA_Queue_info_t mQueue;
-  OPA_int_t mNumEvents;
+  std::deque<std::unique_ptr<Event>> queue;
+  std::mutex mutex;
+
 };
 
 #endif

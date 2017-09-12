@@ -33,7 +33,7 @@ std::unique_ptr<std::vector<Event*>> EventQueue::dequeueAll() {
 
   const auto queueSize = queue.size();
   std::unique_ptr<std::vector<Event*>> events(new std::vector<Event*>(queueSize, nullptr));
-  for (auto i = 0; i < queueSize; ++i) {
+  for (size_t i = 0; i < queueSize; ++i) {
       auto& front = queue.front();
       (*events)[i] = front.release();
       queue.pop_front();

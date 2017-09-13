@@ -21,7 +21,7 @@
                     "src/win32/ReadLoop.cpp",
                     "src/win32/ReadLoopRunner.cpp",
                     "includes/win32/ReadLoop.h",
-                    "includes/win32/ReadLoopRunner.h",
+                    "includes/win32/ReadLoopRunner.h"
                 ],
                 "msvs_settings": {
                     "VCCLCompilerTool": {
@@ -59,7 +59,7 @@
                     }
                 }
             }],
-            ["OS=='linux'", {
+            ["OS=='linux' or OS=='freebsd'", {
                 "sources": [
                     "src/Lock.cpp",
                     "src/linux/InotifyEventLoop.cpp",
@@ -80,25 +80,31 @@
                     ["target_arch=='x64'", {
                         "VCLibrarianTool": {
                           "AdditionalOptions": [
-                            "/MACHINE:X64",
-                          ],
-                        },
+                            "/MACHINE:X64"
+                          ]
+                        }
                     }, {
                         "VCLibrarianTool": {
                           "AdditionalOptions": [
-                            "/MACHINE:x86",
-                          ],
-                        },
-                    }],
+                            "/MACHINE:x86"
+                          ]
+                        }
+                    }]
                 ]
             }],
-            ["OS=='mac' or OS=='linux'", {
+            ["OS=='mac' or OS=='linux' or OS=='freebsd'", {
                 "defines": [
                     "HAVE_STDDEF_H=1",
                     "HAVE_STDLIB_H=1",
                     "HAVE_UNISTD_H=1"
                 ]
             }],
-        ],
+            ["OS=='freebsd'", {
+                "include_dirs": [
+                    "/usr/local/include"
+                ]
+            }],
+        ]
+
     }]
 }

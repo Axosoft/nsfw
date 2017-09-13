@@ -38,7 +38,6 @@ public:
 private:
   std::deque<std::unique_ptr<Event>> queue;
   std::mutex mutex;
-
 };
 
 #endif

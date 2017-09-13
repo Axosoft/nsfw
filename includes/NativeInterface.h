@@ -4,10 +4,10 @@
 #if defined(_WIN32)
 #include "../includes/win32/ReadLoop.h"
 using NativeImplementation = ReadLoop;
-#elif defined(__APPLE_CC__) || defined(BSD)
+#elif defined(__APPLE_CC__)
 #include "../includes/osx/FSEventsService.h"
 using NativeImplementation = FSEventsService;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
 #include "../includes/linux/InotifyService.h"
 using NativeImplementation = InotifyService;
 #endif

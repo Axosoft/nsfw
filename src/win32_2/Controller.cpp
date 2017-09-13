@@ -10,8 +10,8 @@ static std::wstring convertMultiByteToWideChar(const std::string &multiByte)
     }
 
     std::wstring wideString;
-    wideString.reserve(wlen);
-    int failureToResolveUTF8 = MultiByteToWideChar(CP_UTF8, 0, multiByte.data(), -1, const_cast<wchar_t*>(wideString.data()), wlen);
+    wideString.resize(wlen-1);
+    int failureToResolveUTF8 = MultiByteToWideChar(CP_UTF8, 0, multiByte.data(), -1, &(wideString[0]), wlen);
     if (failureToResolveUTF8 == 0) {
         return std::wstring();
     }

@@ -26,7 +26,7 @@ public:
   bool isWatching();
 
 private:
-  EventQueue mQueue;
+  std::shared_ptr<EventQueue> mQueue;
   std::unique_ptr<NativeImplementation> mNativeInterface;
 };
 

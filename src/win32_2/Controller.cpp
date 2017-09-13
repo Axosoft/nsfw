@@ -18,24 +18,54 @@ static std::wstring convertMultiByteToWideChar(const std::string &multiByte)
     return wideString;
 }
 
-Controller::Controller(EventQueue &queue, const std::string &path)
+HANDLE Controller::openDirectory(const std::wstring &path)
 {
-    auto wideString = convertMultiByteToWideChar(path);
-    mWatcher.reset(new Watcher(queue, nullptr, wideString));
+    return CreateFileW(
+            path.data(),
+            FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ
+            | FILE_SHARE_WRITE
+            | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS
+            | FILE_FLAG_OVERLAPPED,
+            NULL
+        );
+}
+
+Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path)
+    : mDirectoryHandle(INVALID_HANDLE_VALUE)
+{
+    auto widePath = convertMultiByteToWideChar(path);
+    mDirectoryHandle = openDirectory(widePath);
+
+    if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    mWatcher.reset(new Watcher(queue, mDirectoryHandle, widePath));
 }
 
 Controller::~Controller()
 {
+    mWatcher.reset();
+    CancelIo(mDirectoryHandle);
+    CloseHandle(mDirectoryHandle);
+    mDirectoryHandle = INVALID_HANDLE_VALUE;
 }
 
 std::string Controller::getError()
 {
+    if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
+        return "Failed to open directory";
+    }
     return mWatcher->getError();
 }
 
 bool Controller::hasErrored()
 {
-    return !mWatcher->getError().empty();
+    return mDirectoryHandle == INVALID_HANDLE_VALUE || !mWatcher->getError().empty();
 }
 
 bool Controller::isWatching()

@@ -14,7 +14,7 @@
 class Watcher
 {
   public:
-    Watcher(EventQueue &queue, HANDLE dirHandle, const std::wstring &path);
+    Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path);
     ~Watcher();
 
     bool isRunning() const { return mRunning; }
@@ -22,11 +22,17 @@ class Watcher
 
   private:
     void run();
-
+    bool loop();
     void start();
     void stop();
 
     void setError(const std::string &error);
+    void eventCallback(DWORD errorCode, DWORD numBytes);
+    void handleEvents();
+
+    void resizeBuffers(std::size_t size);
+
+    std::string getUTF8Directory(std::wstring path) ;
 
     std::atomic<bool> mRunning;
     SingleshotSemaphore mHasStartedSemaphore;
@@ -34,8 +40,11 @@ class Watcher
     std::string mError;
 
     const std::wstring mPath;
-    EventQueue mQueue;
+    std::shared_ptr<EventQueue> mQueue;
     HANDLE mDirectoryHandle;
+
+    std::vector<BYTE> mReadBuffer, mWriteBuffer;
+    OVERLAPPED mOverlapped;
 
     std::thread mRunner;
 };

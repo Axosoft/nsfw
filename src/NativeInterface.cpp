@@ -1,6 +1,7 @@
 #include "../includes/NativeInterface.h"
 
 NativeInterface::NativeInterface(const std::string &path) {
+  mQueue = std::make_shared<EventQueue>();
   mNativeInterface.reset(new NativeImplementation(mQueue, path));
 }
 
@@ -13,7 +14,7 @@ std::string NativeInterface::getError() {
 }
 
 std::vector<Event *>* NativeInterface::getEvents() {
-  return mQueue.dequeueAll().release();
+  return mQueue->dequeueAll().release();
 }
 
 bool NativeInterface::hasErrored() {

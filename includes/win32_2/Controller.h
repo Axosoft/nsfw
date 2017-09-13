@@ -10,7 +10,7 @@ class EventQueue;
 
 class Controller {
   public:
-    Controller(EventQueue &queue, const std::string &path);
+    Controller(std::shared_ptr<EventQueue> queue, const std::string &path);
 
     std::string getError();
     bool hasErrored();
@@ -19,6 +19,10 @@ class Controller {
     ~Controller();
   private:
     std::unique_ptr<Watcher> mWatcher;
+
+    HANDLE openDirectory(const std::wstring &path);
+    HANDLE mDirectoryHandle;
+
 //  protected:
 //    void run();
 //    void shutdown();

@@ -42,6 +42,7 @@
                     "includes/osx/FSEventsService.h"
                 ],
                 "xcode_settings": {
+                    'MACOSX_DEPLOYMENT_TARGET': '10.7',
                     "OTHER_CFLAGS": [
                         "-std=c++0x",
                         "-stdlib=libc++"

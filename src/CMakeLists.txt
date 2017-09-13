@@ -17,6 +17,7 @@ if (UNIX)
     if (APPLE)
         message (STATUS "compiling macOS specific file system service")
         set (NSFW_LIBRARY_SOURCES ${NSFW_LIBRARY_SOURCES}
+            SingleshotSemaphore.cpp
             osx/RunLoop.cpp
             osx/FSEventsService.cpp
         )

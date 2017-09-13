@@ -17,6 +17,18 @@ class SingleshotSemaphore {
         }
     }
 
+    bool waitFor(std::chrono::milliseconds ms)
+    {
+        std::unique_lock<std::mutex> lk(mMutex);
+
+        if (mState) {
+            return true;
+        }
+
+        mCond.wait_for(lk, ms);
+        return mState;
+    }
+
     void signal()
     {
         std::unique_lock<std::mutex> lk(mMutex);

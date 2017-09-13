@@ -17,13 +17,8 @@ class Watcher
     Watcher(EventQueue &queue, HANDLE dirHandle, const std::wstring &path);
     ~Watcher();
 
-    const std::wstring mPath;
-    EventQueue mQueue;
-    HANDLE mDirectoryHandle;
-
-    std::thread mRunner;
-
     bool isRunning() const { return mRunning; }
+    std::string getError() const;
 
   private:
     void run();
@@ -31,9 +26,18 @@ class Watcher
     void start();
     void stop();
 
+    void setError(const std::string &error);
+
     std::atomic<bool> mRunning;
     SingleshotSemaphore mHasStartedSemaphore;
+    mutable std::mutex mErrorMutex;
+    std::string mError;
 
+    const std::wstring mPath;
+    EventQueue mQueue;
+    HANDLE mDirectoryHandle;
+
+    std::thread mRunner;
 };
 
 

@@ -30,12 +30,12 @@ Controller::~Controller()
 
 std::string Controller::getError()
 {
-    return "";
+    return mWatcher->getError();
 }
 
 bool Controller::hasErrored()
 {
-    return false;
+    return !mWatcher->getError().empty();
 }
 
 bool Controller::isWatching()

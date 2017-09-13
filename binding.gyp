@@ -18,10 +18,10 @@
         "conditions": [
             ["OS=='win'", {
                 "sources": [
-                    "src/win32/ReadLoop.cpp",
-                    "src/win32/ReadLoopRunner.cpp",
-                    "includes/win32/ReadLoop.h",
-                    "includes/win32/ReadLoopRunner.h"
+                    "src/win32_2/Controller.cpp",
+                    "src/win32_2/Watcher.cpp",
+                    "includes/win32_2/Controller.h",
+                    "includes/win32_2/Watcher.h"
                 ],
                 "msvs_settings": {
                     "VCCLCompilerTool": {

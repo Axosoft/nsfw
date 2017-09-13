@@ -23,7 +23,6 @@ struct Event {
 
 class EventQueue {
 public:
-
   void clear();
   std::size_t count();
   std::unique_ptr<Event> dequeue();

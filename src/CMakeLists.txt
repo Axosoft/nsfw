@@ -3,13 +3,19 @@
 set (NSFW_LIBRARY_SOURCES
     Queue.cpp
     NativeInterface.cpp
+#FileSystemWatcher.cpp
 )
 
 if (WIN32)
     message (STATUS "compiling windows specific file system service")
     set (NSFW_LIBRARY_SOURCES ${NSFW_LIBRARY_SOURCES}
-        win32/ReadLoop.cpp
-        win32/ReadLoopRunner.cpp
+        #win32/ReadLoop.cpp
+        #win32/ReadLoopRunner.cpp
+        win32_2/ReadLoop.cpp
+        win32_2/ReadLoopRunner.cpp
+        win32_2/Controller.cpp
+        win32_2/Watcher.cpp
+
     )
 endif(WIN32)
 

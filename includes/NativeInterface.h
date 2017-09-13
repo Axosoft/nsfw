@@ -2,8 +2,8 @@
 #define NSFW_NATIVE_INTERFACE_H
 
 #if defined(_WIN32)
-#include "../includes/win32/ReadLoop.h"
-using NativeImplementation = ReadLoop;
+#include "../includes/win32_2/Controller.h"
+using NativeImplementation = Controller;
 #elif defined(__APPLE_CC__)
 #include "../includes/osx/FSEventsService.h"
 using NativeImplementation = FSEventsService;

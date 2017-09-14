@@ -1,6 +1,6 @@
 #include "../../includes/linux/InotifyService.h"
 
-InotifyService::InotifyService(EventQueue &queue, std::string path):
+InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path):
   mEventLoop(NULL),
   mQueue(queue),
   mTree(NULL) {
@@ -45,7 +45,7 @@ void InotifyService::dispatch(EventType action, int wd, std::string name) {
     return;
   }
 
-  mQueue.enqueue(action, path, name);
+  mQueue->enqueue(action, path, name);
 }
 
 void InotifyService::dispatchRename(int wd, std::string oldName, std::string newName) {
@@ -54,7 +54,7 @@ void InotifyService::dispatchRename(int wd, std::string oldName, std::string new
     return;
   }
 
-  mQueue.enqueue(RENAMED, path, oldName, newName);
+  mQueue->enqueue(RENAMED, path, oldName, newName);
 }
 
 std::string InotifyService::getError() {

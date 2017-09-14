@@ -2,7 +2,7 @@
 #define NSFW_NATIVE_INTERFACE_H
 
 #if defined(_WIN32)
-#include "../includes/win32_2/Controller.h"
+#include "../includes/win32/Controller.h"
 using NativeImplementation = Controller;
 #elif defined(__APPLE_CC__)
 #include "../includes/osx/FSEventsService.h"

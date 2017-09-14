@@ -2,37 +2,13 @@
 
 #include <sstream>
 
-static std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {
-    return std::wstring(cFileName, length);
-}
-
-
-static std::string convertWideCharToMultiByte(const std::wstring &wideChar)
-{
-    int utf8length = WideCharToMultiByte(
-                CP_UTF8,
-                0,
-                wideChar.data(),
-                -1,
-                0,
-                0,
-                NULL,
-                NULL
-            );
-    std::string utf8String;
-    utf8String.resize(utf8length-1);
-    int failureToResolveToUTF8 = WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        wideChar.data(),
-        -1,
-        const_cast<char*>(utf8String.data()),
-        static_cast<DWORD>(utf8String.size()),
-        NULL,
-        NULL
-    );
-
-    return utf8String;
+static
+std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {
+    LPWSTR nullTerminatedFileName = new WCHAR[length + 1]();
+    memcpy(nullTerminatedFileName, cFileName, length);
+    std::wstring fileName = nullTerminatedFileName;
+    delete[] nullTerminatedFileName;
+    return fileName;
 }
 
 std::string Watcher::getUTF8Directory(std::wstring path) {
@@ -47,7 +23,33 @@ std::string Watcher::getUTF8Directory(std::wstring path) {
           << path.substr(0, found);
     }
 
-    return convertWideCharToMultiByte(utf16DirectoryStream.str());
+    std::wstring uft16DirectoryString = utf16DirectoryStream.str();
+    int utf8length = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        uft16DirectoryString.data(),
+        -1,
+        0,
+        0,
+        NULL,
+        NULL
+    );
+    char *utf8CString = new char[utf8length];
+    int failureToResolveToUTF8 = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        uft16DirectoryString.data(),
+        -1,
+        utf8CString,
+        utf8length,
+        NULL,
+        NULL
+    );
+
+    std::string utf8Directory = utf8CString;
+    delete[] utf8CString;
+
+    return utf8Directory;
 }
 
 static
@@ -57,7 +59,34 @@ std::string getUTF8FileName(std::wstring path) {
         path = path.substr(found + 1);
     }
 
-    return convertWideCharToMultiByte(path);
+    int utf8length = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        path.data(),
+        -1,
+        0,
+        0,
+        NULL,
+        NULL
+        );
+
+    // TODO: failure cases for widechar conversion
+    char *utf8CString = new char[utf8length];
+    int failureToResolveToUTF8 = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        path.data(),
+        -1,
+        utf8CString,
+        utf8length,
+        NULL,
+        NULL
+        );
+
+    std::string utf8Directory = utf8CString;
+    delete[] utf8CString;
+
+    return utf8Directory;
 }
 
 Watcher::Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path)

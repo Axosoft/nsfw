@@ -7,11 +7,6 @@ InotifyEventLoop::InotifyEventLoop(
   mInotifyInstance(inotifyInstance),
   mInotifyService(inotifyService)
 {
-  if (pthread_mutex_init(&mMutex, NULL) != 0) {
-    mStarted = false;
-    return;
-  }
-
   mStarted = !pthread_create(
     &mEventLoop,
     NULL,
@@ -100,7 +95,7 @@ void InotifyEventLoop::work() {
   };
 
   while((bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE)) > 0) {
-    Lock syncWithDestructor(this->mMutex);
+    std::lock_guard<std::mutex> syncWithDestructor(mMutex);
     do {
       event = (struct inotify_event *)(buffer + position);
 
@@ -151,10 +146,9 @@ InotifyEventLoop::~InotifyEventLoop() {
   }
 
   {
-    Lock syncWithWork(this->mMutex);
+    std::lock_guard<std::mutex> syncWithWork(mMutex);
     pthread_cancel(mEventLoop);
   }
 
   pthread_join(mEventLoop, NULL);
-  pthread_mutex_destroy(&mMutex);
 }

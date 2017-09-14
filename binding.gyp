@@ -34,10 +34,8 @@
             }],
             ["OS=='mac'", {
                 "sources": [
-                    "src/Lock.cpp",
                     "src/osx/RunLoop.cpp",
                     "src/osx/FSEventsService.cpp",
-                    "includes/Lock.h",
                     "includes/osx/RunLoop.h",
                     "includes/osx/FSEventsService.h"
                 ],
@@ -61,11 +59,9 @@
             }],
             ["OS=='linux' or OS=='freebsd'", {
                 "sources": [
-                    "src/Lock.cpp",
                     "src/linux/InotifyEventLoop.cpp",
                     "src/linux/InotifyTree.cpp",
                     "src/linux/InotifyService.cpp",
-                    "includes/Lock.h",
                     "includes/linux/InotifyEventLoop.h",
                     "includes/linux/InotifyTree.h",
                     "includes/linux/InotifyService.h"
@@ -105,6 +101,5 @@
                 ]
             }],
         ]
-
     }]
 }

@@ -2,7 +2,7 @@
 #define INOTIFY_EVENT_LOOP_H
 
 #include "InotifyService.h"
-#include "../Lock.h"
+
 #include <sys/inotify.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/select.h>
 #include <string>
+#include <mutex>
 
 class InotifyService;
 class Lock;
@@ -40,7 +41,7 @@ private:
   InotifyService *mInotifyService;
 
   pthread_t mEventLoop;
-  pthread_mutex_t mMutex;
+  std::mutex mMutex;
   bool mStarted;
 };
 

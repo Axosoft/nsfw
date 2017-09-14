@@ -23,7 +23,6 @@ if (UNIX)
     else (APPLE)
         message (STATUS "compiling linux specific file system service")
         set (NSFW_LIBRARY_SOURCES ${NSFW_LIBRARY_SOURCES}
-            Lock.cpp
             linux/InotifyEventLoop.cpp
             linux/InotifyService.cpp
             linux/InotifyTree.cpp

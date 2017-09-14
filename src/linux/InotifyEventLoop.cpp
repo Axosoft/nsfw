@@ -16,6 +16,7 @@ InotifyEventLoop::InotifyEventLoop(
     },
     (void *)this
   );
+    if (mStarted) { mLoopingSemaphore.wait(); }
 }
 
 bool InotifyEventLoop::isLooping() {
@@ -94,6 +95,7 @@ void InotifyEventLoop::work() {
     renameEvent.isGood = false;
   };
 
+  mLoopingSemaphore.signal();
   while((bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE)) > 0) {
     std::lock_guard<std::mutex> syncWithDestructor(mMutex);
     do {

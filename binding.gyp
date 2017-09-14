@@ -18,10 +18,10 @@
         "conditions": [
             ["OS=='win'", {
                 "sources": [
-                    "src/win32_2/Controller.cpp",
-                    "src/win32_2/Watcher.cpp",
-                    "includes/win32_2/Controller.h",
-                    "includes/win32_2/Watcher.h"
+                    "src/win32/Controller.cpp",
+                    "src/win32/Watcher.cpp",
+                    "includes/win32/Controller.h",
+                    "includes/win32/Watcher.h"
                 ],
                 "msvs_settings": {
                     "VCCLCompilerTool": {

@@ -2,6 +2,7 @@
 #define INOTIFY_EVENT_LOOP_H
 
 #include "InotifyService.h"
+#include "../SingleshotSemaphore.h"
 
 #include <sys/inotify.h>
 #include <stdlib.h>
@@ -42,6 +43,7 @@ private:
 
   pthread_t mEventLoop;
   std::mutex mMutex;
+  SingleshotSemaphore mLoopingSemaphore;
   bool mStarted;
 };
 

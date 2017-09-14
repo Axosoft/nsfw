@@ -292,7 +292,7 @@ NSFW::StopWorker::StopWorker(NSFW *nsfw, Callback *callback):
 void NSFW::StopWorker::Execute() {
   uv_mutex_lock(&mNSFW->mInterfaceLock);
   if (mNSFW->mInterface == NULL) {
-	uv_mutex_unlock(&mNSFW->mInterfaceLock);
+    uv_mutex_unlock(&mNSFW->mInterfaceLock);
     return;
   }
   uv_mutex_unlock(&mNSFW->mInterfaceLock);

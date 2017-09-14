@@ -1,22 +1,13 @@
 #include "../../includes/osx/RunLoop.h"
 
-void *scheduleRunLoopWork(void *runLoop) {
-  ((RunLoop *)runLoop)->work();
-  return NULL;
-}
-
 RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mEventsService(eventsService),
   mExited(false),
   mPath(path),
   mRunLoop(NULL),
   mStarted(false) {
-  mStarted = !pthread_create(
-    &mRunLoopThread,
-    NULL,
-    scheduleRunLoopWork,
-    (void *)this
-  );
+  mRunLoopThread = std::thread([] (RunLoop *rl) { rl->work(); }, this);
+  mStarted = mRunLoopThread.joinable();
 }
 
 bool RunLoop::isLooping() {
@@ -31,7 +22,7 @@ RunLoop::~RunLoop() {
   mReadyForCleanup.wait();
   CFRunLoopStop(mRunLoop);
 
-  pthread_join(mRunLoopThread, NULL);
+  mRunLoopThread.join();
 }
 
 void RunLoop::work() {

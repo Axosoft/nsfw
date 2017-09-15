@@ -22,6 +22,7 @@ public:
 
   std::string getError();
   std::vector<Event *>* getEvents();
+  std::unique_ptr<std::vector<std::unique_ptr<Event>>> getEventVector();
   bool hasErrored();
   bool isWatching();
 

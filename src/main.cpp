@@ -29,10 +29,9 @@ public:
     VecEvents transform(VecEvents vecEvents)
     {
         for (const auto& event : *vecEvents) {
-            std::cout << event->type << ": "
-                      << event->directory << " "
-                      << event->fileA << " tp "
-                      << event->timePoint.time_since_epoch().count()
+            std::cout << "Type: " << event->type
+                      << " Directory: " << event->directory
+                      << " Filename: " << event->fileA
                       << std::endl;
         }
 
@@ -90,17 +89,17 @@ private:
     std::string regexStr;
 };
 
-int main() {
+int main(int argc, char **argv) {
 
     std::vector<std::unique_ptr<TransformBase>> vec;
-    std::unique_ptr<TransformBase> exDir(new ExcludeDirectoryTransform("dir"));
+    /*std::unique_ptr<TransformBase> exDir(new ExcludeDirectoryTransform("dir"));
     vec.push_back(std::move(exDir));
     std::unique_ptr<TransformBase> exFile(new ExcludeFileTransform(".txt"));
-    vec.push_back(std::move(exFile));
+    vec.push_back(std::move(exFile));*/
     std::unique_ptr<TransformBase> printer(new PrintOutTransform());
     vec.push_back(std::move(printer));
 
-    NodeSentinalFileWatcher::FileSystemWatcher watcher("path", std::chrono::milliseconds(50));
+    NodeSentinalFileWatcher::FileSystemWatcher watcher(argv[1], std::chrono::milliseconds(50));
 
     watcher.registerCallback([&](VecEvents events) {
         for (auto& transformer : vec) {

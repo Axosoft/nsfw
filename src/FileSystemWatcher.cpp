@@ -13,7 +13,7 @@ FileSystemWatcher::FileSystemWatcher(const std::string &path, std::chrono::milli
        }
 
        auto events = _nativeInterface->getEventVector();
-       if (events == NULL) {
+       if (events == nullptr) {
          std::this_thread::sleep_for(_sleepDuration);
          continue;
        }

@@ -7,3 +7,4 @@ message (STATUS "Running CMake version ${CMAKE_VERSION}")
 set (NSFW_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
 
 add_subdirectory (src)
+add_subdirectory (test)

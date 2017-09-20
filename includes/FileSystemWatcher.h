@@ -1,6 +1,8 @@
 #include <utility>
 #include <chrono>
 #include <memory>
+#include <thread>
+#include <atomic>
 
 #include <iostream>
 
@@ -17,6 +19,7 @@ class FileSystemWatcher : public Listener<CallBackSignatur>
   Listener::CallbackHandle _callbackHandle;
   std::chrono::milliseconds _sleepDuration;
   std::thread _runner;
+  std::atomic<bool> _inDestruction{false};
 
 public:
   FileSystemWatcher(const std::string &path, std::chrono::milliseconds sleepDuration);

@@ -3,6 +3,8 @@
 #include "catch.hpp"
 #include "../includes/transforms/ExcludeFiles.h"
 
+#include "test_helper.h"
+
 TEST_CASE( "Files can be excluded", "[ExcludeFiles]" )
 {
   VecEvents vec(new std::vector<VecEvents::element_type::value_type>());

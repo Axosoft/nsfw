@@ -7,7 +7,7 @@ FileSystemWatcher::FileSystemWatcher(const std::string &path, std::chrono::milli
     , _sleepDuration(sleepDuration)
 {
   _runner = std::thread([this] {
-    while(_nativeInterface->isWatching()) {
+    while(_nativeInterface->isWatching() && !_inDestruction) {
        if (_nativeInterface->hasErrored()) {
          break;
        }
@@ -28,6 +28,7 @@ FileSystemWatcher::FileSystemWatcher(const std::string &path, std::chrono::milli
 FileSystemWatcher::~FileSystemWatcher()
 {
   deregisterCallback(_callbackHandle);
+  _inDestruction = true;
   _runner.join();
 }
 

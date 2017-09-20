@@ -13,7 +13,7 @@ std::string NativeInterface::getError() {
   return mNativeInterface->getError();
 }
 
-std::vector<Event *>* NativeInterface::getEvents() {
+std::vector<Event*> *NativeInterface::getEvents() {
   return mQueue->dequeueAll().release();
 }
 

@@ -1,4 +1,6 @@
-#if defined(__linux__)
+#if defined(_WIN32)
+#include <direct.h>
+#elif defined(__linux__)
 #include <sys/types.h>
 #include <sys/stat.h>
 #endif

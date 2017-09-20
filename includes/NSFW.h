@@ -41,7 +41,7 @@ private:
 
   struct EventBaton {
     NSFW *nsfw;
-    std::vector<Event *> *events;
+    std::vector<Event*> *events;
   };
 
   static NAN_METHOD(JSNew);

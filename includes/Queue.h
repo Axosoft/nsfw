@@ -15,7 +15,7 @@ enum EventType {
 };
 
 struct Event {
-  Event(const EventType type, const std::string& directory, const std::string& fileA, const std::string& fileB) :
+  Event(const EventType type, const std::string &directory, const std::string &fileA, const std::string &fileB) :
       type(type), directory(directory), fileA(fileA), fileB(fileB) {}
   EventType type;
   std::string directory, fileA, fileB;
@@ -29,9 +29,9 @@ public:
   std::unique_ptr<std::vector<Event*>> dequeueAll();
   void enqueue(
     EventType type,
-    const std::string& directory,
-    const std::string& fileA,
-    const std::string& fileB = ""
+    const std::string &directory,
+    const std::string &fileA,
+    const std::string &fileB = ""
   );
 
 private:

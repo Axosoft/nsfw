@@ -22,7 +22,14 @@ int main( int argc, char* argv[] )
 
 std::string getDirectoryFromFile(const std::string &path)
 {
-    return std::string(path.c_str(), path.find_last_of('/'));
+    char delimiter;
+
+#if defined(_WIN32)
+    delimiter = '\\';
+#elif defined(__linux__)
+    delimiter = '/';
+#endif
+    return std::string(path.c_str(), path.find_last_of(delimiter));
 }
 
 class TestFileSystemAdapter

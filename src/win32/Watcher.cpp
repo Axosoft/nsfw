@@ -90,10 +90,10 @@ std::string getUTF8FileName(std::wstring path) {
 }
 
 Watcher::Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path)
-  : mRunning(false)
-  , mDirectoryHandle(dirHandle)
-  , mQueue(queue)
-  , mPath(path)
+  : mRunning(false),
+  mDirectoryHandle(dirHandle),
+  mQueue(queue),
+  mPath(path)
 {
   ZeroMemory(&mOverlapped, sizeof(OVERLAPPED));
   mOverlapped.hEvent = this;
@@ -101,26 +101,22 @@ Watcher::Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std:
   start();
 }
 
-Watcher::~Watcher()
-{
+Watcher::~Watcher() {
   stop();
 }
 
-void Watcher::resizeBuffers(std::size_t size)
-{
+void Watcher::resizeBuffers(std::size_t size) {
   mReadBuffer.resize(size);
   mWriteBuffer.resize(size);
 }
 
-void Watcher::run()
-{
+void Watcher::run() {
   while(mRunning) {
     SleepEx(INFINITE, true);
   }
 }
 
-bool Watcher::loop()
-{
+bool Watcher::pollDirectoryChanges() {
   DWORD bytes = 0;
 
   if (!isRunning()) {
@@ -131,7 +127,7 @@ bool Watcher::loop()
     mDirectoryHandle,
     mWriteBuffer.data(),
     static_cast<DWORD>(mWriteBuffer.size()),
-    TRUE,                           //recursive watching
+    TRUE,                           // recursive watching
     FILE_NOTIFY_CHANGE_FILE_NAME
     | FILE_NOTIFY_CHANGE_DIR_NAME
     | FILE_NOTIFY_CHANGE_ATTRIBUTES
@@ -140,7 +136,7 @@ bool Watcher::loop()
     | FILE_NOTIFY_CHANGE_LAST_ACCESS
     | FILE_NOTIFY_CHANGE_CREATION
     | FILE_NOTIFY_CHANGE_SECURITY,
-    &bytes,                         //num bytes written
+    &bytes,                         // num bytes written
     &mOverlapped,
     [](DWORD errorCode, DWORD numBytes, LPOVERLAPPED overlapped) {
       auto watcher = reinterpret_cast<Watcher*>(overlapped->hEvent);
@@ -154,8 +150,7 @@ bool Watcher::loop()
   return true;
 }
 
-void Watcher::eventCallback(DWORD errorCode)
-{
+void Watcher::eventCallback(DWORD errorCode) {
   if (errorCode != ERROR_SUCCESS) {
     if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
       setError("Buffer filled up and service needs a restart");
@@ -163,7 +158,7 @@ void Watcher::eventCallback(DWORD errorCode)
       // resize the buffers because we're over the network, 64kb is the max buffer size for networked transmission
       resizeBuffers(64 * 1024);
 
-      if (!loop()) {
+      if (!pollDirectoryChanges()) {
         setError("failed resizing buffers for network traffic");
       }
     } else {
@@ -173,12 +168,11 @@ void Watcher::eventCallback(DWORD errorCode)
   }
 
   std::swap(mWriteBuffer, mReadBuffer);
-  loop();
+  pollDirectoryChanges();
   handleEvents();
 }
 
-void Watcher::handleEvents()
-{
+void Watcher::handleEvents() {
   BYTE *base = mReadBuffer.data();
   while (true) {
     PFILE_NOTIFY_INFORMATION info = (PFILE_NOTIFY_INFORMATION)base;
@@ -192,10 +186,10 @@ void Watcher::handleEvents()
           std::wstring fileNameNew = getWStringFileName(info->FileName, info->FileNameLength);
 
           mQueue->enqueue(
-              RENAMED,
-              getUTF8Directory(fileName),
-              getUTF8FileName(fileName),
-              getUTF8FileName(fileNameNew)
+            RENAMED,
+            getUTF8Directory(fileName),
+            getUTF8FileName(fileName),
+            getUTF8FileName(fileNameNew)
           );
         } else {
           mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
@@ -227,9 +221,8 @@ void Watcher::handleEvents()
   }
 }
 
-void Watcher::start()
-{
-  mRunner = std::thread([this]{
+void Watcher::start() {
+  mRunner = std::thread([this] {
     // mRunning is set to false in the d'tor
     mRunning = true;
     run();
@@ -251,22 +244,20 @@ void Watcher::start()
   }
 }
 
-void Watcher::stop()
-{
+void Watcher::stop() {
   mRunning = false;
+  // schedule a NOOP APC to force the running loop in `Watcher::run()` to wake
+  // up, notice the changed `mRunning` and properly terminate the running loop
   QueueUserAPC([](__in ULONG_PTR) {}, mRunner.native_handle(), (ULONG_PTR)this);
   mRunner.join();
 }
 
-void Watcher::setError(const std::string &error)
-{
+void Watcher::setError(const std::string &error) {
   std::lock_guard<std::mutex> lock(mErrorMutex);
   mError = error;
 }
 
-
-std::string Watcher::getError() const
-{
+std::string Watcher::getError() const {
   if (!isRunning()) {
     return "Failed to start watcher";
   }

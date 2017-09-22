@@ -22,7 +22,7 @@ class Watcher
 
   private:
     void run();
-    bool loop();
+    bool pollDirectoryChanges();
     void start();
     void stop();
 

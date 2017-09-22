@@ -1,4 +1,3 @@
-
 # platform independent code
 set (NSFW_LIBRARY_SOURCES
     Queue.cpp

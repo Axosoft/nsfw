@@ -1,47 +1,26 @@
 #include "../includes/NativeInterface.h"
 
-#if defined(_WIN32)
-#define SERVICE ReadLoop
-#include "../includes/win32/ReadLoop.h"
-#elif defined(__APPLE_CC__)
-#define SERVICE FSEventsService
-#include "../includes/osx/FSEventsService.h"
-#elif defined(__linux__) || defined(__FreeBSD__)
-#define SERVICE InotifyService
-#include "../includes/linux/InotifyService.h"
-#endif
-
-NativeInterface::NativeInterface(std::string path) {
-  mNativeInterface = new SERVICE(mQueue, path);
+NativeInterface::NativeInterface(const std::string &path) {
+  mQueue = std::make_shared<EventQueue>();
+  mNativeInterface.reset(new NativeImplementation(mQueue, path));
 }
 
 NativeInterface::~NativeInterface() {
-  delete (SERVICE *)mNativeInterface;
+  mNativeInterface.reset();
 }
 
 std::string NativeInterface::getError() {
-  return ((SERVICE *)mNativeInterface)->getError();
+  return mNativeInterface->getError();
 }
 
-std::vector<Event *> *NativeInterface::getEvents() {
-  if (mQueue.count() == 0) {
-    return NULL;
-  }
-
-  int count = mQueue.count();
-  std::vector<Event *> *events = new std::vector<Event *>;
-  events->reserve(count);
-  for (int i = 0; i < count; ++i) {
-    events->push_back(mQueue.dequeue());
-  }
-
-  return events;
+std::vector<Event*> *NativeInterface::getEvents() {
+  return mQueue->dequeueAll().release();
 }
 
 bool NativeInterface::hasErrored() {
-  return ((SERVICE *)mNativeInterface)->hasErrored();
+  return mNativeInterface->hasErrored();
 }
 
 bool NativeInterface::isWatching() {
-  return ((SERVICE *)mNativeInterface)->isWatching();
+  return mNativeInterface->isWatching();
 }

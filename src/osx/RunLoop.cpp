@@ -1,27 +1,13 @@
 #include "../../includes/osx/RunLoop.h"
 
-void *scheduleRunLoopWork(void *runLoop) {
-  ((RunLoop *)runLoop)->work();
-  return NULL;
-}
-
 RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mEventsService(eventsService),
   mExited(false),
   mPath(path),
   mRunLoop(NULL),
   mStarted(false) {
-  if (uv_sem_init(&mReadyForCleanup, 0) != 0) {
-    mStarted = false;
-    return;
-  }
-
-  mStarted = !pthread_create(
-    &mRunLoopThread,
-    NULL,
-    scheduleRunLoopWork,
-    (void *)this
-  );
+  mRunLoopThread = std::thread([] (RunLoop *rl) { rl->work(); }, this);
+  mStarted = mRunLoopThread.joinable();
 }
 
 bool RunLoop::isLooping() {
@@ -33,12 +19,10 @@ RunLoop::~RunLoop() {
     return;
   }
 
-  uv_sem_wait(&mReadyForCleanup);
-
+  mReadyForCleanup.wait();
   CFRunLoopStop(mRunLoop);
 
-  pthread_join(mRunLoopThread, NULL);
-  uv_sem_destroy(&mReadyForCleanup);
+  mRunLoopThread.join();
 }
 
 void RunLoop::work() {
@@ -58,9 +42,9 @@ void RunLoop::work() {
 
   mRunLoop = CFRunLoopGetCurrent();
 
-  __block uv_sem_t *runLoopHasStarted = &mReadyForCleanup;
+  __block auto *runLoopHasStarted = &mReadyForCleanup;
   CFRunLoopPerformBlock(mRunLoop, kCFRunLoopDefaultMode, ^ {
-    uv_sem_post(runLoopHasStarted);
+    runLoopHasStarted->signal();
   });
 
   CFRunLoopWakeUp(mRunLoop);

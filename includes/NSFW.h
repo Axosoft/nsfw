@@ -5,6 +5,7 @@
 #include <nan.h>
 #include <uv.h>
 #include <vector>
+#include <atomic>
 
 using namespace Nan;
 
@@ -28,7 +29,7 @@ public:
   bool mInterfaceLockValid;
   std::string mPath;
   uv_thread_t mPollThread;
-  bool mRunning;
+  std::atomic<bool> mRunning;
 private:
   NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
   ~NSFW();
@@ -40,7 +41,7 @@ private:
 
   struct EventBaton {
     NSFW *nsfw;
-    std::vector<Event *> *events;
+    std::vector<Event*> *events;
   };
 
   static NAN_METHOD(JSNew);

@@ -2,10 +2,6 @@
     "targets": [{
         "target_name": "nsfw",
 
-        "dependencies": [
-            "openpa/openpa.gyp:openpa"
-        ],
-
         "sources": [
             "src/NSFW.cpp",
             "src/Queue.cpp",
@@ -22,10 +18,10 @@
         "conditions": [
             ["OS=='win'", {
                 "sources": [
-                    "src/win32/ReadLoop.cpp",
-                    "src/win32/ReadLoopRunner.cpp",
-                    "includes/win32/ReadLoop.h",
-                    "includes/win32/ReadLoopRunner.h"
+                    "src/win32/Controller.cpp",
+                    "src/win32/Watcher.cpp",
+                    "includes/win32/Controller.h",
+                    "includes/win32/Watcher.h"
                 ],
                 "msvs_settings": {
                     "VCCLCompilerTool": {
@@ -38,13 +34,18 @@
             }],
             ["OS=='mac'", {
                 "sources": [
-                    "src/Lock.cpp",
                     "src/osx/RunLoop.cpp",
                     "src/osx/FSEventsService.cpp",
-                    "includes/Lock.h",
                     "includes/osx/RunLoop.h",
                     "includes/osx/FSEventsService.h"
                 ],
+                "xcode_settings": {
+                    'MACOSX_DEPLOYMENT_TARGET': '10.7',
+                    "OTHER_CFLAGS": [
+                        "-std=c++11",
+                        "-stdlib=libc++"
+                    ],
+                },
                 "link_settings": {
                     "xcode_settings": {
                         "OTHER_LDFLAGS": [
@@ -58,25 +59,19 @@
             }],
             ["OS=='linux' or OS=='freebsd'", {
                 "sources": [
-                    "src/Lock.cpp",
                     "src/linux/InotifyEventLoop.cpp",
                     "src/linux/InotifyTree.cpp",
                     "src/linux/InotifyService.cpp",
-                    "includes/Lock.h",
                     "includes/linux/InotifyEventLoop.h",
                     "includes/linux/InotifyTree.h",
                     "includes/linux/InotifyService.h"
                 ],
                 "cflags": [
                     "-Wno-unknown-pragmas",
-                    "-std=c++0x"
+                    "-std=c++11"
                 ]
             }],
             ["OS=='win'", {
-                "defines": [
-                    "OPA_HAVE_NT_INTRINSICS=1",
-                    "_opa_inline=__inline"
-                ],
                 "conditions": [
                     ["target_arch=='x64'", {
                         "VCLibrarianTool": {
@@ -95,7 +90,6 @@
             }],
             ["OS=='mac' or OS=='linux' or OS=='freebsd'", {
                 "defines": [
-                    "OPA_HAVE_GCC_INTRINSIC_ATOMICS=1",
                     "HAVE_STDDEF_H=1",
                     "HAVE_STDLIB_H=1",
                     "HAVE_UNISTD_H=1"
@@ -106,16 +100,6 @@
                     "/usr/local/include"
                 ]
             }],
-            ["target_arch=='x64' or target_arch=='arm64'", {
-                "defines": [
-                    "OPA_SIZEOF_VOID_P=8"
-                ]
-            }],
-            ["target_arch=='ia32' or target_arch=='armv7'", {
-                "defines": [
-                    "OPA_SIZEOF_VOID_P=4"
-                ]
-            }]
         ]
     }]
 }

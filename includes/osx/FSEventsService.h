@@ -24,7 +24,7 @@ class RunLoop;
 
 class FSEventsService {
 public:
-  FSEventsService(EventQueue &queue, std::string path);
+  FSEventsService(std::shared_ptr<EventQueue> queue, std::string path);
 
   friend void FSEventsServiceCallback(
     ConstFSEventStreamRef streamRef,
@@ -50,7 +50,7 @@ private:
 
   std::string mPath;
   RunLoop *mRunLoop;
-  EventQueue &mQueue;
+  std::shared_ptr<EventQueue> mQueue;
 };
 
 #endif

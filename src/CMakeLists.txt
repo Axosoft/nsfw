@@ -34,6 +34,3 @@ set (CMAKE_CXX_STANDARD 11)
 
 add_library(nsfw STATIC ${NSFW_LIBRARY_SOURCES})
 target_include_directories(nsfw PUBLIC ${NSFW_INCLUDE_DIR})
-
-#add_executable(TestRunner main.cpp)
-#target_link_libraries(TestRunner nsfw)

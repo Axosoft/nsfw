@@ -8,26 +8,25 @@
 class ExcludeFiles : public AbstractTransform
 {
 public:
-    ExcludeFiles(const std::string &regex)
-        : regexStr(regex) {
+  ExcludeFiles(const std::string &regex)
+    : regexStr(regex) {}
 
-    }
+  VecEvents transform(VecEvents vecEvents) {
+    vecEvents->erase(std::remove_if(vecEvents->begin(),
+                                 vecEvents->end(),
+                                 [this](std::unique_ptr<Event> &event){
+      std::regex self_regex(regexStr,
+                            std::regex_constants::ECMAScript
+                          | std::regex_constants::icase);
+      return std::regex_search(event->fileA, self_regex);
+    }), vecEvents->end());
 
-    VecEvents transform(VecEvents vecEvents)
-    {
-        vecEvents->erase(std::remove_if(vecEvents->begin(),
-                                       vecEvents->end(),
-                                       [this](std::unique_ptr<Event> &event){
-            std::regex self_regex(regexStr,
-                                  std::regex_constants::ECMAScript
-                                | std::regex_constants::icase);
-            return std::regex_search(event->fileA, self_regex);
-        }), vecEvents->end());
+    return vecEvents;
+  }
+  virtual ~ExcludeFiles() {}
 
-        return vecEvents;
-    }
 private:
-    std::string regexStr;
+  std::string regexStr;
 };
 
 #endif

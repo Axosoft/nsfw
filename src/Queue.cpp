@@ -46,15 +46,15 @@ std::unique_ptr<std::vector<Event*>> EventQueue::dequeueAll() {
 std::unique_ptr<std::vector<std::unique_ptr<Event>>> EventQueue::dequeueAllEventsInVector() {
   std::lock_guard<std::mutex> lock(mutex);
   if (queue.empty()) {
-      return nullptr;
+    return nullptr;
   }
 
   const auto queueSize = queue.size();
   std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(new std::vector<std::unique_ptr<Event>>());
   events->resize(queueSize);
   for (size_t i = 0; i < queueSize; ++i) {
-      (*events)[i] = std::move(queue.front());
-      queue.pop_front();
+    (*events)[i] = std::move(queue.front());
+    queue.pop_front();
   }
 
   return events;

@@ -16,10 +16,10 @@ enum EventType {
 
 struct Event {
   Event(const EventType type, const std::string &directory, const std::string &fileA, const std::string &fileB) :
-      type(type), directory(directory), fileA(fileA), fileB(fileB) {}
-  {
+      type(type), directory(directory), fileA(fileA), fileB(fileB) {
     timePoint = std::chrono::high_resolution_clock::now();
   }
+
   EventType type;
   std::string directory, fileA, fileB;
   std::chrono::high_resolution_clock::time_point timePoint;

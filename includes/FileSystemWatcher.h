@@ -15,11 +15,11 @@ using CallBackSignatur = std::function<void(std::unique_ptr<std::vector<std::uni
 
 class FileSystemWatcher : public Listener<CallBackSignatur>
 {
-  std::unique_ptr<NativeInterface> _nativeInterface;
-  Listener::CallbackHandle _callbackHandle;
-  std::chrono::milliseconds _sleepDuration;
-  std::thread _runner;
-  std::atomic<bool> _inDestruction{false};
+  std::unique_ptr<NativeInterface> mNativeInterface;
+  Listener::CallbackHandle mCallbackHandle;
+  std::chrono::milliseconds mSleepDuration;
+  std::thread mRunner;
+  std::atomic<bool> mInDestruction{false};
 
 public:
   FileSystemWatcher(const std::string &path, std::chrono::milliseconds sleepDuration);

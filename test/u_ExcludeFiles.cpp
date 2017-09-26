@@ -12,12 +12,20 @@ TEST_CASE("Files can be excluded", "[ExcludeFiles]") {
     std::string regex = "~[a-zA-Z_][a-zA-Z_0-9]*\\.tmp";
     ExcludeFiles exFiles(regex);
 
-    SECTION("file name does match") {
+    SECTION("file name does not match") {
       vec->emplace_back(new Event(EventType::CREATED, "", "foobar.txt", ""));
       vec->emplace_back(new Event(EventType::CREATED, "", "~bla.tmmp", ""));
 
       auto transformed = exFiles(std::move(vec));
       REQUIRE(transformed->size() == 2);
+    }
+
+    SECTION("one file name does and another not match") {
+      vec->emplace_back(new Event(EventType::CREATED, "", "video.mp4", ""));
+      vec->emplace_back(new Event(EventType::CREATED, "", "~videomp4.tmp", ""));
+
+      auto transformed = exFiles(std::move(vec));
+      REQUIRE(transformed->size() == 1);
     }
 
     SECTION("file name matches the regular expression") {

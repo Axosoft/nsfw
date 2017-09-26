@@ -10,12 +10,20 @@ TEST_CASE("directories can be excluded", "[ExcludeDirectories]") {
     std::string regex = "/bar$";
     ExcludeDirectories exDir(regex);
 
-    SECTION("directory name does match") {
+    SECTION("directory name does not match") {
       vec->emplace_back(new Event(EventType::CREATED, "/usr/foo", "", ""));
       vec->emplace_back(new Event(EventType::CREATED, "/bar/usr", "", ""));
 
       auto transformed = exDir(std::move(vec));
       REQUIRE(transformed->size() == 2);
+    }
+
+    SECTION("one directory name does and another not match") {
+      vec->emplace_back(new Event(EventType::CREATED, "/usr/foo", "", ""));
+      vec->emplace_back(new Event(EventType::CREATED, "/bar/bar", "", ""));
+
+      auto transformed = exDir(std::move(vec));
+      REQUIRE(transformed->size() == 1);
     }
 
     SECTION("directory name matches the regular expression") {

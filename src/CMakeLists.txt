@@ -3,6 +3,9 @@ set (NSFW_LIBRARY_SOURCES
     Queue.cpp
     NativeInterface.cpp
     FileSystemWatcher.cpp
+
+    transforms/ExcludeDirectories.cpp
+    transforms/ExcludeFiles.cpp
 )
 
 if (WIN32)

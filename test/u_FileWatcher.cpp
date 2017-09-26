@@ -19,7 +19,7 @@ int main(int argc, char *argv[]) {
 
 #include "test_helper.h"
 
-std::string getDirectoryFromFile(const std::string &path) {
+static std::string getDirectoryFromFile(const std::string &path) {
   char delimiter;
 
 #if defined(_WIN32)
@@ -70,18 +70,18 @@ TEST_CASE("test the file system watcher", "[FileSystemWatcher]") {
   std::string executionPath(getDirectoryFromFile(programmName));
   TestFileSystemAdapter testWatcher(executionPath,
                                     std::chrono::milliseconds(10));
-  auto comparation = [](const Event &lhs, const Event &rhs) {
+  auto comparison = [](const Event &lhs, const Event &rhs) {
     return lhs.type == rhs.type && lhs.directory == rhs.directory &&
            lhs.fileA == rhs.fileA && lhs.fileB == rhs.fileB;
   };
 
-  auto eventWasDetected = [comparation](TestFileSystemAdapter &testWatcher,
+  auto eventWasDetected = [comparison](TestFileSystemAdapter &testWatcher,
                                         const Event &expectedEvent) -> bool {
     auto events = testWatcher.getEventsAfterWait(std::chrono::milliseconds(20));
 
     bool foundEvent{false};
     for (auto &event : *events) {
-      if (comparation(*event, expectedEvent)) {
+      if (comparison(*event, expectedEvent)) {
         foundEvent = true;
       }
     }

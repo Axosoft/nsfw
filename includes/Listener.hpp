@@ -16,7 +16,7 @@ template <class CallbackType>
 class Listener
 {
   static_assert(is_instantiation<std::function, CallbackType>::value,
-                  "CallbackType must be an instance of std::function");
+                "CallbackType must be an instance of std::function");
 
 public:
   using CallbackHandle = int;

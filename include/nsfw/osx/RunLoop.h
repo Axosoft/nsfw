@@ -1,7 +1,7 @@
 #ifndef NSFW_RUNLOOP_H
 #define NSFW_RUNLOOP_H
 
-#include "../SingleshotSemaphore.h"
+#include "nsfw/SingleshotSemaphore.h"
 #include "FSEventsService.h"
 
 #include <CoreServices/CoreServices.h>

@@ -1,4 +1,4 @@
-#include "../../includes/transforms/ExcludeFiles.h"
+#include "nsfw/transforms/ExcludeFiles.h"
 #include <regex>
 
 ExcludeFiles::ExcludeFiles(const std::string &regex) : mRegex(regex) {

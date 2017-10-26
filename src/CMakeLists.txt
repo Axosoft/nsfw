@@ -8,6 +8,9 @@ set (NSFW_LIBRARY_SOURCES
     transforms/ExcludeFiles.cpp
 )
 
+
+set (NSFW_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
+
 if (WIN32)
     message (STATUS "compiling windows specific file system service")
     set (NSFW_LIBRARY_SOURCES ${NSFW_LIBRARY_SOURCES}

@@ -2,7 +2,7 @@
 #define NSFW_FS_EVENTS_SERVICE_H
 
 #include "RunLoop.h"
-#include "../Queue.h"
+#include "nsfw/Queue.h"
 
 #include <CoreServices/CoreServices.h>
 #include <time.h>

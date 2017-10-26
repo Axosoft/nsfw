@@ -2,13 +2,13 @@
 #define NSFW_NATIVE_INTERFACE_H
 
 #if defined(_WIN32)
-#include "../includes/win32/Controller.h"
+#include "nsfw/win32/Controller.h"
 using NativeImplementation = Controller;
 #elif defined(__APPLE_CC__)
-#include "../includes/osx/FSEventsService.h"
+#include "nsfw/osx/FSEventsService.h"
 using NativeImplementation = FSEventsService;
 #elif defined(__linux__) || defined(__FreeBSD__)
-#include "../includes/linux/InotifyService.h"
+#include "nsfw/linux/InotifyService.h"
 using NativeImplementation = InotifyService;
 #endif
 

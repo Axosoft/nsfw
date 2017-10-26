@@ -1,4 +1,4 @@
-#include "../includes/win32/Watcher.h"
+#include "nsfw/win32/Watcher.h"
 
 #include <sstream>
 

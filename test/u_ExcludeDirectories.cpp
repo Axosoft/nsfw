@@ -1,6 +1,6 @@
 #define CATCH_CONFIG_MAIN
 
-#include "../includes/transforms/ExcludeDirectories.h"
+#include "nsfw/transforms/ExcludeDirectories.h"
 #include "catch.hpp"
 
 TEST_CASE("directories can be excluded", "[ExcludeDirectories]") {

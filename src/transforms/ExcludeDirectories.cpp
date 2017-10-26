@@ -1,4 +1,4 @@
-#include "../../includes/transforms/ExcludeDirectories.h"
+#include "nsfw/transforms/ExcludeDirectories.h"
 #include <regex>
 
 ExcludeDirectories::ExcludeDirectories(const std::string &regex) : mRegex(regex) {

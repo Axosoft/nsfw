@@ -3,7 +3,7 @@
 
 #include <vector>
 
-#include "../../includes/Queue.h"
+#include "nsfw/Queue.h"
 
 typedef std::unique_ptr<std::vector<std::unique_ptr<Event>>> VecEvents;
 

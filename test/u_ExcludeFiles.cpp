@@ -1,6 +1,6 @@
 #define CATCH_CONFIG_MAIN
 
-#include "../includes/transforms/ExcludeFiles.h"
+#include "nsfw/transforms/ExcludeFiles.h"
 #include "catch.hpp"
 
 #include "test_helper.h"

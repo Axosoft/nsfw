@@ -14,8 +14,8 @@ int main(int argc, char *argv[]) {
   return (result < 0xff ? result : 0xff);
 }
 
-#include "../includes/FileSystemWatcher.h"
-#include "../includes/transforms/AbstractTransform.h"
+#include "nsfw/FileSystemWatcher.h"
+#include "nsfw/transforms/AbstractTransform.h"
 
 #include "test_helper.h"
 

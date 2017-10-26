@@ -1,4 +1,4 @@
-#include "../includes/NativeInterface.h"
+#include "nsfw/NativeInterface.h"
 
 NativeInterface::NativeInterface(const std::string &path) {
   mQueue = std::make_shared<EventQueue>();

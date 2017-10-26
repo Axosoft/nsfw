@@ -3,7 +3,7 @@
 
 #include "InotifyEventLoop.h"
 #include "InotifyTree.h"
-#include "../Queue.h"
+#include "nsfw/Queue.h"
 #include <queue>
 #include <map>
 

@@ -1,4 +1,4 @@
-#include "../includes/FileSystemWatcher.h"
+#include "nsfw/FileSystemWatcher.h"
 
 using namespace NodeSentinalFileWatcher;
 

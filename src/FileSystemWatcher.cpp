@@ -1,6 +1,6 @@
 #include "nsfw/FileSystemWatcher.h"
 
-using namespace NodeSentinalFileWatcher;
+using namespace NSFW;
 
 FileSystemWatcher::FileSystemWatcher(const std::string &path, std::chrono::milliseconds sleepDuration)
     : mNativeInterface(new NativeInterface(path))
@@ -13,7 +13,7 @@ FileSystemWatcher::FileSystemWatcher(const std::string &path, std::chrono::milli
       }
 
       auto events = mNativeInterface->getEventVector();
-      if (events == nullptr) {
+      if (events != nullptr) {
         notify(events);
       }
 

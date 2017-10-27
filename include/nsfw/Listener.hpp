@@ -7,6 +7,8 @@
 #include <functional>
 #include <utility>
 
+namespace NSFW {
+
 // see https://stackoverflow.com/questions/24691777
 template<template<class...>class Template, class T>
 struct is_instantiation : std::false_type {};
@@ -55,4 +57,5 @@ protected:
   }
 };
 
+}
 #endif

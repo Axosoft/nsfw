@@ -1,3 +1,6 @@
+#ifndef NSFW_FILESYSTEMWATCHER_H
+#define NSFW_FILESYSTEMWATCHER_H
+
 #include <utility>
 #include <chrono>
 #include <memory>
@@ -9,7 +12,7 @@
 #include "Listener.hpp"
 #include "NativeInterface.h"
 
-namespace NodeSentinalFileWatcher {
+namespace NSFW {
 
 using CallBackSignatur = std::function<void(std::unique_ptr<std::vector<std::unique_ptr<Event>>>)>;
 
@@ -28,3 +31,5 @@ public:
 };
 
 }
+
+#endif //NSFW_FILESYSTEMWATCHER_H

@@ -61,7 +61,7 @@ private:
 
   std::mutex vecEventsMutex;
   VecEvents vecEvents;
-  NodeSentinalFileWatcher::FileSystemWatcher fswatch;
+  NSFW::FileSystemWatcher fswatch;
 };
 
 TEST_CASE("test the file system watcher", "[FileSystemWatcher]") {

@@ -1,4 +1,4 @@
-#include "../../includes/linux/InotifyEventLoop.h"
+#include "nsfw/linux/InotifyEventLoop.h"
 
 InotifyEventLoop::InotifyEventLoop(
   int inotifyInstance,

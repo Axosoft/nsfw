@@ -40,3 +40,13 @@ set (CMAKE_CXX_STANDARD 11)
 
 add_library(nsfw STATIC ${NSFW_LIBRARY_SOURCES})
 target_include_directories(nsfw PUBLIC ${NSFW_INCLUDE_DIR})
+
+install(TARGETS nsfw
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib)
+
+install (
+    DIRECTORY ${CMAKE_SOURCE_DIR}/include/
+    DESTINATION include
+    FILES_MATCHING PATTERN "*.h*")

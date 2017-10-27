@@ -4,6 +4,7 @@
 #include <mutex>
 #include <map>
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 // see https://stackoverflow.com/questions/24691777

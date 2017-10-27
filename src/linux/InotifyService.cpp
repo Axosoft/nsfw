@@ -1,4 +1,4 @@
-#include "../../includes/linux/InotifyService.h"
+#include "nsfw/linux/InotifyService.h"
 
 InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path):
   mEventLoop(NULL),

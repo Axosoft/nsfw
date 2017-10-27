@@ -418,6 +418,18 @@ describe('Node Sentinel File Watcher', function() {
         .then(done, () =>
           watch.stop().then((err) => done.fail(err)));
     });
+
+    it('does not loop endlessly when watching directories with recursive symlinks', (done) => {
+      fse.mkdirSync(path.join(workDir, 'test'));
+      fse.symlinkSync(path.join(workDir, 'test'), path.join(workDir, 'test', 'link'));
+      return nsfw(
+        workDir,
+        () => {},
+        { debounceMS: DEBOUNCE, errorCallback() {} }
+      ).then((watch) => {
+        return watch.start();
+      }).then(done);
+    });
   });
 
   describe('Errors', function() {

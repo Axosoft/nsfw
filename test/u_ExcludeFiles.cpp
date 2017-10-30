@@ -5,6 +5,8 @@
 
 #include "test_helper.h"
 
+using namespace NSFW;
+
 TEST_CASE("Files can be excluded", "[ExcludeFiles]") {
   VecEvents vec(new std::vector<VecEvents::element_type::value_type>());
 

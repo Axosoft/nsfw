@@ -3,6 +3,8 @@
 
 #include "AbstractTransform.h"
 
+namespace NSFW {
+
 class ExcludeDirectories : public AbstractTransform
 {
 public:
@@ -14,4 +16,5 @@ private:
   std::string mRegex;
 };
 
+}
 #endif

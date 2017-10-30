@@ -1,5 +1,7 @@
 #include "nsfw/win32/Controller.h"
 
+using namespace NSFW;
+
 static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
   const int wlen = MultiByteToWideChar(CP_UTF8, 0, multiByte.data(), -1, 0, 0);
 

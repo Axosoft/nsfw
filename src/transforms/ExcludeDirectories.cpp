@@ -1,6 +1,8 @@
 #include "nsfw/transforms/ExcludeDirectories.h"
 #include <regex>
 
+using namespace NSFW;
+
 ExcludeDirectories::ExcludeDirectories(const std::string &regex) : mRegex(regex) {
 }
 

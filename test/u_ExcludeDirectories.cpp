@@ -3,6 +3,8 @@
 #include "nsfw/transforms/ExcludeDirectories.h"
 #include "catch.hpp"
 
+using namespace NSFW;
+
 TEST_CASE("directories can be excluded", "[ExcludeDirectories]") {
   VecEvents vec(new std::vector<VecEvents::element_type::value_type>());
 

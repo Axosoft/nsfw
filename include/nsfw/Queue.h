@@ -7,6 +7,8 @@
 #include <vector>
 #include <mutex>
 
+namespace NSFW {
+
 enum EventType {
   CREATED = 0,
   DELETED = 1,
@@ -45,4 +47,5 @@ private:
   std::mutex mutex;
 };
 
+}
 #endif

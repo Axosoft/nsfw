@@ -2,6 +2,8 @@
 
 #include <sstream>
 
+using namespace NSFW;
+
 static
 std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {
   LPWSTR nullTerminatedFileName = new WCHAR[length + 1]();

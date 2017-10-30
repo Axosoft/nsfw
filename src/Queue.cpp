@@ -3,6 +3,8 @@
 
 #pragma unmanaged
 
+using namespace NSFW;
+
 void EventQueue::clear() {
   std::lock_guard<std::mutex> lock(mutex);
   queue.clear();

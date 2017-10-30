@@ -3,13 +3,13 @@
 
 #if defined(_WIN32)
 #include "nsfw/win32/Controller.h"
-using NativeImplementation = Controller;
+using NativeImplementation = NSFW::Controller;
 #elif defined(__APPLE_CC__)
 #include "nsfw/osx/FSEventsService.h"
-using NativeImplementation = FSEventsService;
+using NativeImplementation = NSFW::FSEventsService;
 #elif defined(__linux__) || defined(__FreeBSD__)
 #include "nsfw/linux/InotifyService.h"
-using NativeImplementation = InotifyService;
+using NativeImplementation = NSFW::InotifyService;
 #endif
 
 #include "Queue.h"
@@ -22,14 +22,14 @@ public:
 
   std::string getError();
 
-  std::vector<Event*> *getEvents();
-  std::unique_ptr<std::vector<std::unique_ptr<Event>>> getEventVector();
+  std::vector<NSFW::Event*> *getEvents();
+  std::unique_ptr<std::vector<std::unique_ptr<NSFW::Event>>> getEventVector();
 
   bool hasErrored();
   bool isWatching();
 
 private:
-  std::shared_ptr<EventQueue> mQueue;
+  std::shared_ptr<NSFW::EventQueue> mQueue;
   std::unique_ptr<NativeImplementation> mNativeInterface;
 };
 

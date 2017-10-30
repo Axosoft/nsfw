@@ -19,6 +19,8 @@ int main(int argc, char *argv[]) {
 
 #include "test_helper.h"
 
+using namespace NSFW;
+
 static std::string getDirectoryFromFile(const std::string &path) {
   char delimiter;
 

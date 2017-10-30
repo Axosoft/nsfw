@@ -1,4 +1,5 @@
 #include "nsfw/NativeInterface.h"
+using namespace NSFW;
 
 NativeInterface::NativeInterface(const std::string &path) {
   mQueue = std::make_shared<EventQueue>();

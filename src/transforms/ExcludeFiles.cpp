@@ -1,6 +1,8 @@
 #include "nsfw/transforms/ExcludeFiles.h"
 #include <regex>
 
+using namespace NSFW;
+
 ExcludeFiles::ExcludeFiles(const std::string &regex) : mRegex(regex) {
 }
 

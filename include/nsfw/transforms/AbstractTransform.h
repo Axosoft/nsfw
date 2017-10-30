@@ -5,6 +5,8 @@
 
 #include "nsfw/Queue.h"
 
+namespace NSFW {
+
 typedef std::unique_ptr<std::vector<std::unique_ptr<Event>>> VecEvents;
 
 class AbstractTransform
@@ -19,4 +21,5 @@ public:
   virtual VecEvents transform(VecEvents vecEvents) = 0;
 };
 
+}
 #endif

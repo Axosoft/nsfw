@@ -11,6 +11,8 @@
 #include "../SingleshotSemaphore.h"
 #include "../Queue.h"
 
+namespace NSFW {
+
 class Watcher
 {
   public:
@@ -49,5 +51,5 @@ class Watcher
     std::thread mRunner;
 };
 
-
+}
 #endif

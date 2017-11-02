@@ -8,6 +8,8 @@
 #include <thread>
 #include <string>
 
+namespace NSFW {
+
 void *scheduleRunLoopWork(void *runLoop);
 void FSEventsServiceCallback(
   ConstFSEventStreamRef streamRef,
@@ -40,5 +42,7 @@ private:
   SingleshotSemaphore mReadyForCleanup;
   bool mStarted;
 };
+
+}
 
 #endif

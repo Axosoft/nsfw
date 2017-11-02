@@ -13,6 +13,8 @@
 #include <string>
 #include <mutex>
 
+namespace NSFW {
+
 class InotifyService;
 class Lock;
 
@@ -46,5 +48,7 @@ private:
   SingleshotSemaphore mLoopingSemaphore;
   bool mStarted;
 };
+
+}
 
 #endif

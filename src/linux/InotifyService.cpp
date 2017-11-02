@@ -1,5 +1,7 @@
 #include "nsfw/linux/InotifyService.h"
 
+using namespace NSFW;
+
 InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path):
   mEventLoop(NULL),
   mQueue(queue),

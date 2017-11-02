@@ -1,5 +1,7 @@
 #include "../../includes/osx/RunLoop.h"
 
+using namespace NSFW;
+
 RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mEventsService(eventsService),
   mExited(false),

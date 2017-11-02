@@ -2,7 +2,6 @@
 #define NSFW_TRANSFORMS_ABSTRACTTRANSFORM_H
 
 #include <vector>
-
 #include "nsfw/Queue.h"
 
 namespace NSFW {

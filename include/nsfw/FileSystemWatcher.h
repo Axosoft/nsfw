@@ -6,9 +6,7 @@
 #include <memory>
 #include <thread>
 #include <atomic>
-
 #include <iostream>
-
 #include "Listener.hpp"
 #include "NativeInterface.h"
 

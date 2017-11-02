@@ -4,6 +4,8 @@
 #include <condition_variable>
 #include <mutex>
 
+namespace NSFW {
+
 /**
  * This is a convenience abstraction around std::condition_variable that allows
  * for a one-shot synchronization point. Therefore the Semaphore has no way to
@@ -63,5 +65,7 @@ private:
   std::condition_variable mCond;
   bool mState;
 };
+
+}
 
 #endif

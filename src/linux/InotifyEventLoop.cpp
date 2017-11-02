@@ -1,5 +1,7 @@
 #include "nsfw/linux/InotifyEventLoop.h"
 
+using namespace NSFW;
+
 InotifyEventLoop::InotifyEventLoop(
   int inotifyInstance,
   InotifyService *inotifyService

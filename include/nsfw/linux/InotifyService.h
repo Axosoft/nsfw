@@ -3,9 +3,12 @@
 
 #include "InotifyEventLoop.h"
 #include "InotifyTree.h"
-#include "nsfw/Queue.h"
 #include <queue>
 #include <map>
+
+#include "nsfw/Queue.h"
+
+namespace NSFW {
 
 class InotifyEventLoop;
 class InotifyTree;
@@ -38,5 +41,7 @@ private:
 
   friend class InotifyEventLoop;
 };
+
+}
 
 #endif

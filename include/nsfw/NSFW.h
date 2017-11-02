@@ -8,8 +8,9 @@
 #include <atomic>
 
 using namespace Nan;
+using namespace NSFW;
 
-class NSFW : public ObjectWrap {
+class NSFWEntry : public ObjectWrap {
 public:
   static NAN_MODULE_INIT(Init);
 
@@ -31,16 +32,16 @@ public:
   uv_thread_t mPollThread;
   std::atomic<bool> mRunning;
 private:
-  NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
-  ~NSFW();
+  NSFWEntry(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
+  ~NSFWEntry();
 
   struct ErrorBaton {
-    NSFW *nsfw;
+    NSFWEntry *nsfw;
     std::string error;
   };
 
   struct EventBaton {
-    NSFW *nsfw;
+    NSFWEntry *nsfw;
     std::vector<Event*> *events;
   };
 
@@ -49,21 +50,21 @@ private:
   static NAN_METHOD(Start);
   class StartWorker : public AsyncWorker {
   public:
-    StartWorker(NSFW *nsfw, Callback *callback);
+    StartWorker(NSFWEntry *nsfw, Callback *callback);
     void Execute();
     void HandleOKCallback();
   private:
-    NSFW *mNSFW;
+    NSFWEntry *mNSFW;
   };
 
   static NAN_METHOD(Stop);
   class StopWorker : public AsyncWorker {
   public:
-    StopWorker(NSFW *nsfw, Callback *callback);
+    StopWorker(NSFWEntry *nsfw, Callback *callback);
     void Execute();
     void HandleOKCallback();
   private:
-    NSFW *mNSFW;
+    NSFWEntry *mNSFW;
   };
 
   static Persistent<v8::Function> constructor;

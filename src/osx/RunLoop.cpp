@@ -1,4 +1,4 @@
-#include "../../includes/osx/RunLoop.h"
+#include "nsfw/osx/RunLoop.h"
 
 using namespace NSFW;
 
@@ -53,7 +53,7 @@ void RunLoop::work() {
 
   mEventStream = FSEventStreamCreate(
     NULL,
-    &FSEventsServiceCallback,
+    &FSEventsService::FSEventsServiceCallback,
     &callbackInfo,
     pathsToWatch,
     kFSEventStreamEventIdSinceNow,

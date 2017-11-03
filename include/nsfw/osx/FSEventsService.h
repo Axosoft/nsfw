@@ -12,22 +12,13 @@
 
 namespace NSFW {
 
-void FSEventsServiceCallback(
-  ConstFSEventStreamRef streamRef,
-  void *clientCallBackInfo,
-  size_t numEvents,
-  void *eventPaths,
-  const FSEventStreamEventFlags eventFlags[],
-  const FSEventStreamEventId eventIds[]
-);
-
 class RunLoop;
 
 class FSEventsService {
 public:
   FSEventsService(std::shared_ptr<EventQueue> queue, std::string path);
 
-  friend void FSEventsServiceCallback(
+  static void FSEventsServiceCallback(
     ConstFSEventStreamRef streamRef,
     void *clientCallBackInfo,
     size_t numEvents,

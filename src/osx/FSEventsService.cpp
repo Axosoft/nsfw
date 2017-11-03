@@ -1,4 +1,4 @@
-#include "../../includes/osx/FSEventsService.h"
+#include "nsfw/osx/FSEventsService.h"
 #include <iostream>
 
 using namespace NSFW;
@@ -20,7 +20,7 @@ FSEventsService::~FSEventsService() {
   }
 }
 
-void FSEventsServiceCallback(
+void FSEventsService::FSEventsServiceCallback(
   ConstFSEventStreamRef streamRef,
   void *clientCallBackInfo,
   size_t numEvents,

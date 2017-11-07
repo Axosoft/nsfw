@@ -21,15 +21,20 @@ int main(int argc, char *argv[]) {
 
 using namespace NSFW;
 
-static std::string getDirectoryFromFile(const std::string &path) {
-  char delimiter;
-
 #if defined(_WIN32)
-  delimiter = '\\';
+static constexpr const char delimiter = '\\';
 #elif defined(__linux__)
-  delimiter = '/';
+static constexpr const char delimiter = '/';
 #endif
+
+static std::string getDirectoryFromFile(const std::string &path) {
   return std::string(path.c_str(), path.find_last_of(delimiter));
+}
+
+static std::string getFileNameFromFile(const std::string &path) {
+  auto firstCharFromFileName = path.find_last_of(delimiter) + 1;
+  return std::string(path.c_str() + firstCharFromFileName,
+                     path.size() - firstCharFromFileName);
 }
 
 class TestFileSystemAdapter {
@@ -69,7 +74,8 @@ private:
 TEST_CASE("test the file system watcher", "[FileSystemWatcher]") {
   std::vector<std::unique_ptr<AbstractTransform>> vec;
 
-  std::string executionPath(getDirectoryFromFile(programmName));
+  std::string tmpFilePath = std::tmpnam(nullptr);
+  std::string executionPath(getDirectoryFromFile(tmpFilePath));
   TestFileSystemAdapter testWatcher(executionPath,
                                     std::chrono::milliseconds(10));
   auto comparison = [](const Event &lhs, const Event &rhs) {
@@ -92,18 +98,20 @@ TEST_CASE("test the file system watcher", "[FileSystemWatcher]") {
   };
 
   SECTION("check file creation") {
-    std::string fileName("testFile");
-    DummyFile fileHandle(fileName);
-    Event expectedEvent(EventType::CREATED, executionPath, fileName, "");
+    std::string filePath = std::tmpnam(nullptr);
+    DummyFile fileHandle(filePath);
+    Event expectedEvent(EventType::CREATED, executionPath,
+                        getFileNameFromFile(filePath), "");
 
     REQUIRE(eventWasDetected(testWatcher, expectedEvent));
   }
 
   SECTION("check file modification") {
-    std::string fileName("testFile");
+    std::string filePath = std::tmpnam(nullptr);
     std::string payload("payload");
-    DummyFile fileHandle(fileName);
-    Event expectedEvent(EventType::MODIFIED, executionPath, fileName, "");
+    DummyFile fileHandle(filePath);
+    Event expectedEvent(EventType::MODIFIED, executionPath,
+                        getFileNameFromFile(filePath), "");
 
     // call this without expectations because a normal file creation s a
     // CREATION and MODIFY
@@ -115,21 +123,23 @@ TEST_CASE("test the file system watcher", "[FileSystemWatcher]") {
   }
 
   SECTION("check file renaming") {
-    std::string fileName("testFile");
-    std::string newFileName("newFileName");
-    DummyFile fileHandle(fileName);
-    Event expectedEvent(EventType::RENAMED, executionPath, fileName,
-                        newFileName);
+    std::string filePath = std::tmpnam(nullptr);
+    std::string newFilePath = std::tmpnam(nullptr);
+    DummyFile fileHandle(filePath);
+    Event expectedEvent(EventType::RENAMED, executionPath,
+                        getFileNameFromFile(filePath),
+                        getFileNameFromFile(newFilePath));
 
-    fileHandle.rename(newFileName);
+    fileHandle.rename(newFilePath);
 
     REQUIRE(eventWasDetected(testWatcher, expectedEvent));
   }
 
   SECTION("check file deletion") {
-    std::string fileName("testFile");
-    std::unique_ptr<DummyFile> fileHandle(new DummyFile(fileName));
-    Event expectedEvent(EventType::DELETED, executionPath, fileName, "");
+    std::string filePath = std::tmpnam(nullptr);
+    std::unique_ptr<DummyFile> fileHandle(new DummyFile(filePath));
+    Event expectedEvent(EventType::DELETED, executionPath,
+                        getFileNameFromFile(filePath), "");
 
     fileHandle.reset(nullptr);
 

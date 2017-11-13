@@ -1,19 +1,57 @@
-env:
-  matrix:
-    - export NODE_VERSION="4" CC=clang CXX=clang++ npm_config_clang=1
-    - export NODE_VERSION="6" CC=clang CXX=clang++ npm_config_clang=1
-    - export NODE_VERSION="7" CC=clang CXX=clang++ npm_config_clang=1
+sudo: required
 
+matrix:
+  include:
+    - os: linux
+      compiler: gcc
+      dist: trusty
+      env: NODE_VERSION="4"
+    - os: osx
+      compiler: clang
+      osx_image: xcode8
+      env: NODE_VERSION="4"
+
+    - os: linux
+      compiler: gcc
+      dist: trusty
+      env: NODE_VERSION="6"
+    - os: osx
+      compiler: clang
+      osx_image: xcode8
+      env: NODE_VERSION="6"
+
+    - os: linux
+      compiler: gcc
+      dist: trusty
+      env: NODE_VERSION="7"
+    - os: osx
+      compiler: clang
+      osx_image: xcode8
+      env: NODE_VERSION="7"
+
+    - os: linux
+      compiler: gcc
+      dist: trusty
+      env: NODE_VERSION="8"
+    - os: osx
+      compiler: clang
+      osx_image: xcode8
+      env: NODE_VERSION="8"
+  
 branches:
-  only:
-    - master
+#  only:
+#    - master
 
 git:
   depth: 10
 
-compiler: clang
+addons:
+  apt:
+    sources: ['ubuntu-toolchain-r-test']
+    packages: ['g++-6']
 
 before_install:
+  - if [ "$TRAVIS_OS_NAME" = "linux"  ]; then sudo apt-get -qq update;    fi
   - git clone https://github.com/creationix/nvm.git ./.nvm
   - source ./.nvm/nvm.sh
   - nvm install $NODE_VERSION
@@ -22,11 +60,12 @@ before_install:
 install:
   - npm install
 
+before_script:
+  - env
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export CXX="g++-6" CC="gcc-6" && cmake .; fi
+  - if [ "$TRAVIS_OS_NAME" = "osx"   ]; then export npm_config_clang=1 && cmake .;     fi
+
 script:
   - npm test
-
-os:
-- linux
-- osx
-
-sudo: false
+  - cmake --build .
+  - ctest -VV

@@ -1,7 +1,7 @@
 #define CATCH_CONFIG_MAIN
 
-#include "nsfw/transforms/ExcludeDirectories.h"
 #include "catch.hpp"
+#include "nsfw/transforms/ExcludeDirectories.h"
 
 using namespace NSFW;
 

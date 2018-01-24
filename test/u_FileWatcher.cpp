@@ -58,7 +58,7 @@ public:
 
   VecEvents getEventsAfterWait(std::chrono::microseconds ms) {
     std::this_thread::sleep_for(ms);
-    std::lock_guard<std::mutex> lock(VecEvents);
+    std::lock_guard<std::mutex> lock(vecEventsMutex);
     auto retVal = std::move(vecEvents);
     vecEvents.reset(new VecEvents::element_type());
     return retVal;
@@ -66,7 +66,7 @@ public:
 
 private:
   void listernerFunction(VecEvents events) {
-    std::lock_guard<std::mutex> lock(VecEvents);
+    std::lock_guard<std::mutex> lock(vecEventsMutex);
     if (!events)
       return;
     for (auto &event : *events) {

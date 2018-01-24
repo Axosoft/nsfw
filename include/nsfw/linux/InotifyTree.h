@@ -9,6 +9,7 @@
 #include <sstream>
 #include <vector>
 #include <map>
+#include <unordered_set>
 
 namespace NSFW {
 
@@ -34,7 +35,8 @@ private:
       int inotifyInstance,
       InotifyNode *parent,
       std::string directory,
-      std::string name
+      std::string name,
+      ino_t inodeNumber
     );
 
     void addChild(std::string name);
@@ -63,6 +65,7 @@ private:
     std::map<std::string, InotifyNode *> *mChildren;
     std::string mDirectory;
     std::string mFullPath;
+    ino_t mInodeNumber;
     const int mInotifyInstance;
     std::string mName;
     InotifyNode *mParent;
@@ -74,10 +77,13 @@ private:
   void setError(std::string error);
   void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
   void removeNodeReferenceByWD(int watchDescriptor);
+  bool addInode(ino_t inodeNumber);
+  void removeInode(ino_t inodeNumber);
 
   std::string mError;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
+  std::unordered_set<ino_t> inodes;
   InotifyNode *mRoot;
 
   friend class InotifyNode;

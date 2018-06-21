@@ -1,6 +1,6 @@
 {
   "name": "vscode-nsfw",
-  "version": "1.0.17",
+  "version": "1.0.17-node-10",
   "description": "A simple file watcher for Node",
   "main": "lib/src/index.js",
   "scripts": {

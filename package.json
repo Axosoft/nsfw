@@ -30,7 +30,7 @@
     "fs-extra": "^0.26.5",
     "lodash.isinteger": "^4.0.4",
     "lodash.isundefined": "^3.0.1",
-    "nan": "^2.0.0",
+    "nan": "2.10.0",
     "promisify-node": "^0.3.0"
   },
   "devDependencies": {

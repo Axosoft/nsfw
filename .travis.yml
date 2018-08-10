@@ -9,6 +9,7 @@ env:
 branches:
   only:
     - master
+    - dw-fix-node-10
 
 git:
   depth: 10

@@ -2,7 +2,7 @@
   "name": "vscode-nsfw",
   "version": "1.0.17",
   "description": "A simple file watcher for Node",
-  "main": "lib/src/index.js",
+  "main": "js/src/index.js",
   "scripts": {
     "compile": "babel --sourceMaps --presets es2015 -d ./lib/spec ./js/spec && babel --sourceMaps --presets es2015 -d ./lib/src ./js/src",
     "eslint": "eslint js/src js/spec",

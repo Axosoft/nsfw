@@ -155,12 +155,8 @@ NAN_MODULE_INIT(NSFW::Init) {
 
 NAN_METHOD(NSFW::JSNew) {
   if (!info.IsConstructCall()) {
-    const int argc = 4;
-    v8::Isolate *isolate = info.GetIsolate();
-    v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3]};
-    v8::Local<v8::Context> context = isolate->GetCurrentContext();
-    v8::Local<v8::Function> cons = v8::Local<v8::Function>::New(isolate, constructor);
-    info.GetReturnValue().Set(cons->NewInstance(context, argc, argv).ToLocalChecked());
+    v8::Local<v8::Function> cons = New<v8::Function>(constructor);
+    info.GetReturnValue().Set(Nan::NewInstance(cons).ToLocalChecked());
     return;
   }
 

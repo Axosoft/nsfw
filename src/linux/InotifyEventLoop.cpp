@@ -1,4 +1,6 @@
-#include "../../includes/linux/InotifyEventLoop.h"
+#include "nsfw/linux/InotifyEventLoop.h"
+
+using namespace NSFW;
 
 InotifyEventLoop::InotifyEventLoop(
   int inotifyInstance,

@@ -1,6 +1,8 @@
-#include "../includes/win32/Watcher.h"
+#include "nsfw/win32/Watcher.h"
 
 #include <sstream>
+
+using namespace NSFW;
 
 static
 std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {

@@ -4,6 +4,11 @@ project (${PROJECT_NAME})
 
 message (STATUS "Running CMake version ${CMAKE_VERSION}")
 
+set (CMAKE_CXX_STANDARD 11)
+
 set (NSFW_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
 
+enable_testing()
+
 add_subdirectory (src)
+add_subdirectory (test)

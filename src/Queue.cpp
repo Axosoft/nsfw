@@ -1,7 +1,9 @@
-#include "../includes/Queue.h"
+#include "nsfw/Queue.h"
 #include <iostream>
 
 #pragma unmanaged
+
+using namespace NSFW;
 
 void EventQueue::clear() {
   std::lock_guard<std::mutex> lock(mutex);
@@ -37,6 +39,23 @@ std::unique_ptr<std::vector<Event*>> EventQueue::dequeueAll() {
   for (size_t i = 0; i < queueSize; ++i) {
     auto &front = queue.front();
     (*events)[i] = front.release();
+    queue.pop_front();
+  }
+
+  return events;
+}
+
+std::unique_ptr<std::vector<std::unique_ptr<Event>>> EventQueue::dequeueAllEventsInVector() {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (queue.empty()) {
+    return nullptr;
+  }
+
+  const auto queueSize = queue.size();
+  std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(new std::vector<std::unique_ptr<Event>>());
+  events->resize(queueSize);
+  for (size_t i = 0; i < queueSize; ++i) {
+    (*events)[i] = std::move(queue.front());
     queue.pop_front();
   }
 

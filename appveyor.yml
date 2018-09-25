@@ -6,9 +6,9 @@ environment:
     - nodejs_version: "6"
     - nodejs_version: "7"
 
-branches:
-  only:
-    - master
+#branches:
+#  only:
+#    - master
 
 # Install scripts. (runs after repo cloning)
 install:
@@ -16,6 +16,8 @@ install:
   - ps: Install-Product node $env:nodejs_version
   # install modules
   - npm install --msvs_version=2015
+  - cmake .
+  - cmake --build .
 
 # Post-install test scripts.
 test_script:
@@ -24,6 +26,7 @@ test_script:
   - npm --version
   # run tests
   - npm test
+  - ctest -VV
 
 # Don't actually build.
 build: off

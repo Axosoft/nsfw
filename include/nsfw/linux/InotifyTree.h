@@ -11,6 +11,8 @@
 #include <map>
 #include <unordered_set>
 
+namespace NSFW {
+
 class InotifyTree {
 public:
   InotifyTree(int inotifyInstance, std::string path);
@@ -86,5 +88,7 @@ private:
 
   friend class InotifyNode;
 };
+
+}
 
 #endif

@@ -5,6 +5,8 @@
 #include <memory>
 #include "Watcher.h"
 
+namespace NSFW {
+
 class EventQueue;
 
 class Controller {
@@ -22,5 +24,7 @@ class Controller {
     HANDLE openDirectory(const std::wstring &path);
     HANDLE mDirectoryHandle;
 };
+
+}
 
 #endif

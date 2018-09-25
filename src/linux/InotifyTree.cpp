@@ -1,7 +1,10 @@
-#include "../../includes/linux/InotifyTree.h"
+#include "nsfw/linux/InotifyTree.h"
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
+
+using namespace NSFW;
+
 InotifyTree::InotifyTree(int inotifyInstance, std::string path):
   mError(""),
   mInotifyInstance(inotifyInstance) {

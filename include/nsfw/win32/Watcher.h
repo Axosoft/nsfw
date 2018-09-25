@@ -8,8 +8,10 @@
 #include <atomic>
 #include <thread>
 
-#include "../SingleshotSemaphore.h"
-#include "../Queue.h"
+#include "nsfw/SingleshotSemaphore.h"
+#include "nsfw/Queue.h"
+
+namespace NSFW {
 
 class Watcher
 {
@@ -49,5 +51,5 @@ class Watcher
     std::thread mRunner;
 };
 
-
+}
 #endif

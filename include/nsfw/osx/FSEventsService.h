@@ -1,24 +1,16 @@
 #ifndef NSFW_FS_EVENTS_SERVICE_H
 #define NSFW_FS_EVENTS_SERVICE_H
 
-#include "RunLoop.h"
-#include "../Queue.h"
-
 #include <CoreServices/CoreServices.h>
 #include <time.h>
 #include <sys/stat.h>
 #include <map>
 #include <vector>
 #include <string>
+#include "RunLoop.h"
+#include "nsfw/Queue.h"
 
-void FSEventsServiceCallback(
-  ConstFSEventStreamRef streamRef,
-  void *clientCallBackInfo,
-  size_t numEvents,
-  void *eventPaths,
-  const FSEventStreamEventFlags eventFlags[],
-  const FSEventStreamEventId eventIds[]
-);
+namespace NSFW {
 
 class RunLoop;
 
@@ -26,7 +18,7 @@ class FSEventsService {
 public:
   FSEventsService(std::shared_ptr<EventQueue> queue, std::string path);
 
-  friend void FSEventsServiceCallback(
+  static void FSEventsServiceCallback(
     ConstFSEventStreamRef streamRef,
     void *clientCallBackInfo,
     size_t numEvents,
@@ -52,5 +44,7 @@ private:
   RunLoop *mRunLoop;
   std::shared_ptr<EventQueue> mQueue;
 };
+
+}
 
 #endif

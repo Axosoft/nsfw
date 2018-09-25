@@ -2,7 +2,7 @@
 #define INOTIFY_EVENT_LOOP_H
 
 #include "InotifyService.h"
-#include "../SingleshotSemaphore.h"
+#include "nsfw/SingleshotSemaphore.h"
 
 #include <sys/inotify.h>
 #include <stdlib.h>
@@ -12,6 +12,8 @@
 #include <sys/select.h>
 #include <string>
 #include <mutex>
+
+namespace NSFW {
 
 class InotifyService;
 class Lock;
@@ -46,5 +48,7 @@ private:
   SingleshotSemaphore mLoopingSemaphore;
   bool mStarted;
 };
+
+}
 
 #endif

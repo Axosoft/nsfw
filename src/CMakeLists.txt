@@ -2,7 +2,14 @@
 set (NSFW_LIBRARY_SOURCES
     Queue.cpp
     NativeInterface.cpp
+    FileSystemWatcher.cpp
+
+    transforms/ExcludeDirectories.cpp
+    transforms/ExcludeFiles.cpp
 )
+
+
+set (NSFW_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
 
 if (WIN32)
     message (STATUS "compiling windows specific file system service")
@@ -33,3 +40,13 @@ set (CMAKE_CXX_STANDARD 11)
 
 add_library(nsfw STATIC ${NSFW_LIBRARY_SOURCES})
 target_include_directories(nsfw PUBLIC ${NSFW_INCLUDE_DIR})
+
+install(TARGETS nsfw
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib)
+
+install (
+    DIRECTORY ${CMAKE_SOURCE_DIR}/include/
+    DESTINATION include
+    FILES_MATCHING PATTERN "*.h*")

@@ -1,12 +1,14 @@
 #ifndef NSFW_RUNLOOP_H
 #define NSFW_RUNLOOP_H
 
-#include "../SingleshotSemaphore.h"
+#include "nsfw/SingleshotSemaphore.h"
 #include "FSEventsService.h"
 
 #include <CoreServices/CoreServices.h>
 #include <thread>
 #include <string>
+
+namespace NSFW {
 
 void *scheduleRunLoopWork(void *runLoop);
 void FSEventsServiceCallback(
@@ -40,5 +42,7 @@ private:
   SingleshotSemaphore mReadyForCleanup;
   bool mStarted;
 };
+
+}
 
 #endif

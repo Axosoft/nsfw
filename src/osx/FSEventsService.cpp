@@ -1,5 +1,7 @@
-#include "../../includes/osx/FSEventsService.h"
+#include "nsfw/osx/FSEventsService.h"
 #include <iostream>
+
+using namespace NSFW;
 
 FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path):
   mPath(path), mQueue(queue) {
@@ -18,7 +20,7 @@ FSEventsService::~FSEventsService() {
   }
 }
 
-void FSEventsServiceCallback(
+void FSEventsService::FSEventsServiceCallback(
   ConstFSEventStreamRef streamRef,
   void *clientCallBackInfo,
   size_t numEvents,

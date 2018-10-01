@@ -44,7 +44,7 @@ return nsfw(
   })
   .then(function() {
     // we are now watching dir1 for events!
-    
+
     // To stop watching
     watcher1.stop()
   });
@@ -113,3 +113,7 @@ nsfw.actions = {
   RENAMED: 3
 };
 ```
+
+## Installation
+NSFW is a native node module and requires Node-Gyp to be functional before you can install it.
+Make sure you have completed installing all of the dependencies listed for [Node-Gyp](https://github.com/nodejs/node-gyp) on your operating system.

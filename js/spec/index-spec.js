@@ -1,9 +1,7 @@
 const nsfw = require('../src/');
 const path = require('path');
-const promisify = require('promisify-node');
-const fse = promisify(require('fs-extra'));
-const exec = promisify((command, options, callback) =>
-  require('child_process').exec(command, options, callback));
+const fse = require('fs-extra');
+const exec = require('executive');
 
 jasmine.DEFAULT_TIMEOUT_INTERVAL = 120000;
 

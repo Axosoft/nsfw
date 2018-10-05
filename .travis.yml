@@ -1,8 +1,8 @@
 env:
   matrix:
-    - export NODE_VERSION="4" CC=clang CXX=clang++ npm_config_clang=1
     - export NODE_VERSION="6" CC=clang CXX=clang++ npm_config_clang=1
-    - export NODE_VERSION="7" CC=clang CXX=clang++ npm_config_clang=1
+    - export NODE_VERSION="8" CC=clang CXX=clang++ npm_config_clang=1
+    - export NODE_VERSION="10" CC=clang CXX=clang++ npm_config_clang=1
 
 branches:
   only:

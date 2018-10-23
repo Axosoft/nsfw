@@ -1,14 +1,21 @@
 sudo: true
 
-env:
-  matrix:
-    - export NODE_VERSION="6" CC=clang CXX=clang++ npm_config_clang=1
-    - export NODE_VERSION="8" CC=clang CXX=clang++ npm_config_clang=1
-    - export NODE_VERSION="10" CC=clang CXX=clang++ npm_config_clang=1
+os:
+  - linux
+  - osx
 
-branches:
-  only:
-    - master
+language: node_js
+
+node_js:
+  - 6
+  - 8
+  - 10
+
+env:
+  global:
+    - CC=clang
+    - CXX=clang++
+    - npm_config_clang=1
 
 git:
   depth: 10
@@ -17,19 +24,9 @@ compiler: clang
 
 before_install:
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p; fi
-  - git clone https://github.com/creationix/nvm.git ./.nvm
-  - source ./.nvm/nvm.sh
-  - nvm install $NODE_VERSION
-  - nvm use $NODE_VERSION
 
 install:
   - npm install
 
 script:
   - npm test
-
-os:
-- linux
-- osx
-
-sudo: false

@@ -8,8 +8,8 @@ const nsfw = require('nsfw');
  - **watchPath**: the path that nsfw should watchPath
  - **eventCallback**: callback that will be fired when NSFW has change events
  - **options**
-  - **debounceMS**: time in milliseconds to debounce the event callback
-  - **errorCallback**: callback to fire in the case of errors
+   - **debounceMS**: time in milliseconds to debounce the event callback
+   - **errorCallback**: callback to fire in the case of errors
 
 
   Returns a Promise that resolves to the created NSFW Object.

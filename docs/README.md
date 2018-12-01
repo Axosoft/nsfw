@@ -30,6 +30,7 @@ const nsfw = require('nsfw');
   - **directory**: the location the event took place
   - **file**: the name of the file that was changed _(Not available for rename events)_
   - **oldFile**: the name of the file before a rename _(Only available for rename events)_
+  - **newDirectory**: the new location of the file _(Only available for rename events, only useful on linux)_
   - **newFile**: the name of the file after a rename _(Only available for rename events)_
 
 

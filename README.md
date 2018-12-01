@@ -99,6 +99,7 @@ An array of events as they have happened in a directory, it's children, or to a 
     "action": 3, // nsfw.actions.RENAMED
     "directory": "home/nsfw/watchDir",
     "oldFile": "oldname.ext",
+    "newDirectory": "home/nsfw/watchDir/otherDirectory"
     "newFile": "newname.ext"
   }
 ]

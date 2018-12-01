@@ -76,7 +76,7 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
 
     if ((*i)->type == RENAMED) {
       anEvent->Set(New<v8::String>("oldDirectory").ToLocalChecked(), New<v8::String>((*i)->directory).ToLocalChecked());
-      anEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*i)->oldDirectory).ToLocalChecked());
+      anEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*i)->newDirectory).ToLocalChecked());
       anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*i)->fileA).ToLocalChecked());
       anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*i)->fileB).ToLocalChecked());
     } else {

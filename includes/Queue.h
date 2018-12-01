@@ -35,12 +35,13 @@ public:
     const std::string &fileA,
     const std::string &fileB = ""
   );
-  void enqueueRename(
+  // for renames
+  void enqueue(
     EventType type,
     const std::string &oldDirectory,
     const std::string &newDirectory,
     const std::string &fileA,
-    const std::string &fileB = ""
+    const std::string &fileB
   );
 
 private:

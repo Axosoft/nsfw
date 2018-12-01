@@ -57,7 +57,7 @@ void InotifyService::dispatchRename(int oldDir, int newDir, std::string oldName,
     return;
   }
 
-  mQueue->enqueueRename(RENAMED, oldPath, newPath, oldName, newName);
+  mQueue->enqueue(RENAMED, oldPath, newPath, oldName, newName);
 }
 
 std::string InotifyService::getError() {

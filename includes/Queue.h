@@ -35,7 +35,7 @@ public:
     const std::string &fileA,
     const std::string &fileB = ""
   );
-  void enqueue(
+  void enqueueRename(
     EventType type,
     const std::string &oldDirectory,
     const std::string &newDirectory,

@@ -48,7 +48,7 @@ void EventQueue::enqueue(const EventType type, const std::string &directory, con
   queue.emplace_back(std::unique_ptr<Event>(new Event(type, directory, fileA, fileB)));
 }
 
-void EventQueue::enqueue(const EventType type, const std::string &oldDirectory, const std::string &newDirectory, const std::string &fileA, const std::string &fileB) {
+void EventQueue::enqueueRename(const EventType type, const std::string &oldDirectory, const std::string &newDirectory, const std::string &fileA, const std::string &fileB) {
   std::lock_guard<std::mutex> lock(mutex);
   queue.emplace_back(std::unique_ptr<Event>(new Event(type, oldDirectory, newDirectory, fileA, fileB)));
 }

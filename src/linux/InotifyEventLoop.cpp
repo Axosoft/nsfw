@@ -30,7 +30,7 @@ void InotifyEventLoop::work() {
   bool isDirectoryEvent = false, isDirectoryRemoval = false;
   InotifyService *inotifyService = mInotifyService;
   InotifyRenameEvent renameEvent;
-  renameEvent.isGood = false;
+  renameEvent.isStarted = false;
 
   auto create = [&event, &isDirectoryEvent, &inotifyService]() {
     if (event == NULL) {
@@ -69,11 +69,11 @@ void InotifyEventLoop::work() {
     renameEvent.isDirectory = isDirectoryEvent;
     renameEvent.name = event->name;
     renameEvent.wd = event->wd;
-    renameEvent.isGood = true;
+    renameEvent.isStarted = true;
   };
 
   auto renameEnd = [&create, &event, &inotifyService, &isDirectoryEvent, &renameEvent]() {
-    if (!renameEvent.isGood) {
+    if (!renameEvent.isStarted) {
       create();
       return;
     }
@@ -92,7 +92,7 @@ void InotifyEventLoop::work() {
         inotifyService->rename(renameEvent.wd, event->wd, renameEvent.name, event->name);
       }
     }
-    renameEvent.isGood = false;
+    renameEvent.isStarted = false;
   };
 
   mLoopingSemaphore.signal();
@@ -101,7 +101,7 @@ void InotifyEventLoop::work() {
     do {
       event = (struct inotify_event *)(buffer + position);
 
-      if (renameEvent.isGood && event->cookie != renameEvent.cookie) {
+      if (renameEvent.isStarted && event->cookie != renameEvent.cookie) {
         renameEnd();
       }
 
@@ -137,6 +137,10 @@ void InotifyEventLoop::work() {
         inotifyService->removeDirectory(event->wd);
       }
     } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);
+    if (renameEvent.isStarted) {
+      remove();
+      renameEvent.isStarted = false;
+    }
     position = 0;
   }
   mStarted = false;

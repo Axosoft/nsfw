@@ -109,13 +109,24 @@ void InotifyTree::removeNodeReferenceByWD(int wd) {
   }
 }
 
-void InotifyTree::renameDirectory(int wd, std::string oldName, std::string newName) {
-  auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
-  if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {
+void InotifyTree::renameDirectory(int oldDir, int newDir, std::string oldName, std::string newName) {
+  auto oldNodeIterator = mInotifyNodeByWatchDescriptor->find(oldDir);
+  if (oldNodeIterator == mInotifyNodeByWatchDescriptor->end()) {
     return;
   }
 
-  nodeIterator->second->renameChild(oldName, newName);
+  if (oldDir == newDir) {
+    oldNodeIterator->second->renameChild(oldName, newName);
+    return;
+  }
+
+  auto newNodeIterator = mInotifyNodeByWatchDescriptor->find(newDir);
+  if (newNodeIterator == mInotifyNodeByWatchDescriptor->end()) {
+    return;
+  }
+
+  oldNodeIterator->second->removeChild(oldName);
+  newNodeIterator->second->addChild(newName);
 }
 
 void InotifyTree::setError(std::string error) {

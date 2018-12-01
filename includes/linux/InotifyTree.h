@@ -22,7 +22,7 @@ public:
   bool isRootAlive();
   bool nodeExists(int wd);
   void removeDirectory(int wd);
-  void renameDirectory(int wd, std::string oldName, std::string newName);
+  void renameDirectory(int oldDir, int newDir, std::string oldName, std::string newName);
 
   ~InotifyTree();
 private:

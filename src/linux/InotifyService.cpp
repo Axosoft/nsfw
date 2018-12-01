@@ -114,7 +114,7 @@ void InotifyService::renameDirectory(int oldDir, int newDir, std::string oldName
     return;
   }
 
-  mTree->renameDirectory(oldDir, oldName, newName);
+  mTree->renameDirectory(oldDir, newDir, oldName, newName);
 
   dispatchRename(oldDir, newDir, oldName, newName);
 }

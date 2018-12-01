@@ -73,13 +73,14 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
     v8::Local<v8::Object> anEvent = New<v8::Object>();
 
     anEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*i)->type));
-    anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*i)->directory).ToLocalChecked());
+    anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*i)->fromDirectory).ToLocalChecked());
 
     if ((*i)->type == RENAMED) {
-      anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*i)->fileA).ToLocalChecked());
-      anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*i)->fileB).ToLocalChecked());
+      anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*i)->fromFile).ToLocalChecked());
+      anEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*i)->toDirectory).ToLocalChecked());
+      anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*i)->toFile).ToLocalChecked());
     } else {
-      anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*i)->fileA).ToLocalChecked());
+      anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*i)->fromFile).ToLocalChecked());
     }
 
     jsEventObjects->push_back(anEvent);

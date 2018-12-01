@@ -87,9 +87,9 @@ void InotifyEventLoop::work() {
       create();
     } else {
       if (renameEvent.isDirectory) {
-        inotifyService->renameDirectory(renameEvent.wd, renameEvent.name, event->name);
+        inotifyService->renameDirectory(renameEvent.wd, renameEvent.name, event->wd, event->name);
       } else {
-        inotifyService->rename(renameEvent.wd, renameEvent.name, event->name);
+        inotifyService->rename(renameEvent.wd, renameEvent.name, event->wd, event->name);
       }
     }
     renameEvent.isGood = false;

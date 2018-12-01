@@ -17,8 +17,10 @@ enum EventType {
 struct Event {
   Event(const EventType type, const std::string &directory, const std::string &fileA, const std::string &fileB) :
       type(type), directory(directory), fileA(fileA), fileB(fileB) {}
+  Event(const EventType type, const std::string &oldDirectory, const std::string &newDirectory, const std::string &fileA, const std::string &fileB) :
+      type(type), directory(oldDirectory), newDirectory(newDirectory), fileA(fileA), fileB(fileB) {}
   EventType type;
-  std::string directory, fileA, fileB;
+  std::string directory, newDirectory, fileA, fileB;
 };
 
 class EventQueue {
@@ -30,6 +32,13 @@ public:
   void enqueue(
     EventType type,
     const std::string &directory,
+    const std::string &fileA,
+    const std::string &fileB = ""
+  );
+  void enqueue(
+    EventType type,
+    const std::string &oldDirectory,
+    const std::string &newDirectory,
     const std::string &fileA,
     const std::string &fileB = ""
   );

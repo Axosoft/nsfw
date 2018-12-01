@@ -48,13 +48,16 @@ void InotifyService::dispatch(EventType action, int wd, std::string name) {
   mQueue->enqueue(action, path, name);
 }
 
-void InotifyService::dispatchRename(int wd, std::string oldName, std::string newName) {
-  std::string path;
-  if (!mTree->getPath(path, wd)) {
+void InotifyService::dispatchRename(int oldDir, int newDir, std::string oldName, std::string newName) {
+  std::string oldPath, newPath;
+  if (!mTree->getPath(oldPath, oldDir)) {
+    return;
+  }
+  if (!mTree->getPath(newPath, newDir)) {
     return;
   }
 
-  mQueue->enqueue(RENAMED, path, oldName, newName);
+  mQueue->enqueue(RENAMED, oldPath, newPath, oldName, newName);
 }
 
 std::string InotifyService::getError() {
@@ -89,8 +92,8 @@ void InotifyService::remove(int wd, std::string name) {
   dispatch(DELETED, wd, name);
 }
 
-void InotifyService::rename(int wd, std::string oldName, std::string newName) {
-  dispatchRename(wd, oldName, newName);
+void InotifyService::rename(int oldDir, int newDir, std::string oldName, std::string newName) {
+  dispatchRename(oldDir, newDir, oldName, newName);
 }
 
 void InotifyService::createDirectory(int wd, std::string name) {
@@ -106,12 +109,12 @@ void InotifyService::removeDirectory(int wd) {
   mTree->removeDirectory(wd);
 }
 
-void InotifyService::renameDirectory(int wd, std::string oldName, std::string newName) {
-  if (!mTree->nodeExists(wd)) {
+void InotifyService::renameDirectory(int oldDir, int newDir, std::string oldName, std::string newName) {
+  if (!mTree->nodeExists(oldDir)) {
     return;
   }
 
-  mTree->renameDirectory(wd, oldName, newName);
+  mTree->renameDirectory(oldDir, oldName, newName);
 
-  dispatchRename(wd, oldName, newName);
+  dispatchRename(oldDir, newDir, oldName, newName);
 }

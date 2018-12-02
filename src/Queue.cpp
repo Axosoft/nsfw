@@ -43,7 +43,13 @@ std::unique_ptr<std::vector<Event*>> EventQueue::dequeueAll() {
   return events;
 }
 
-void EventQueue::enqueue(const EventType type, const std::string &directory, const std::string &fileA, const std::string &fileB) {
+void EventQueue::enqueue(
+  const EventType type,
+  const std::string &fromDirectory,
+  const std::string &fromFile,
+  const std::string &toDirectory,
+  const std::string &toFile
+) {
   std::lock_guard<std::mutex> lock(mutex);
-  queue.emplace_back(std::unique_ptr<Event>(new Event(type, directory, fileA, fileB)));
+  queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile)));
 }

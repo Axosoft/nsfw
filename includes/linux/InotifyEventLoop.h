@@ -33,7 +33,7 @@ private:
   struct InotifyRenameEvent {
     uint32_t cookie;
     bool isDirectory;
-    bool isGood;
+    bool isStarted;
     std::string name;
     int wd;
   };

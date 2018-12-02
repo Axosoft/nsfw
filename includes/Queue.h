@@ -15,10 +15,22 @@ enum EventType {
 };
 
 struct Event {
-  Event(const EventType type, const std::string &directory, const std::string &fileA, const std::string &fileB) :
-      type(type), directory(directory), fileA(fileA), fileB(fileB) {}
+  Event(
+    const EventType type,
+    const std::string &fromDirectory,
+    const std::string &fromFile,
+    const std::string &toDirectory,
+    const std::string &toFile
+  ) :
+    type(type),
+    fromDirectory(fromDirectory),
+    toDirectory(toDirectory),
+    fromFile(fromFile),
+    toFile(toFile)
+  {}
+
   EventType type;
-  std::string directory, fileA, fileB;
+  std::string fromDirectory, toDirectory, fromFile, toFile;
 };
 
 class EventQueue {
@@ -28,10 +40,11 @@ public:
   std::unique_ptr<Event> dequeue();
   std::unique_ptr<std::vector<Event*>> dequeueAll();
   void enqueue(
-    EventType type,
-    const std::string &directory,
-    const std::string &fileA,
-    const std::string &fileB = ""
+    const EventType type,
+    const std::string &fromDirectory,
+    const std::string &fromFile,
+    const std::string &toDirectory = "",
+    const std::string &toFile = ""
   );
 
 private:

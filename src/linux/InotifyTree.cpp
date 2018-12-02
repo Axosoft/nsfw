@@ -109,13 +109,29 @@ void InotifyTree::removeNodeReferenceByWD(int wd) {
   }
 }
 
-void InotifyTree::renameDirectory(int wd, std::string oldName, std::string newName) {
-  auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
-  if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {
+void InotifyTree::renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName) {
+  auto fromNodeIterator = mInotifyNodeByWatchDescriptor->find(fromWd);
+  if (fromNodeIterator == mInotifyNodeByWatchDescriptor->end()) {
     return;
   }
 
-  nodeIterator->second->renameChild(oldName, newName);
+  if (fromWd == toWd) {
+    fromNodeIterator->second->renameChild(fromName, toName);
+    return;
+  }
+
+  auto toNodeIterator = mInotifyNodeByWatchDescriptor->find(toWd);
+  if (toNodeIterator == mInotifyNodeByWatchDescriptor->end()) {
+    return;
+  }
+
+  InotifyNode *pulledChild = fromNodeIterator->second->pullChild(fromName);
+
+  if (!pulledChild) {
+    return;
+  }
+
+  toNodeIterator->second->takeChildAsName(pulledChild, toName);
 }
 
 void InotifyTree::setError(std::string error) {
@@ -379,6 +395,10 @@ void InotifyTree::InotifyNode::setName(std::string name) {
   fixPaths();
 }
 
+void InotifyTree::InotifyNode::setParent(InotifyNode *newParent) {
+  mParent = newParent;
+}
+
 std::string InotifyTree::InotifyNode::createFullPath(std::string parentPath, std::string name) {
   std::stringstream fullPathStream;
 
@@ -388,4 +408,22 @@ std::string InotifyTree::InotifyNode::createFullPath(std::string parentPath, std
     << name;
 
   return fullPathStream.str();
+}
+
+InotifyTree::InotifyNode *InotifyTree::InotifyNode::pullChild(std::string name) {
+  auto child = mChildren->find(name);
+  if (child == mChildren->end()) {
+    return NULL;
+  }
+
+  auto node = child->second;
+  node->setParent(NULL);
+  mChildren->erase(child);
+  return node;
+}
+
+void InotifyTree::InotifyNode::takeChildAsName(InotifyNode *child, std::string name) {
+  (*mChildren)[name] = child;
+  child->setParent(this);
+  child->setName(name);
 }

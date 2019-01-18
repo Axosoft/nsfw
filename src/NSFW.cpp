@@ -39,11 +39,6 @@ NSFW::~NSFW() {
 
 void NSFW::cleanupEventCallback(void *arg) {
   EventBaton *baton = (EventBaton *)arg;
-  for (uint32_t i = 0; i < baton->events->size(); ++i) {
-    delete (*baton->events)[i];
-    (*baton->events)[i] = NULL;
-  }
-  delete baton->events;
   delete baton;
 }
 
@@ -66,30 +61,24 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
     return;
   }
 
-  std::vector< v8::Local<v8::Object> > *jsEventObjects = new std::vector< v8::Local<v8::Object> >;
-  jsEventObjects->reserve(baton->events->size());
+  v8::Local<v8::Array> eventArray = New<v8::Array>((int)baton->events->size());
 
-  for (auto i = baton->events->begin(); i != baton->events->end(); ++i) {
-    v8::Local<v8::Object> anEvent = New<v8::Object>();
+  for (unsigned int i = 0; i < baton->events->size(); ++i) {
+    v8::Local<v8::Object> jsEvent = New<v8::Object>();
 
-    anEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*i)->type));
-    anEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*i)->fromDirectory).ToLocalChecked());
 
-    if ((*i)->type == RENAMED) {
-      anEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*i)->fromFile).ToLocalChecked());
-      anEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*i)->toDirectory).ToLocalChecked());
-      anEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*i)->toFile).ToLocalChecked());
+    jsEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*baton->events)[i]->type));
+    jsEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromDirectory).ToLocalChecked());
+
+    if ((*baton->events)[i]->type == RENAMED) {
+      jsEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
+      jsEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toDirectory).ToLocalChecked());
+      jsEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toFile).ToLocalChecked());
     } else {
-      anEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*i)->fromFile).ToLocalChecked());
+      jsEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
     }
 
-    jsEventObjects->push_back(anEvent);
-  }
-
-  v8::Local<v8::Array> eventArray = New<v8::Array>((int)jsEventObjects->size());
-
-  for (unsigned int i = 0; i < jsEventObjects->size(); ++i) {
-    eventArray->Set(i, (*jsEventObjects)[i]);
+    eventArray->Set(i, jsEvent);
   }
 
   v8::Local<v8::Value> argv[] = {
@@ -97,8 +86,6 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
   };
 
   baton->nsfw->mEventCallback->Call(1, argv);
-
-  delete jsEventObjects;
 
   uv_thread_t cleanup;
   uv_thread_create(&cleanup, NSFW::cleanupEventCallback, baton);
@@ -120,7 +107,7 @@ void NSFW::pollForEvents(void *arg) {
       uv_mutex_unlock(&nsfw->mInterfaceLock);
       break;
     }
-    std::vector<Event *> *events = nsfw->mInterface->getEvents();
+    auto events = nsfw->mInterface->getEvents();
     if (events == NULL) {
       uv_mutex_unlock(&nsfw->mInterfaceLock);
       sleep_for_ms(50);
@@ -129,7 +116,7 @@ void NSFW::pollForEvents(void *arg) {
 
     EventBaton *baton = new EventBaton;
     baton->nsfw = nsfw;
-    baton->events = events;
+    baton->events = std::move(events);
 
     nsfw->mEventCallbackAsync.data = (void *)baton;
     uv_async_send(&nsfw->mEventCallbackAsync);

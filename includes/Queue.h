@@ -38,7 +38,7 @@ public:
   void clear();
   std::size_t count();
   std::unique_ptr<Event> dequeue();
-  std::unique_ptr<std::vector<Event*>> dequeueAll();
+  std::unique_ptr<std::vector<std::unique_ptr<Event>>> dequeueAll();
   void enqueue(
     const EventType type,
     const std::string &fromDirectory,

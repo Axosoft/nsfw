@@ -26,17 +26,17 @@ std::unique_ptr<Event> EventQueue::dequeue() {
   return retVal;
 }
 
-std::unique_ptr<std::vector<Event*>> EventQueue::dequeueAll() {
+std::unique_ptr<std::vector<std::unique_ptr<Event>>> EventQueue::dequeueAll() {
   std::lock_guard<std::mutex> lock(mutex);
   if (queue.empty()) {
     return nullptr;
   }
 
   const auto queueSize = queue.size();
-  std::unique_ptr<std::vector<Event*>> events(new std::vector<Event*>(queueSize, nullptr));
+  std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(new std::vector<std::unique_ptr<Event>>);
   for (size_t i = 0; i < queueSize; ++i) {
     auto &front = queue.front();
-    (*events)[i] = front.release();
+    events->emplace_back(std::move(front));
     queue.pop_front();
   }
 

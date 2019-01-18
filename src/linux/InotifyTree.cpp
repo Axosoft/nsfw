@@ -150,6 +150,7 @@ InotifyTree::~InotifyTree() {
   if (isRootAlive()) {
     delete mRoot;
   }
+  delete mInotifyNodeByWatchDescriptor;
 }
 
 /**

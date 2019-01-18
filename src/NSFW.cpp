@@ -58,6 +58,11 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
   if (baton->events->empty()) {
     uv_thread_t cleanup;
     uv_thread_create(&cleanup, NSFW::cleanupEventCallback, baton);
+
+    #if defined(__APPLE_CC__) ||  defined(__linux__) || defined(__FreeBSD__)
+    pthread_detach(cleanup);
+    #endif
+
     return;
   }
 
@@ -89,6 +94,10 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
 
   uv_thread_t cleanup;
   uv_thread_create(&cleanup, NSFW::cleanupEventCallback, baton);
+
+  #if defined(__APPLE_CC__) ||  defined(__linux__) || defined(__FreeBSD__)
+  pthread_detach(cleanup);
+  #endif
 }
 
 void NSFW::pollForEvents(void *arg) {

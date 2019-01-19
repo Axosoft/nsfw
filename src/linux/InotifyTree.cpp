@@ -150,6 +150,7 @@ InotifyTree::~InotifyTree() {
   if (isRootAlive()) {
     delete mRoot;
   }
+  delete mInotifyNodeByWatchDescriptor;
 }
 
 /**
@@ -227,10 +228,10 @@ InotifyTree::InotifyNode::InotifyNode(
   }
 
   for (int i = 0; i < resultCountOrError; ++i) {
-    delete directoryContents[i];
+    free(directoryContents[i]);
   }
 
-  delete[] directoryContents;
+  free(directoryContents);
 }
 
 InotifyTree::InotifyNode::~InotifyNode() {

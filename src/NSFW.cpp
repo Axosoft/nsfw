@@ -48,7 +48,7 @@ void NSFW::fireErrorCallback(uv_async_t *handle) {
   v8::Local<v8::Value> argv[] = {
     New<v8::String>(baton->error).ToLocalChecked()
   };
-  baton->nsfw->mErrorCallback->Call(1, argv);
+  baton->nsfw->mErrorCallback->Call(1, argv, nullptr);
   delete baton;
 }
 
@@ -90,7 +90,7 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
     eventArray
   };
 
-  baton->nsfw->mEventCallback->Call(1, argv);
+  baton->nsfw->mEventCallback->Call(1, argv, nullptr);
 
   uv_thread_t cleanup;
   uv_thread_create(&cleanup, NSFW::cleanupEventCallback, baton);
@@ -206,7 +206,7 @@ NAN_METHOD(NSFW::Start) {
     v8::Local<v8::Value> argv[1] = {
       Nan::Error("This NSFW cannot be started, because it is already running.")
     };
-    callback->Call(1, argv);
+    callback->Call(1, argv, nullptr);
     delete callback;
     return;
   }
@@ -252,9 +252,9 @@ void NSFW::StartWorker::HandleOKCallback() {
     v8::Local<v8::Value> argv[1] = {
       Nan::Error("NSFW was unable to start watching that directory.")
     };
-    callback->Call(1, argv);
+    callback->Call(1, argv, nullptr);
   } else {
-    callback->Call(0, NULL);
+    callback->Call(0, nullptr, nullptr);
   }
 }
 
@@ -279,7 +279,7 @@ NAN_METHOD(NSFW::Stop) {
     v8::Local<v8::Value> argv[1] = {
       Nan::Error("This NSFW cannot be stopped, because it is not running.")
     };
-    callback->Call(1, argv);
+    callback->Call(1, argv, nullptr);
     delete callback;
     return;
   }
@@ -321,7 +321,7 @@ void NSFW::StopWorker::HandleOKCallback() {
   uv_close(reinterpret_cast<uv_handle_t*>(&mNSFW->mErrorCallbackAsync), nullptr);
   uv_close(reinterpret_cast<uv_handle_t*>(&mNSFW->mEventCallbackAsync), nullptr);
 
-  callback->Call(0, NULL);
+  callback->Call(0, nullptr, nullptr);
 }
 
 NODE_MODULE(nsfw, NSFW::Init)

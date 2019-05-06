@@ -1,8 +1,9 @@
 const { NSFW } = require('../../build/Release/nsfw.node');
-const fse = require('promisify-node')(require('fs-extra'));
+const fs = require('fs');
 const path = require('path');
-const _isInteger = require('lodash.isinteger');
-const _isUndefined = require('lodash.isundefined');
+const { promisify } = require('util');
+
+const stat = promisify(fs.stat);
 
 const _private = {};
 
@@ -41,17 +42,17 @@ nsfw.actions = {
 _private.buildNSFW = function buildNSFW(watchPath, eventCallback, options) {
   let { debounceMS, errorCallback } = options || {};
 
-  if (_isInteger(debounceMS)) {
+  if (Number.isInteger(debounceMS)) {
     if (debounceMS < 1) {
       throw new Error('Minimum debounce is 1ms.');
     }
-  } else if (_isUndefined(debounceMS)) {
+  } else if (debounceMS === undefined) {
     debounceMS = 500;
   } else {
     throw new Error('Option debounceMS must be a positive integer greater than 1.');
   }
 
-  if (_isUndefined(errorCallback)) {
+  if (errorCallback === undefined) {
     errorCallback = function(nsfwError) {
       throw nsfwError;
     };
@@ -61,7 +62,7 @@ _private.buildNSFW = function buildNSFW(watchPath, eventCallback, options) {
     throw new Error('Path to watch must be an absolute path.');
   }
 
-  return fse.stat(watchPath)
+  return stat(watchPath)
     .then(stats => {
       if (stats.isDirectory()) {
         return new nsfw(debounceMS, watchPath, eventCallback, errorCallback);
@@ -86,7 +87,7 @@ _private.nsfwFilePoller = function(debounceMS, watchPath, eventCallback) {
   let filePollerInterval;
 
   function getStatus() {
-    return fse.stat(watchPath)
+    return stat(watchPath)
       .then(status => {
         if (fileStatus === null) {
           fileStatus = status;
@@ -107,7 +108,7 @@ _private.nsfwFilePoller = function(debounceMS, watchPath, eventCallback) {
   }
 
   this.start = function start() {
-    return fse.stat(watchPath)
+    return stat(watchPath)
       .then(status => fileStatus = status, () => fileStatus = null)
       .then(() => {
         filePollerInterval = setInterval(getStatus, debounceMS);

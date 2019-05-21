@@ -1,8 +1,6 @@
 const { NSFW } = require('../../build/Release/nsfw.node');
 const fse = require('fs-extra');
 const path = require('path');
-const _isInteger = require('lodash.isinteger');
-const _isUndefined = require('lodash.isundefined');
 
 const _private = {};
 
@@ -41,17 +39,17 @@ nsfw.actions = {
 _private.buildNSFW = function buildNSFW(watchPath, eventCallback, options) {
   let { debounceMS, errorCallback } = options || {};
 
-  if (_isInteger(debounceMS)) {
+  if (Number.isInteger(debounceMS)) {
     if (debounceMS < 1) {
       throw new Error('Minimum debounce is 1ms.');
     }
-  } else if (_isUndefined(debounceMS)) {
+  } else if (debounceMS === undefined) {
     debounceMS = 500;
   } else {
     throw new Error('Option debounceMS must be a positive integer greater than 1.');
   }
 
-  if (_isUndefined(errorCallback)) {
+  if (errorCallback === undefined) {
     errorCallback = function(nsfwError) {
       throw nsfwError;
     };

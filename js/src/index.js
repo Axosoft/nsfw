@@ -1,5 +1,5 @@
 const { NSFW } = require('../../build/Release/nsfw.node');
-const fse = require('promisify-node')(require('fs-extra'));
+const fse = require('fs-extra');
 const path = require('path');
 const _isInteger = require('lodash.isinteger');
 const _isUndefined = require('lodash.isundefined');

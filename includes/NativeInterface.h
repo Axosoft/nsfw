@@ -21,7 +21,7 @@ public:
   ~NativeInterface();
 
   std::string getError();
-  std::vector<Event*> *getEvents();
+  std::unique_ptr<std::vector<std::unique_ptr<Event>>> getEvents();
   bool hasErrored();
   bool isWatching();
 

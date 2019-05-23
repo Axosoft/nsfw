@@ -24,12 +24,12 @@ private:
   void createDirectory(int wd, std::string name);
   void createDirectoryTree(std::string directoryTreePath);
   void dispatch(EventType action, int wd, std::string name);
-  void dispatchRename(int wd, std::string oldName, std::string newName);
+  void dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName);
   void modify(int wd, std::string name);
   void remove(int wd, std::string name);
   void removeDirectory(int wd);
-  void rename(int wd, std::string oldName, std::string newName);
-  void renameDirectory(int wd, std::string oldName, std::string newName);
+  void rename(int fromWd, std::string fromName, int toWd, std::string toName);
+  void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
 
   InotifyEventLoop *mEventLoop;
   std::shared_ptr<EventQueue> mQueue;

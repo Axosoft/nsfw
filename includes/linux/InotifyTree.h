@@ -22,7 +22,7 @@ public:
   bool isRootAlive();
   bool nodeExists(int wd);
   void removeDirectory(int wd);
-  void renameDirectory(int wd, std::string oldName, std::string newName);
+  void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
 
   ~InotifyTree();
 private:
@@ -44,9 +44,12 @@ private:
     InotifyNode *getParent();
     bool inotifyInit();
     bool isAlive();
+    InotifyNode *pullChild(std::string name);
     void removeChild(std::string name);
     void renameChild(std::string oldName, std::string newName);
     void setName(std::string name);
+    void setParent(InotifyNode *newParent);
+    void takeChildAsName(InotifyNode *child, std::string name);
 
     ~InotifyNode();
   private:

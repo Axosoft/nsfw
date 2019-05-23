@@ -1,16 +1,7 @@
 const nsfw = require('../src/');
 const path = require('path');
-const { promisify } = require('util');
-const fs = require('fs');
-const rimraf = promisify(require('rimraf'));
-const exec = promisify((command, options, callback) =>
-  require('child_process').exec(command, options, callback));
-
-const mkdir = promisify(fs.mkdir);
-const open = promisify(fs.open);
-const write = promisify(fs.write);
-const stat = promisify(fs.stat);
-const close = promisify(fs.close);
+const fse = require('fs-extra');
+const exec = require('executive');
 
 jasmine.DEFAULT_TIMEOUT_INTERVAL = 120000;
 
@@ -22,22 +13,22 @@ describe('Node Sentinel File Watcher', function() {
 
   beforeEach(function(done) {
     function makeDir(identifier) {
-      return mkdir(path.join(workDir, 'test' + identifier))
-        .then(() => mkdir(path.join(workDir, 'test' + identifier, 'folder' + identifier)))
-        .then(() => open(path.join(workDir, 'test' + identifier, 'testing' + identifier +'.file'), 'w'))
+      return fse.mkdir(path.join(workDir, 'test' + identifier))
+        .then(() => fse.mkdir(path.join(workDir, 'test' + identifier, 'folder' + identifier)))
+        .then(() => fse.open(path.join(workDir, 'test' + identifier, 'testing' + identifier +'.file'), 'w'))
         .then(fd => {
-          return write(fd, 'testing')
+          return fse.write(fd, 'testing')
             .then(() => fd);
         })
-        .then(fd => close(fd));
+        .then(fd => fse.close(fd));
     }
     // create a file System
-    return stat(workDir)
-      .then(() => rimraf(workDir), () => {})
-      .then(() => mkdir(workDir))
+    return fse.stat(workDir)
+      .then(() => fse.remove(workDir), () => {})
+      .then(() => fse.mkdir(workDir))
       .then(() => {
         const promises = [];
-        for (let i = 0; i < 5; ++i) {
+        for (let i = 0; i < 10; ++i) {
           promises.push(makeDir(i));
         }
         return Promise.all(promises);
@@ -46,7 +37,7 @@ describe('Node Sentinel File Watcher', function() {
   });
 
   afterEach(function(done) {
-    return rimraf(workDir)
+    return fse.remove(workDir)
       .then(done);
   });
 
@@ -96,21 +87,21 @@ describe('Node Sentinel File Watcher', function() {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
         .then(() => {
-          const fd = fs.openSync(filePath, 'w');
-          fs.writeSync(fd, 'Bean bag video games at noon.');
-          return close(fd);
+          const fd = fse.openSync(filePath, 'w');
+          fse.writeSync(fd, 'Bean bag video games at noon.');
+          return fse.close(fd);
         })
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => rimraf(filePath))
+        .then(() => fse.remove(filePath))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
         .then(() => {
-          const fd = fs.openSync(filePath, 'w');
-          fs.writeSync(fd, 'His watch has ended.');
-          return close(fd);
+          const fd = fse.openSync(filePath, 'w');
+          fse.writeSync(fd, 'His watch has ended.');
+          return fse.close(fd);
         })
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
@@ -154,11 +145,11 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => open(path.join(inPath, file), 'w'))
+        .then(() => fse.open(path.join(inPath, file), 'w'))
         .then(fd => {
-          return write(fd, 'Peanuts, on occasion, rain from the skies.').then(() => fd);
+          return fse.write(fd, 'Peanuts, on occasion, rain from the skies.').then(() => fd);
         })
-        .then(fd => close(fd))
+        .then(fd => fse.close(fd))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
@@ -199,7 +190,7 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => rimraf(path.join(inPath, file)))
+        .then(() => fse.remove(path.join(inPath, file)))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
@@ -240,11 +231,11 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => open(path.join(inPath, file), 'w'))
+        .then(() => fse.open(path.join(inPath, file), 'w'))
         .then(fd => {
-          return write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
+          return fse.write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
         })
-        .then(fd => close(fd))
+        .then(fd => fse.close(fd))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
@@ -290,30 +281,30 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => nsfw(
           dirB,
           events => events.forEach(findEvent),
-          { debounceMS: DEBOUNCE }
-        ).then(_w => {
+          { debounceMS: DEBOUNCE })
+        .then(_w => {
           watchB = _w;
           return watchB.start();
         }))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => open(path.join(dirA, fileA), 'w'))
+        .then(() => fse.open(path.join(dirA, fileA), 'w'))
         .then(fd => new Promise(resolve => {
           setTimeout(() => resolve(fd), TIMEOUT_PER_STEP);
         }))
         .then(fd => {
-          return write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
+          return fse.write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
         })
-        .then(fd => close(fd))
-        .then(() => open(path.join(dirB, fileB), 'w'))
+        .then(fd => fse.close(fd))
+        .then(() => fse.open(path.join(dirB, fileB), 'w'))
         .then(fd => new Promise(resolve => {
           setTimeout(() => resolve(fd), TIMEOUT_PER_STEP);
         }))
         .then(fd => {
-          return write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
+          return fse.write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
         })
-        .then(fd => close(fd))
+        .then(fd => fse.close(fd))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
@@ -327,6 +318,46 @@ describe('Node Sentinel File Watcher', function() {
             .then(() => watchB.stop())
             .then((err) => done.fail(err)));
     });
+
+    if (process.platform) {
+      it('will properly track the movement of watched directories across watched directories', function(done) {
+        let watch;
+
+        const performRenameProcedure = number =>
+          fse.mkdir(path.join(workDir, `test${number}`, 'sneaky-folder'))
+            .then(() => fse.move(
+              path.join(workDir, `test${number}`, `folder${number}`),
+              path.join(workDir, `test${number + 1}`, 'bad-folder')
+            ))
+            .then(() => fse.move(
+              path.join(workDir, `test${number}`, 'sneaky-folder'),
+              path.join(workDir, `test${number}`, 'bad-folder')
+            ))
+            .then(() => fse.remove(path.join(workDir, `test${number}`)))
+            .then(() => fse.remove(path.join(workDir, `test${number + 1}`)));
+
+        return nsfw(workDir, () => {}, { debounceMS: DEBOUNCE })
+          .then(_w => {
+            watch = _w;
+            return watch.start();
+          })
+          .then(() => new Promise(resolve => {
+            setTimeout(resolve, TIMEOUT_PER_STEP);
+          }))
+          .then(() => Promise.all([
+            performRenameProcedure(0),
+            performRenameProcedure(2),
+            performRenameProcedure(4),
+            performRenameProcedure(6),
+            performRenameProcedure(8)
+          ]))
+          .then(() => new Promise(resolve => {
+            setTimeout(resolve, TIMEOUT_PER_STEP);
+          }))
+          .then(() => watch.stop())
+          .then(done, () => watch.stop().then((err) => done.fail(err)));
+      });
+    }
   });
 
   describe('Recursive', function() {
@@ -365,11 +396,11 @@ describe('Node Sentinel File Watcher', function() {
           return paths.reduce((chain, dir) => {
             directory = path.join(directory, dir);
             const nextDirectory = directory;
-            return chain.then(() => mkdir(nextDirectory));
+            return chain.then(() => fse.mkdir(nextDirectory));
           }, Promise.resolve());
         })
-        .then(() => open(path.join(directory, file), 'w'))
-        .then(fd => close(fd))
+        .then(() => fse.open(path.join(directory, file), 'w'))
+        .then(fd => fse.close(fd))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
@@ -414,7 +445,7 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => rimraf(inPath))
+        .then(() => fse.remove(inPath))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
@@ -427,8 +458,8 @@ describe('Node Sentinel File Watcher', function() {
     });
 
     it('does not loop endlessly when watching directories with recursive symlinks', (done) => {
-      fs.mkdirSync(path.join(workDir, 'test'));
-      fs.symlinkSync(path.join(workDir, 'test'), path.join(workDir, 'test', 'link'));
+      fse.mkdirSync(path.join(workDir, 'test'));
+      fse.symlinkSync(path.join(workDir, 'test'), path.join(workDir, 'test', 'link'));
 
       let watch;
 
@@ -467,7 +498,7 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => rimraf(inPath))
+        .then(() => fse.remove(inPath))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
@@ -501,14 +532,14 @@ describe('Node Sentinel File Watcher', function() {
           watch = _w;
           return watch.start();
         })
-        .then(() => rimraf(path.join(stressRepoPath, 'folder')))
+        .then(() => fse.remove(path.join(stressRepoPath, 'folder')))
         .then(() => errorRestart)
         .then(() => {
           expect(count).toBeGreaterThan(0);
           return watch.stop();
         })
-        .then(() => rimraf(stressRepoPath))
-        .then(() => mkdir(stressRepoPath))
+        .then(() => fse.remove(stressRepoPath))
+        .then(() => fse.mkdir(stressRepoPath))
         .then(() => nsfw(
           stressRepoPath,
           () => { count++; },
@@ -522,8 +553,8 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => new Promise(resolve => setTimeout(resolve, TIMEOUT_PER_STEP)))
         .then(() =>
           exec('git clone https://github.com/implausible/nsfw-stress-test ' + path.join('nsfw-stress-test', 'test')))
-        .then(() => stat(path.join(stressRepoPath, 'test')))
-        .then(() => rimraf(path.join(stressRepoPath, 'test')))
+        .then(() => fse.stat(path.join(stressRepoPath, 'test')))
+        .then(() => fse.remove(path.join(stressRepoPath, 'test')))
         .then(() => errorRestart)
         .then(() => {
           expect(count).toBeGreaterThan(0);
@@ -554,7 +585,7 @@ describe('Node Sentinel File Watcher', function() {
     });
 
     afterEach(function(done) {
-      return rimraf(stressRepoPath)
+      return fse.remove(stressRepoPath)
         .then(done);
     });
   });
@@ -562,7 +593,7 @@ describe('Node Sentinel File Watcher', function() {
   describe('Unicode support', function() {
     const watchPath = path.join(workDir, 'は');
     beforeEach(function(done) {
-      return mkdir(watchPath)
+      return fse.mkdir(watchPath)
         .then(done);
     });
 
@@ -594,11 +625,11 @@ describe('Node Sentinel File Watcher', function() {
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))
-        .then(() => open(path.join(watchPath, file), 'w'))
+        .then(() => fse.open(path.join(watchPath, file), 'w'))
         .then(fd => {
-          return write(fd, 'Unicode though.').then(() => fd);
+          return fse.write(fd, 'Unicode though.').then(() => fd);
         })
-        .then(fd => close(fd))
+        .then(fd => fse.close(fd))
         .then(() => new Promise(resolve => {
           setTimeout(resolve, TIMEOUT_PER_STEP);
         }))

@@ -1,9 +1,6 @@
 const { NSFW } = require('../../build/Release/nsfw.node');
-const fs = require('fs');
+const fse = require('fs-extra');
 const path = require('path');
-const { promisify } = require('util');
-
-const stat = promisify(fs.stat);
 
 const _private = {};
 
@@ -62,7 +59,7 @@ _private.buildNSFW = function buildNSFW(watchPath, eventCallback, options) {
     throw new Error('Path to watch must be an absolute path.');
   }
 
-  return stat(watchPath)
+  return fse.stat(watchPath)
     .then(stats => {
       if (stats.isDirectory()) {
         return new nsfw(debounceMS, watchPath, eventCallback, errorCallback);
@@ -87,7 +84,7 @@ _private.nsfwFilePoller = function(debounceMS, watchPath, eventCallback) {
   let filePollerInterval;
 
   function getStatus() {
-    return stat(watchPath)
+    return fse.stat(watchPath)
       .then(status => {
         if (fileStatus === null) {
           fileStatus = status;
@@ -108,7 +105,7 @@ _private.nsfwFilePoller = function(debounceMS, watchPath, eventCallback) {
   }
 
   this.start = function start() {
-    return stat(watchPath)
+    return fse.stat(watchPath)
       .then(status => fileStatus = status, () => fileStatus = null)
       .then(() => {
         filePollerInterval = setInterval(getStatus, debounceMS);

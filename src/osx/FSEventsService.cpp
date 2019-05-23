@@ -125,9 +125,9 @@ void FSEventsService::rename(std::vector<std::string> *paths) {
            sideBExists = stat(fullSideB.c_str(), &renameSideB) == 0;
 
       if (sideAExists && !sideBExists) {
-        mQueue->enqueue(RENAMED, binIterator->first, sideB, sideA);
+        mQueue->enqueue(RENAMED, binIterator->first, sideB, binIterator->first, sideA);
       } else if (!sideAExists && sideBExists) {
-        mQueue->enqueue(RENAMED, binIterator->first, sideA, sideB);
+        mQueue->enqueue(RENAMED, binIterator->first, sideA, binIterator->first, sideB);
       } else {
         demangle(fullSideA);
         demangle(fullSideB);

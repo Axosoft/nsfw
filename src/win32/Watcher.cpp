@@ -236,8 +236,8 @@ void Watcher::start() {
 
   QueueUserAPC([](__in ULONG_PTR self) {
     auto watcher = reinterpret_cast<Watcher*>(self);
-    watcher->mHasStartedSemaphore.signal();
     watcher->pollDirectoryChanges();
+    watcher->mHasStartedSemaphore.signal();
   } , mRunner.native_handle(), (ULONG_PTR)this);
 
   if (!mHasStartedSemaphore.waitFor(std::chrono::seconds(10))) {

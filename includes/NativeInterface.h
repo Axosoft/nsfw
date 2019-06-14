@@ -4,7 +4,7 @@
 #if defined(_WIN32)
 #include "../includes/win32/Controller.h"
 using NativeImplementation = Controller;
-#elif defined(__APPLE_CC__)
+#elif defined(__APPLE__)
 #include "../includes/osx/FSEventsService.h"
 using NativeImplementation = FSEventsService;
 #elif defined(__linux__) || defined(__FreeBSD__)

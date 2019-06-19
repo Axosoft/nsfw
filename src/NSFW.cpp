@@ -146,8 +146,9 @@ NAN_MODULE_INIT(NSFW::Init) {
   SetPrototypeMethod(tpl, "start", Start);
   SetPrototypeMethod(tpl, "stop", Stop);
 
-  constructor.Reset(tpl->GetFunction());
-  Set(target, New<v8::String>("NSFW").ToLocalChecked(), tpl->GetFunction());
+  v8::Local<v8::Context> context = Nan::GetCurrentContext();
+  constructor.Reset(tpl->GetFunction(context).ToLocalChecked());
+  Set(target, New<v8::String>("NSFW").ToLocalChecked(), tpl->GetFunction(context).ToLocalChecked());
 }
 
 NAN_METHOD(NSFW::JSNew) {
@@ -174,8 +175,9 @@ NAN_METHOD(NSFW::JSNew) {
     return ThrowError("Fourth argument of constructor must be a callback.");
   }
 
-  uint32_t debounceMS = info[0]->Uint32Value();
-  v8::String::Utf8Value utf8Value(info[1]->ToString());
+  v8::Local<v8::Context> context = Nan::GetCurrentContext();
+  uint32_t debounceMS = info[0]->Uint32Value(context).FromJust();
+  Nan::Utf8String utf8Value(Nan::To<v8::String>(info[1]).ToLocalChecked());
   std::string path = std::string(*utf8Value);
   Callback *eventCallback = new Callback(info[2].As<v8::Function>());
   Callback *errorCallback = new Callback(info[3].As<v8::Function>());

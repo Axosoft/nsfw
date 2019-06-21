@@ -1,6 +1,7 @@
 #ifndef NSFW_H
 #define NSFW_H
 
+#include "Queue.h"
 #include "NativeInterface.h"
 #include <nan.h>
 #include <uv.h>
@@ -13,12 +14,15 @@ class NSFW : public ObjectWrap {
 public:
   static NAN_MODULE_INIT(Init);
 
-  static void cleanupEventCallback(void *arg);
   static void fireErrorCallback(uv_async_t *handle);
   static void fireEventCallback(uv_async_t *handle);
   static void pollForEvents(void *arg);
 
   Persistent<v8::Object> mPersistentHandle;
+private:
+  NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
+  ~NSFW();
+
   uint32_t mDebounceMS;
   uv_async_t mErrorCallbackAsync;
   uv_async_t mEventCallbackAsync;
@@ -30,18 +34,11 @@ public:
   std::string mPath;
   uv_thread_t mPollThread;
   std::atomic<bool> mRunning;
-private:
-  NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
-  ~NSFW();
+  std::shared_ptr<EventQueue> mQueue;
 
   struct ErrorBaton {
     NSFW *nsfw;
     std::string error;
-  };
-
-  struct EventBaton {
-    NSFW *nsfw;
-    std::unique_ptr<std::vector<std::unique_ptr<Event>>> events;
   };
 
   static NAN_METHOD(JSNew);

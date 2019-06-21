@@ -17,16 +17,14 @@ using NativeImplementation = InotifyService;
 
 class NativeInterface {
 public:
-  NativeInterface(const std::string &path);
+  NativeInterface(const std::string &path, std::shared_ptr<EventQueue> queue);
   ~NativeInterface();
 
   std::string getError();
-  std::unique_ptr<std::vector<std::unique_ptr<Event>>> getEvents();
   bool hasErrored();
   bool isWatching();
 
 private:
-  std::shared_ptr<EventQueue> mQueue;
   std::unique_ptr<NativeImplementation> mNativeInterface;
 };
 

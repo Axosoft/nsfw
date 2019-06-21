@@ -1,8 +1,7 @@
 #include "../includes/NativeInterface.h"
 
-NativeInterface::NativeInterface(const std::string &path) {
-  mQueue = std::make_shared<EventQueue>();
-  mNativeInterface.reset(new NativeImplementation(mQueue, path));
+NativeInterface::NativeInterface(const std::string &path, std::shared_ptr<EventQueue> queue) {
+  mNativeInterface.reset(new NativeImplementation(queue, path));
 }
 
 NativeInterface::~NativeInterface() {
@@ -11,10 +10,6 @@ NativeInterface::~NativeInterface() {
 
 std::string NativeInterface::getError() {
   return mNativeInterface->getError();
-}
-
-std::unique_ptr<std::vector<std::unique_ptr<Event>>> NativeInterface::getEvents() {
-  return mQueue->dequeueAll();
 }
 
 bool NativeInterface::hasErrored() {

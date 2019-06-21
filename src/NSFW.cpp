@@ -18,7 +18,9 @@ NSFW::NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callb
   mInterface(NULL),
   mInterfaceLockValid(false),
   mPath(path),
-  mRunning(false) {
+  mRunning(false),
+  mQueue(std::make_shared<EventQueue>())
+  {
     HandleScope scope;
     v8::Local<v8::Object> obj = New<v8::Object>();
     mPersistentHandle.Reset(obj);
@@ -37,11 +39,6 @@ NSFW::~NSFW() {
   }
 }
 
-void NSFW::cleanupEventCallback(void *arg) {
-  EventBaton *baton = (EventBaton *)arg;
-  delete baton;
-}
-
 void NSFW::fireErrorCallback(uv_async_t *handle) {
   Nan::HandleScope scope;
   ErrorBaton *baton = (ErrorBaton *)handle->data;
@@ -54,33 +51,27 @@ void NSFW::fireErrorCallback(uv_async_t *handle) {
 
 void NSFW::fireEventCallback(uv_async_t *handle) {
   Nan::HandleScope scope;
-  EventBaton *baton = (EventBaton *)handle->data;
-  if (baton->events->empty()) {
-    uv_thread_t cleanup;
-    uv_thread_create(&cleanup, NSFW::cleanupEventCallback, baton);
-
-    #if defined(__APPLE_CC__) ||  defined(__linux__) || defined(__FreeBSD__)
-    pthread_detach(cleanup);
-    #endif
-
+  NSFW *nsfw = (NSFW *)handle->data;
+  auto events = nsfw->mQueue->dequeueAll();
+  if (events == nullptr) {
     return;
   }
 
-  v8::Local<v8::Array> eventArray = New<v8::Array>((int)baton->events->size());
+  v8::Local<v8::Array> eventArray = New<v8::Array>((int)events->size());
 
-  for (unsigned int i = 0; i < baton->events->size(); ++i) {
+  for (unsigned int i = 0; i < events->size(); ++i) {
     v8::Local<v8::Object> jsEvent = New<v8::Object>();
 
 
-    jsEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*baton->events)[i]->type));
-    jsEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromDirectory).ToLocalChecked());
+    jsEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*events)[i]->type));
+    jsEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*events)[i]->fromDirectory).ToLocalChecked());
 
-    if ((*baton->events)[i]->type == RENAMED) {
-      jsEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
-      jsEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toDirectory).ToLocalChecked());
-      jsEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toFile).ToLocalChecked());
+    if ((*events)[i]->type == RENAMED) {
+      jsEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*events)[i]->fromFile).ToLocalChecked());
+      jsEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*events)[i]->toDirectory).ToLocalChecked());
+      jsEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*events)[i]->toFile).ToLocalChecked());
     } else {
-      jsEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
+      jsEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*events)[i]->fromFile).ToLocalChecked());
     }
 
     eventArray->Set(i, jsEvent);
@@ -90,14 +81,7 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
     eventArray
   };
 
-  baton->nsfw->mEventCallback->Call(1, argv);
-
-  uv_thread_t cleanup;
-  uv_thread_create(&cleanup, NSFW::cleanupEventCallback, baton);
-
-  #if defined(__APPLE_CC__) ||  defined(__linux__) || defined(__FreeBSD__)
-  pthread_detach(cleanup);
-  #endif
+  nsfw->mEventCallback->Call(1, argv);
 }
 
 void NSFW::pollForEvents(void *arg) {
@@ -116,18 +100,14 @@ void NSFW::pollForEvents(void *arg) {
       uv_mutex_unlock(&nsfw->mInterfaceLock);
       break;
     }
-    auto events = nsfw->mInterface->getEvents();
-    if (events == NULL) {
+
+    if (nsfw->mQueue->count() == 0) {
       uv_mutex_unlock(&nsfw->mInterfaceLock);
       sleep_for_ms(50);
       continue;
     }
 
-    EventBaton *baton = new EventBaton;
-    baton->nsfw = nsfw;
-    baton->events = std::move(events);
-
-    nsfw->mEventCallbackAsync.data = (void *)baton;
+    nsfw->mEventCallbackAsync.data = (void *)nsfw;
     uv_async_send(&nsfw->mEventCallbackAsync);
 
     uv_mutex_unlock(&nsfw->mInterfaceLock);
@@ -230,7 +210,8 @@ void NSFW::StartWorker::Execute() {
     return;
   }
 
-  mNSFW->mInterface = new NativeInterface(mNSFW->mPath);
+  mNSFW->mQueue->clear();
+  mNSFW->mInterface = new NativeInterface(mNSFW->mPath, mNSFW->mQueue);
   if (mNSFW->mInterface->isWatching()) {
     mNSFW->mRunning = true;
     uv_thread_create(&mNSFW->mPollThread, NSFW::pollForEvents, mNSFW);
@@ -306,6 +287,7 @@ void NSFW::StopWorker::Execute() {
   uv_mutex_lock(&mNSFW->mInterfaceLock);
   delete mNSFW->mInterface;
   mNSFW->mInterface = NULL;
+  mNSFW->mQueue->clear();
 
   uv_mutex_unlock(&mNSFW->mInterfaceLock);
 }

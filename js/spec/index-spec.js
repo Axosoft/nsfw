@@ -2,11 +2,14 @@ const nsfw = require('../src/');
 const path = require('path');
 const fse = require('fs-extra');
 const exec = require('executive');
+const { promisify } = require('util');
 
 jasmine.DEFAULT_TIMEOUT_INTERVAL = 120000;
 
 const DEBOUNCE = 1000;
 const TIMEOUT_PER_STEP = 3000;
+
+const timeout = promisify(setTimeout);
 
 describe('Node Sentinel File Watcher', function() {
   const workDir = path.resolve('./mockfs');
@@ -396,7 +399,9 @@ describe('Node Sentinel File Watcher', function() {
           return paths.reduce((chain, dir) => {
             directory = path.join(directory, dir);
             const nextDirectory = directory;
-            return chain.then(() => fse.mkdir(nextDirectory));
+            return chain
+              .then(() => fse.mkdir(nextDirectory))
+              .then(() => timeout(60));
           }, Promise.resolve());
         })
         .then(() => fse.open(path.join(directory, file), 'w'))

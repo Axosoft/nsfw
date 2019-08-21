@@ -4,18 +4,21 @@ name: Run Tests
 
 jobs:
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
+  test:
+    name: Tests
+    strategy:
+        matrix:
+          node: [8, 10, 12]
+          os: [windows-2016, ubuntu-16.04, ubuntu-18.04, macOS-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@master
 
-      - name: Use Node.js 10.x
+      - name: Use Node.js ${{ matrix.node }}
         uses: actions/setup-node@master
         with:
-          version: 10.x
+          node-version: ${{ matrix.node }}
 
-      - name: yarn, yarn test
-        run: |
-          yarn
-          yarn test
+      - run: yarn
+
+      - run: yarn test

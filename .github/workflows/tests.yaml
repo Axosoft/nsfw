@@ -1,0 +1,21 @@
+on: [push]
+
+name: Run Tests
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+
+      - name: Use Node.js 10.x
+        uses: actions/setup-node@master
+        with:
+          version: 10.x
+
+      - name: yarn, yarn test
+        run: |
+          yarn
+          yarn test

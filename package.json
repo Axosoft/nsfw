@@ -15,6 +15,7 @@
     "url": "git+https://github.com/axosoft/node-simple-file-watcher.git"
   },
   "author": "Axosoft, LLC",
+  "types": "index.d.ts",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"

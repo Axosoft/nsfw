@@ -1,12 +1,7 @@
 declare module 'nsfw' {
     interface NsfwFunction {
         (watchPath: string, eventCallback: (events: Array<FileChangeEvent>) => void, options: Options): Promise<NSFW>;
-        actions: {
-            CREATED: number;
-            DELETED: number;
-            MODIFIED: number;
-            RENAMED: number;
-        };
+        actions: typeof ActionType;
     }
 
     /** Returns a Promise that resolves to the created NSFW Object.

@@ -20,7 +20,9 @@
   "bugs": {
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
   },
+  "bin": "lib/src/bin/nsfw.js",
   "files": [
+    "nsfw.js",
     "lib",
     "src",
     "includes",

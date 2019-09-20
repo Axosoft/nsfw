@@ -21,11 +21,13 @@
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
   },
   "files": [
+    "typings.d.ts",
     "lib",
     "src",
     "includes",
     "binding.gyp"
   ],
+  "types": "typings.d.ts",
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
     "fs-extra": "^7.0.0",

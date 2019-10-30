@@ -63,6 +63,8 @@ private:
     NSFW *mNSFW;
   };
 
+  AsyncResource* async_resource;
+
   static Persistent<v8::Function> constructor;
 };
 

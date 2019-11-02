@@ -9,17 +9,17 @@ declare module 'nsfw' {
     * @param {eventCallback} eventCallback - callback that will be fired when NSFW has change events
     * @param {options} options - options
     */
-    var func: NsfwFunction;
-    export default func;
+    var nsfw: NsfwFunction;
+    export = nsfw;
 
-    export interface NSFW {
+    interface NSFW {
         /** Returns a Promise that resolves when the NSFW object has started watching the path. */
         start: () => Promise<void>;
         /** Returns a Promise that resolves when NSFW object has halted. */
         stop: () => Promise<void>;
     }
 
-    export const enum ActionType {
+    const enum ActionType {
         CREATED = 0,
         DELETED = 1,
         MODIFIED = 2,

@@ -200,6 +200,70 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('can listen for a rename event', function(done) {
+      const waitTimeout = () => new Promise(resolve => {
+        setTimeout(resolve, TIMEOUT_PER_STEP);
+      });
+      const srcFile = 'testing0.file';
+      const destFile = 'testing1.file';
+      const srcInPath = path.resolve(workDir, 'test4', 'srcfolder');
+      const destInPath = path.resolve(workDir, 'test4', 'destfolder');
+      let eventListening = false;
+      let eventFound = false;
+      let extraEventFound = false;
+
+      function findEvent(element) {
+        if (!eventListening) {
+          return;
+        }
+        if (
+          element.action === nsfw.actions.RENAMED &&
+          element.directory === path.resolve(srcInPath) &&
+          element.oldFile === srcFile &&
+          element.newDirectory === path.resolve(destInPath) &&
+          element.newFile === destFile
+        ) {
+          eventFound = true;
+        } else {
+          extraEventFound = true;
+        }
+      }
+
+      let watch;
+
+      return nsfw(
+        workDir,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      )
+        .then(_w => {
+          watch = _w;
+          return watch.start();
+        })
+        .then(waitTimeout)
+        .then(() => {
+          fse.ensureFileSync(path.join(srcInPath, srcFile));
+          fse.ensureDirSync(destInPath);
+        })
+        .then(waitTimeout)
+        .then(() => {
+          eventListening = true;
+          return fse.move(path.join(srcInPath, srcFile), path.join(destInPath, destFile));
+        })
+        .then(waitTimeout)
+        .then(() => {
+          eventListening = false;
+        })
+        .then(() => {
+          expect(eventFound).toBe(true);
+          expect(extraEventFound).toBe(false);
+          return watch.stop();
+        })
+        .then(done, () => {
+          watch.stop().then((err) => done.fail(err));
+        });
+    });
+
     it('can run multiple watchers at once', async function() {
       const dirA = path.resolve(workDir, 'test0');
       const fileA = 'testing1.file';

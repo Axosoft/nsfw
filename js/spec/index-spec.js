@@ -254,10 +254,9 @@ describe('Node Sentinel File Watcher', function() {
       const waitTimeout = () => new Promise(resolve => {
         setTimeout(resolve, TIMEOUT_PER_STEP);
       });
-      const srcFile = 'testing0.file';
-      const destFile = 'testing1.file';
-      const srcInPath = path.resolve(workDir, 'test4', 'srcfolder');
-      const destInPath = path.resolve(workDir, 'test4', 'destfolder');
+      const srcFile = 'testing.file';
+      const destFile = 'new-testing.file';
+      const inPath = path.resolve(workDir, 'test4');
       let eventListening = false;
       let eventFound = false;
       let extraEventFound = false;
@@ -268,14 +267,16 @@ describe('Node Sentinel File Watcher', function() {
         }
         if (
           element.action === nsfw.actions.RENAMED &&
-          element.directory === path.resolve(srcInPath) &&
+          element.directory === path.resolve(inPath) &&
           element.oldFile === srcFile &&
-          element.newDirectory === path.resolve(destInPath) &&
+          element.newDirectory === path.resolve(inPath) &&
           element.newFile === destFile
         ) {
           eventFound = true;
         } else {
-          extraEventFound = true;
+          if (element.directory === path.resolve(inPath)) {
+            extraEventFound = true;
+          }
         }
       }
 
@@ -292,13 +293,12 @@ describe('Node Sentinel File Watcher', function() {
         })
         .then(waitTimeout)
         .then(() => {
-          fse.ensureFileSync(path.join(srcInPath, srcFile));
-          fse.ensureDirSync(destInPath);
+          fse.ensureFileSync(path.join(inPath, srcFile));
         })
         .then(waitTimeout)
         .then(() => {
           eventListening = true;
-          return fse.move(path.join(srcInPath, srcFile), path.join(destInPath, destFile));
+          return fse.move(path.join(inPath, srcFile), path.join(inPath, destFile));
         })
         .then(waitTimeout)
         .then(() => {

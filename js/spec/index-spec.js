@@ -15,6 +15,9 @@ describe('Node Sentinel File Watcher', function() {
   this.timeout(120000);
 
   const workDir = path.resolve('./mockfs');
+  const isWin = process.platform === 'win32';
+  const isLinux = process.platform === 'linux';
+  const isOsx = process.platform === 'darwin';
 
   beforeEach(async function() {
     async function makeDir(identifier) {
@@ -256,6 +259,92 @@ describe('Node Sentinel File Watcher', function() {
         })
         .then(() => {
           expect(eventFound).toBe(true);
+          expect(extraEventFound).toBe(false);
+          return watch.stop();
+        })
+        .then(done, () => {
+          watch.stop().then((err) => done.fail(err));
+        });
+    });
+
+    it('can listen for a move event', function(done) {
+      const waitTimeout = () => new Promise(resolve => {
+        setTimeout(resolve, TIMEOUT_PER_STEP);
+      });
+      const file = 'testing.file';
+      const srcInPath = path.resolve(workDir, 'test4', 'src');
+      const destInPath = path.resolve(workDir, 'test4', 'dest');
+      let eventListening = false;
+      let deleteEventFound = false;
+      let createEventFound = false;
+      let renameEventFound = false;
+      let extraEventFound = false;
+
+      function findEvent(element) {
+        if (!eventListening) {
+          return;
+        }
+        if (
+          element.action === nsfw.actions.RENAMED &&
+          element.directory === path.resolve(srcInPath) &&
+          element.oldFile === file &&
+          element.newDirectory === path.resolve(destInPath) &&
+          element.newFile === file
+        ) {
+          renameEventFound = true;
+        } else if (
+          element.action === nsfw.actions.DELETED &&
+          element.directory === path.resolve(srcInPath) &&
+          element.file === file
+        ) {
+          deleteEventFound = true;
+        } else if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === path.resolve(destInPath) &&
+          element.file === file
+        ) {
+          createEventFound = true;
+        } else {
+          if (element.file === file) {
+            extraEventFound = true;
+          }
+        }
+      }
+
+      let watch;
+
+      return nsfw(
+        workDir,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      )
+        .then(_w => {
+          watch = _w;
+          return watch.start();
+        })
+        .then(waitTimeout)
+        .then(() => {
+          fse.ensureFileSync(path.join(srcInPath, file));
+          fse.ensureDirSync(path.join(destInPath));
+        })
+        .then(waitTimeout)
+        .then(() => {
+          eventListening = true;
+          return fse.move(path.join(srcInPath, file), path.join(destInPath, file));
+        })
+        .then(waitTimeout)
+        .then(() => {
+          eventListening = false;
+        })
+        .then(() => {
+          if (isWin) {
+            expect(deleteEventFound && createEventFound).toBe(true);
+            expect(renameEventFound).toBe(false);
+          }
+          if (isLinux || isOsx) {
+            expect(renameEventFound).toBe(true);
+            expect(deleteEventFound || createEventFound).toBe(false);
+          }
           expect(extraEventFound).toBe(false);
           return watch.stop();
         })

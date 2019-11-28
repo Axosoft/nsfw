@@ -261,7 +261,9 @@ describe('Node Sentinel File Watcher', function() {
       const destFile = 'new-testing.file';
       const inPath = path.resolve(workDir, 'test4');
       let eventListening = false;
-      let eventFound = false;
+      let deleteEventFound = false;
+      let createEventFound = false;
+      let renameEventFound = false;
       let extraEventFound = false;
 
       function findEvent(element) {
@@ -275,7 +277,19 @@ describe('Node Sentinel File Watcher', function() {
           element.newDirectory === path.resolve(inPath) &&
           element.newFile === destFile
         ) {
-          eventFound = true;
+          renameEventFound = true;
+        } else if (
+          element.action === nsfw.actions.DELETED &&
+          element.directory === path.resolve(inPath) &&
+          element.file === srcFile
+        ) {
+          deleteEventFound = true;
+        } else if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === path.resolve(inPath) &&
+          element.file === destFile
+        ) {
+          createEventFound = true;
         } else {
           if (element.directory === path.resolve(inPath)) {
             extraEventFound = true;
@@ -308,7 +322,14 @@ describe('Node Sentinel File Watcher', function() {
           eventListening = false;
         })
         .then(() => {
-          expect(eventFound).toBe(true);
+          if (isOsx) {
+            // on osx it could be either a rename event or one delete and one create event
+            expect(deleteEventFound && createEventFound).not.toBe(renameEventFound);
+          }
+          if (isWin || isLinux) {
+            expect(renameEventFound).toBe(true);
+            expect(deleteEventFound || createEventFound).toBe(false);
+          }
           expect(extraEventFound).toBe(false);
           return watch.stop();
         })
@@ -387,11 +408,11 @@ describe('Node Sentinel File Watcher', function() {
           eventListening = false;
         })
         .then(() => {
-          if (isWin) {
+          if (isWin || isOsx) {
             expect(deleteEventFound && createEventFound).toBe(true);
             expect(renameEventFound).toBe(false);
           }
-          if (isLinux || isOsx) {
+          if (isLinux) {
             expect(renameEventFound).toBe(true);
             expect(deleteEventFound || createEventFound).toBe(false);
           }

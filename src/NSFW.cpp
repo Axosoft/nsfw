@@ -63,18 +63,18 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
     v8::Local<v8::Object> jsEvent = New<v8::Object>();
 
 
-    jsEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*events)[i]->type));
-    jsEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*events)[i]->fromDirectory).ToLocalChecked());
+    Nan::Set(jsEvent, Nan::New("action").ToLocalChecked(), Nan::New<v8::Number>((*events)[i]->type));
+    Nan::Set(jsEvent, Nan::New("directory").ToLocalChecked(), Nan::New((*events)[i]->fromDirectory).ToLocalChecked());
 
     if ((*events)[i]->type == RENAMED) {
-      jsEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*events)[i]->fromFile).ToLocalChecked());
-      jsEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*events)[i]->toDirectory).ToLocalChecked());
-      jsEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*events)[i]->toFile).ToLocalChecked());
+      Nan::Set(jsEvent, Nan::New("oldFile").ToLocalChecked(), Nan::New((*events)[i]->fromFile).ToLocalChecked());
+      Nan::Set(jsEvent, Nan::New("newDirectory").ToLocalChecked(), Nan::New((*events)[i]->toDirectory).ToLocalChecked());
+      Nan::Set(jsEvent, Nan::New("newFile").ToLocalChecked(), Nan::New((*events)[i]->toFile).ToLocalChecked());
     } else {
-      jsEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*events)[i]->fromFile).ToLocalChecked());
+      Nan::Set(jsEvent, Nan::New("file").ToLocalChecked(), Nan::New((*events)[i]->fromFile).ToLocalChecked());
     }
 
-    eventArray->Set(i, jsEvent);
+    Nan::Set(eventArray, i, jsEvent);
   }
 
   v8::Local<v8::Value> argv[] = {
@@ -193,7 +193,7 @@ NAN_METHOD(NSFW::Start) {
     return;
   }
 
-  New(nsfw->mPersistentHandle)->Set(New("nsfw").ToLocalChecked(), info.This());
+  Nan::Set(Nan::New(nsfw->mPersistentHandle), Nan::New("nsfw").ToLocalChecked(), info.This());
 
   AsyncQueueWorker(new StartWorker(nsfw, callback));
 }

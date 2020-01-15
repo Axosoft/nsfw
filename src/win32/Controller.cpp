@@ -63,5 +63,5 @@ bool Controller::hasErrored() {
 }
 
 bool Controller::isWatching() {
-  return mWatcher->isRunning();
+  return !hasErrored() && mWatcher->isRunning();
 }

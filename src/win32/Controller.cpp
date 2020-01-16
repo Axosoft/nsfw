@@ -1,6 +1,6 @@
 #include "../includes/win32/Controller.h"
 
-static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
+static std::wstring convertMultiByteToWideCharNTPath(const std::string &multiByte) {
   const int wlen = MultiByteToWideChar(CP_UTF8, 0, multiByte.data(), -1, 0, 0);
 
   if (wlen == 0) {
@@ -8,12 +8,35 @@ static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
   }
 
   std::wstring wideString;
-  wideString.resize(wlen-1);
+  wideString.resize(wlen - 1);
+
   int failureToResolveUTF8 = MultiByteToWideChar(CP_UTF8, 0, multiByte.data(), -1, &(wideString[0]), wlen);
   if (failureToResolveUTF8 == 0) {
     return std::wstring();
   }
-  return wideString;
+
+  if (wideString.rfind(L"\\\\?\\", 0) == 0 || wideString.rfind(L"\\??\\", 0) == 0) {
+    // We already have an NT Path
+    return wideString;
+  }
+
+  const ULONG widePathLength = GetFullPathNameW(wideString.c_str(), 0, nullptr, nullptr);
+  if (widePathLength == 0) {
+    return wideString;
+  }
+
+  std::wstring pathString;
+  pathString.resize(widePathLength - 1);
+
+  if (GetFullPathNameW(wideString.c_str(), widePathLength, &(pathString[0]), nullptr) != widePathLength - 1) {
+    // Failed to get full path name
+    return wideString;
+  }
+
+  // We return an NT Path to support paths > MAX_PATH
+  return pathString.rfind(L"\\\\", 0) == 0
+    ? pathString.replace(0, 2, L"\\\\?\\UNC\\")
+    : pathString.replace(0, 0, L"\\\\?\\");
 }
 
 HANDLE Controller::openDirectory(const std::wstring &path) {
@@ -34,7 +57,7 @@ HANDLE Controller::openDirectory(const std::wstring &path) {
 Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path)
   : mDirectoryHandle(INVALID_HANDLE_VALUE)
 {
-  auto widePath = convertMultiByteToWideChar(path);
+  auto widePath = convertMultiByteToWideCharNTPath(path);
   mDirectoryHandle = openDirectory(widePath);
 
   if (mDirectoryHandle == INVALID_HANDLE_VALUE) {

@@ -1,6 +1,27 @@
 #include "../includes/win32/Controller.h"
 
-static std::wstring convertMultiByteToWideCharNTPath(const std::string &multiByte) {
+static bool isNtPath(const std::wstring &path) {
+  return path.rfind(L"\\\\?\\", 0) == 0 || path.rfind(L"\\??\\", 0) == 0;
+}
+
+static std::wstring prefixWithNtPath(const std::wstring &path) {
+  const ULONG widePathLength = GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
+  if (widePathLength == 0) {
+    return path;
+  }
+
+  std::wstring ntPathString;
+  ntPathString.resize(widePathLength - 1);
+  if (GetFullPathNameW(path.c_str(), widePathLength, &(ntPathString[0]), nullptr) != widePathLength - 1) {
+    return path;
+  }
+
+  return ntPathString.rfind(L"\\\\", 0) == 0
+    ? ntPathString.replace(0, 2, L"\\\\?\\UNC\\")
+    : ntPathString.replace(0, 0, L"\\\\?\\");
+}
+
+static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
   const int wlen = MultiByteToWideChar(CP_UTF8, 0, multiByte.data(), -1, 0, 0);
 
   if (wlen == 0) {
@@ -15,28 +36,7 @@ static std::wstring convertMultiByteToWideCharNTPath(const std::string &multiByt
     return std::wstring();
   }
 
-  if (wideString.rfind(L"\\\\?\\", 0) == 0 || wideString.rfind(L"\\??\\", 0) == 0) {
-    // We already have an NT Path
-    return wideString;
-  }
-
-  const ULONG widePathLength = GetFullPathNameW(wideString.c_str(), 0, nullptr, nullptr);
-  if (widePathLength == 0) {
-    return wideString;
-  }
-
-  std::wstring pathString;
-  pathString.resize(widePathLength - 1);
-
-  if (GetFullPathNameW(wideString.c_str(), widePathLength, &(pathString[0]), nullptr) != widePathLength - 1) {
-    // Failed to get full path name
-    return wideString;
-  }
-
-  // We return an NT Path to support paths > MAX_PATH
-  return pathString.rfind(L"\\\\", 0) == 0
-    ? pathString.replace(0, 2, L"\\\\?\\UNC\\")
-    : pathString.replace(0, 0, L"\\\\?\\");
+  return wideString;
 }
 
 HANDLE Controller::openDirectory(const std::wstring &path) {
@@ -57,14 +57,19 @@ HANDLE Controller::openDirectory(const std::wstring &path) {
 Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path)
   : mDirectoryHandle(INVALID_HANDLE_VALUE)
 {
-  auto widePath = convertMultiByteToWideCharNTPath(path);
+  auto widePath = convertMultiByteToWideChar(path);
+  const bool isNt = isNtPath(widePath);
+  if (!isNt) {
+    // We convert to an NT Path to support paths > MAX_PATH
+    widePath = prefixWithNtPath(widePath);
+  }
   mDirectoryHandle = openDirectory(widePath);
 
   if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
     return;
   }
 
-  mWatcher.reset(new Watcher(queue, mDirectoryHandle, widePath));
+  mWatcher.reset(new Watcher(queue, mDirectoryHandle, widePath, isNt));
 }
 
 Controller::~Controller() {

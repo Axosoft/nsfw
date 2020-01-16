@@ -14,7 +14,7 @@
 class Watcher
 {
   public:
-    Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path);
+    Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path, bool pathWasNtPrefixed);
     ~Watcher();
 
     bool isRunning() const { return mRunning; }
@@ -42,6 +42,7 @@ class Watcher
     const std::wstring mPath;
     std::shared_ptr<EventQueue> mQueue;
     HANDLE mDirectoryHandle;
+    bool mPathWasNtPrefixed;
 
     std::vector<BYTE> mReadBuffer, mWriteBuffer;
     OVERLAPPED mOverlapped;

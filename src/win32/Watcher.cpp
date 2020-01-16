@@ -3,6 +3,15 @@
 #include <sstream>
 
 static
+void stripNTPrefix(std::wstring &path) {
+  if (path.rfind(L"\\\\?\\UNC\\", 0) != std::wstring::npos) {
+    path.replace(0, 7, L"\\");
+  } else if (path.rfind(L"\\\\?\\", 0) != std::wstring::npos) {
+    path.erase(0, 4);
+  }
+}
+
+static
 std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {
   LPWSTR nullTerminatedFileName = new WCHAR[length + 1]();
   memcpy(nullTerminatedFileName, cFileName, length);
@@ -24,6 +33,12 @@ std::string Watcher::getUTF8Directory(std::wstring path) {
   }
 
   std::wstring uft16DirectoryString = utf16DirectoryStream.str();
+  if (!mPathWasNtPrefixed) {
+    // If we were the ones that prefixed the path, we should strip it
+    // before returning it to the user
+    stripNTPrefix(uft16DirectoryString);
+  }
+  
   int utf8length = WideCharToMultiByte(
       CP_UTF8,
       0,
@@ -89,11 +104,12 @@ std::string getUTF8FileName(std::wstring path) {
   return utf8Directory;
 }
 
-Watcher::Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path)
+Watcher::Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path, bool pathWasNtPrefixed)
   : mRunning(false),
   mDirectoryHandle(dirHandle),
   mQueue(queue),
-  mPath(path)
+  mPath(path),
+  mPathWasNtPrefixed(pathWasNtPrefixed)
 {
   ZeroMemory(&mOverlapped, sizeof(OVERLAPPED));
   mOverlapped.hEvent = this;

@@ -8,7 +8,8 @@
     "eslint": "eslint js/src js/spec",
     "prepublish": "babel --presets es2015 -d ./lib/src ./js/src",
     "debug-test": "npm run eslint && npm run compile && node-debug --debug-brk jasmine-node lib/spec",
-    "test": "npm run eslint && npm run compile && jasmine-node lib/spec --verbose"
+    "test": "npm run eslint && npm run compile && jasmine-node lib/spec --verbose",
+    "install": "node-pre-gyp install --fallback-to-build"
   },
   "repository": {
     "type": "git",
@@ -24,6 +25,7 @@
     "index.d.ts",
     "lib",
     "src",
+    "Release",
     "includes",
     "binding.gyp"
   ],
@@ -32,7 +34,8 @@
     "fs-extra": "^7.0.0",
     "lodash.isinteger": "^4.0.4",
     "lodash.isundefined": "^3.0.1",
-    "nan": "^2.0.0"
+    "nan": "^2.0.0",
+    "node-pre-gyp": "0.6.x"
   },
   "devDependencies": {
     "babel-cli": "^6.5.1",
@@ -40,6 +43,12 @@
     "eslint": "^2.2.0",
     "executive": "^1.6.3",
     "jasmine-node": "^2.0.1"
+  },
+  "binary": {
+    "module_name": "nsfw",
+    "module_path": "./Release/{node_abi}-{platform}-{arch}/",
+    "package_name": "{module_name}-v{version}-{node_abi}-{platform}-{arch}.tar.gz",
+    "host": "https://www.npmjs.com/package/nsfw"
   },
   "keywords": [
     "FileWatcher",

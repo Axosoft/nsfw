@@ -6,7 +6,7 @@
   "scripts": {
     "compile": "babel --sourceMaps --presets es2015 -d ./lib/spec ./js/spec && babel --sourceMaps --presets es2015 -d ./lib/src ./js/src",
     "eslint": "eslint js/src js/spec",
-    "prepublish": "babel --presets es2015 -d ./lib/src ./js/src",
+    "install": "babel --presets es2015 -d ./lib/src ./js/src",
     "debug-test": "npm run eslint && npm run compile && node-debug --debug-brk jasmine-node lib/spec",
     "test": "npm run eslint && npm run compile && jasmine-node lib/spec --verbose"
   },

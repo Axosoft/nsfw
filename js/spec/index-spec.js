@@ -1,51 +1,49 @@
-const nsfw = require('../src/');
-const path = require('path');
-const fse = require('fs-extra');
+const assert = require('assert');
 const exec = require('executive');
+const fse = require('fs-extra');
+const path = require('path');
 const { promisify } = require('util');
 
-jasmine.DEFAULT_TIMEOUT_INTERVAL = 120000;
+const nsfw = require('../src/');
 
 const DEBOUNCE = 1000;
 const TIMEOUT_PER_STEP = 3000;
 
-const timeout = promisify(setTimeout);
+const sleep = promisify(setTimeout);
 
 describe('Node Sentinel File Watcher', function() {
+  this.timeout(120000);
+
   const workDir = path.resolve('./mockfs');
 
-  beforeEach(function(done) {
-    function makeDir(identifier) {
-      return fse.mkdir(path.join(workDir, 'test' + identifier))
-        .then(() => fse.mkdir(path.join(workDir, 'test' + identifier, 'folder' + identifier)))
-        .then(() => fse.open(path.join(workDir, 'test' + identifier, 'testing' + identifier +'.file'), 'w'))
-        .then(fd => {
-          return fse.write(fd, 'testing')
-            .then(() => fd);
-        })
-        .then(fd => fse.close(fd));
+  beforeEach(async function() {
+    async function makeDir(identifier) {
+      await fse.mkdir(path.join(workDir, 'test' + identifier));
+      await fse.mkdir(path.join(workDir, 'test' + identifier, 'folder' + identifier));
+      const fd = await fse.open(path.join(workDir, 'test' + identifier, 'testing' + identifier +'.file'), 'w');
+      await fse.write(fd, 'testing');
+      await fse.close(fd);
     }
-    // create a file System
-    return fse.stat(workDir)
-      .then(() => fse.remove(workDir), () => {})
-      .then(() => fse.mkdir(workDir))
-      .then(() => {
-        const promises = [];
-        for (let i = 0; i < 10; ++i) {
-          promises.push(makeDir(i));
-        }
-        return Promise.all(promises);
-      })
-      .then(done);
+
+    try {
+      await fse.remove(workDir);
+    } catch (e) {}
+
+    await fse.mkdir(workDir);
+    const promises = [];
+    for (let i = 0; i < 10; ++i) {
+      promises.push(makeDir(i));
+    }
+
+    await Promise.all(promises);
   });
 
-  afterEach(function(done) {
-    return fse.remove(workDir)
-      .then(done);
+  afterEach(function() {
+    return fse.remove(workDir);
   });
 
   describe('Basic', function() {
-    it('can watch a single file', function(done) {
+    it('can watch a single file', async function() {
       const file = 'testing1.file';
       const inPath = path.resolve(workDir, 'test1');
       const filePath = path.join(inPath, file);
@@ -75,51 +73,32 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         filePath,
         events => events.forEach(findEvents),
         { debounceMS: 100 }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          const fd = fse.openSync(filePath, 'w');
-          fse.writeSync(fd, 'Bean bag video games at noon.');
-          return fse.close(fd);
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.remove(filePath))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          const fd = fse.openSync(filePath, 'w');
-          fse.writeSync(fd, 'His watch has ended.');
-          return fse.close(fd);
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => watch.stop())
-        .then(() => {
-          expect(changeEvents).toBeGreaterThan(0);
-          expect(createEvents).toBe(1);
-          expect(deleteEvents).toBe(1);
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(filePath, 'Bean bag video games at noon.');
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.remove(filePath);
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(filePath, 'His watch has ended.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(changeEvents > 0);
+        assert.equal(createEvents, 1);
+        assert.equal(deleteEvents, 1);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
-    it('can listen for a create event', function(done) {
+    it('can listen for a create event', async function() {
       const file = 'another_test.file';
       const inPath = path.resolve(workDir, 'test2', 'folder2');
       let eventFound = false;
@@ -134,37 +113,26 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.open(path.join(inPath, file), 'w'))
-        .then(fd => {
-          return fse.write(fd, 'Peanuts, on occasion, rain from the skies.').then(() => fd);
-        })
-        .then(fd => fse.close(fd))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(eventFound).toBe(true);
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(path.join(inPath, file), 'Peanuts, on occasion, rain from the skies.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(eventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
-    it('can listen for a delete event', function(done) {
+    it('can listen for a delete event', async function() {
       const file = 'testing3.file';
       const inPath = path.resolve(workDir, 'test3');
       let eventFound = false;
@@ -179,33 +147,26 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.remove(path.join(inPath, file)))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(eventFound).toBe(true);
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.remove(path.join(inPath, file));
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(eventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
-    it('can listen for a modify event', function(done) {
+    it('can listen for a modify event', async function() {
       const file = 'testing0.file';
       const inPath = path.resolve(workDir, 'test0');
       let eventFound = false;
@@ -220,37 +181,26 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.open(path.join(inPath, file), 'w'))
-        .then(fd => {
-          return fse.write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
-        })
-        .then(fd => fse.close(fd))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(eventFound).toBe(true);
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(path.join(inPath, file), 'At times, sunflower seeds are all that is life.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert(eventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
-    it('can run multiple watchers at once', function(done) {
+    it('can run multiple watchers at once', async function() {
       const dirA = path.resolve(workDir, 'test0');
       const fileA = 'testing1.file';
       const dirB = path.resolve(workDir, 'test1');
@@ -269,102 +219,71 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watchA;
-      let watchB;
-
-      return nsfw(
+      let watchA = await nsfw(
         dirA,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watchA = _w;
-          return watchA.start();
-        })
-        .then(() => nsfw(
-          dirB,
-          events => events.forEach(findEvent),
-          { debounceMS: DEBOUNCE })
-        .then(_w => {
-          watchB = _w;
-          return watchB.start();
-        }))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.open(path.join(dirA, fileA), 'w'))
-        .then(fd => new Promise(resolve => {
-          setTimeout(() => resolve(fd), TIMEOUT_PER_STEP);
-        }))
-        .then(fd => {
-          return fse.write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
-        })
-        .then(fd => fse.close(fd))
-        .then(() => fse.open(path.join(dirB, fileB), 'w'))
-        .then(fd => new Promise(resolve => {
-          setTimeout(() => resolve(fd), TIMEOUT_PER_STEP);
-        }))
-        .then(fd => {
-          return fse.write(fd, 'At times, sunflower seeds are all that is life.').then(() => fd);
-        })
-        .then(fd => fse.close(fd))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(events).toBe(2);
-          return watchA.stop();
-        })
-        .then(() => watchB.stop())
-        .then(done, () =>
-          watchA.stop()
-            .then(() => watchB.stop())
-            .then((err) => done.fail(err)));
+      );
+      let watchB = await nsfw(
+        dirB,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      );
+
+      try {
+        await Promise.all([watchA.start(), watchB.start()]);
+        await sleep(TIMEOUT_PER_STEP);
+        await Promise.all([
+          fse.writeFile(path.join(dirA, fileA), 'At times, sunflower seeds are all that is life.'),
+          fse.writeFile(path.join(dirB, fileB), 'At times, sunflower seeds are all that is life.')
+        ]);
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.equal(events, 2);
+      } finally {
+        await Promise.all([watchA.stop(), watchB.stop()]);
+        watchA = null;
+        watchB = null;
+      }
     });
 
-    if (process.platform) {
-      it('will properly track the movement of watched directories across watched directories', function(done) {
-        let watch;
+    it('will properly track the movement of watched directories across watched directories', async function() {
+      const performRenameProcedure = async (number) => {
+        await fse.mkdir(path.join(workDir, `test${number}`, 'sneaky-folder'))
+        await fse.move(
+          path.join(workDir, `test${number}`, `folder${number}`),
+          path.join(workDir, `test${number + 1}`, 'bad-folder')
+        );
+        await fse.move(
+          path.join(workDir, `test${number}`, 'sneaky-folder'),
+          path.join(workDir, `test${number}`, 'bad-folder')
+        );
+        await fse.remove(path.join(workDir, `test${number}`));
+        await fse.remove(path.join(workDir, `test${number + 1}`));
+      };
 
-        const performRenameProcedure = number =>
-          fse.mkdir(path.join(workDir, `test${number}`, 'sneaky-folder'))
-            .then(() => fse.move(
-              path.join(workDir, `test${number}`, `folder${number}`),
-              path.join(workDir, `test${number + 1}`, 'bad-folder')
-            ))
-            .then(() => fse.move(
-              path.join(workDir, `test${number}`, 'sneaky-folder'),
-              path.join(workDir, `test${number}`, 'bad-folder')
-            ))
-            .then(() => fse.remove(path.join(workDir, `test${number}`)))
-            .then(() => fse.remove(path.join(workDir, `test${number + 1}`)));
+      let watch = await nsfw(workDir, () => {}, { debounceMS: DEBOUNCE });
 
-        return nsfw(workDir, () => {}, { debounceMS: DEBOUNCE })
-          .then(_w => {
-            watch = _w;
-            return watch.start();
-          })
-          .then(() => new Promise(resolve => {
-            setTimeout(resolve, TIMEOUT_PER_STEP);
-          }))
-          .then(() => Promise.all([
-            performRenameProcedure(0),
-            performRenameProcedure(2),
-            performRenameProcedure(4),
-            performRenameProcedure(6),
-            performRenameProcedure(8)
-          ]))
-          .then(() => new Promise(resolve => {
-            setTimeout(resolve, TIMEOUT_PER_STEP);
-          }))
-          .then(() => watch.stop())
-          .then(done, () => watch.stop().then((err) => done.fail(err)));
-      });
-    }
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await Promise.all([
+          performRenameProcedure(0),
+          performRenameProcedure(2),
+          performRenameProcedure(4),
+          performRenameProcedure(6),
+          performRenameProcedure(8)
+        ]);
+        await sleep(TIMEOUT_PER_STEP);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
   });
 
   describe('Recursive', function() {
-    it('can listen for the creation of a deeply nested file', function(done) {
+    it('can listen for the creation of a deeply nested file', async function() {
       const paths = ['d', 'e', 'e', 'p', 'f', 'o', 'l', 'd', 'e', 'r'];
       const file = 'a_file.txt';
       let foundFileCreateEvent = false;
@@ -379,45 +298,33 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      let directory = workDir;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          return paths.reduce((chain, dir) => {
-            directory = path.join(directory, dir);
-            const nextDirectory = directory;
-            return chain
-              .then(() => fse.mkdir(nextDirectory))
-              .then(() => timeout(60));
-          }, Promise.resolve());
-        })
-        .then(() => fse.open(path.join(directory, file), 'w'))
-        .then(fd => fse.close(fd))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(foundFileCreateEvent).toBe(true);
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        let directory = workDir;
+        for (const dir of paths) {
+          directory = path.join(directory, dir);
+          await fse.mkdir(directory);
+          await sleep(60);
+        }
+        const fd = await fse.open(path.join(directory, file), 'w');
+        await fse.close(fd);
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(foundFileCreateEvent);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
-    it('can listen for the destruction of a directory and its subtree', function(done) {
+    it('can listen for the destruction of a directory and its subtree', async function() {
       const inPath = path.resolve(workDir, 'test4');
       let deletionCount = 0;
 
@@ -436,173 +343,152 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.remove(inPath))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(deletionCount).toBeGreaterThan(2);
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.remove(inPath);
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(deletionCount > 2);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
-    it('does not loop endlessly when watching directories with recursive symlinks', (done) => {
-      fse.mkdirSync(path.join(workDir, 'test'));
-      fse.symlinkSync(path.join(workDir, 'test'), path.join(workDir, 'test', 'link'));
+    it('does not loop endlessly when watching directories with recursive symlinks', async function () {
+      await fse.mkdir(path.join(workDir, 'test'));
+      await fse.symlink(path.join(workDir, 'test'), path.join(workDir, 'test', 'link'));
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         () => {},
         { debounceMS: DEBOUNCE, errorCallback() {} }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => {
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await watch.stop();
+      } finally {
+        watch = null;
+      }
     });
   });
 
   describe('Errors', function() {
-    it('can gracefully recover when the watch folder is deleted', function(done) {
+    it('can gracefully recover when the watch folder is deleted', async function() {
       const inPath = path.join(workDir, 'test4');
       let erroredOut = false;
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         inPath,
         () => {},
         { debounceMS: DEBOUNCE, errorCallback() { erroredOut = true; } }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.remove(inPath))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(erroredOut).toBe(true);
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.remove(inPath);
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(erroredOut);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
   });
 
   describe('Stress', function() {
     const stressRepoPath = path.resolve('nsfw-stress-test');
 
-    beforeEach(function(done) {
-      return exec('git clone https://github.com/implausible/nsfw-stress-test')
-        .then(done);
+    beforeEach(function() {
+      return exec('git clone https://github.com/implausible/nsfw-stress-test');
     });
 
-    it('does not segfault under stress', function(done) {
+    it('does not segfault under stress', async function() {
       let count = 0;
-      let watch;
       let errorRestart = Promise.resolve();
-
-      return nsfw(
+      let watch = await nsfw(
         stressRepoPath,
         () => { count++; },
-        { errorCallback() { errorRestart = watch.stop().then(watch.start); } })
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => fse.remove(path.join(stressRepoPath, 'folder')))
-        .then(() => errorRestart)
-        .then(() => {
-          expect(count).toBeGreaterThan(0);
-          return watch.stop();
-        })
-        .then(() => fse.remove(stressRepoPath))
-        .then(() => fse.mkdir(stressRepoPath))
-        .then(() => nsfw(
+        {
+          errorCallback() {
+            errorRestart = errorRestart.then(async () => {
+              await watch.stop();
+              await watch.start();
+            });
+          }
+        }
+      );
+
+      try {
+        await watch.start();
+        await fse.remove(path.join(stressRepoPath, 'folder'));
+        await errorRestart;
+        assert.ok(count > 0);
+
+        await watch.stop();
+        await fse.remove(stressRepoPath);
+        await fse.mkdir(stressRepoPath);
+
+        count = 0;
+        errorRestart = Promise.resolve();
+        watch = await nsfw(
           stressRepoPath,
           () => { count++; },
-          { errorCallback() { errorRestart = watch.stop().then(watch.start); } }))
-        .then(_w => {
-          watch = _w;
-          count = 0;
-          errorRestart = Promise.resolve();
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => setTimeout(resolve, TIMEOUT_PER_STEP)))
-        .then(() =>
-          exec('git clone https://github.com/implausible/nsfw-stress-test ' + path.join('nsfw-stress-test', 'test')))
-        .then(() => fse.stat(path.join(stressRepoPath, 'test')))
-        .then(() => fse.remove(path.join(stressRepoPath, 'test')))
-        .then(() => errorRestart)
-        .then(() => {
-          expect(count).toBeGreaterThan(0);
-          count = 0;
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
-    });
+          {
+            errorCallback() {
+              errorRestart = errorRestart.then(async () => {
+                await watch.stop();
+                await watch.start();
+              });
+            }
+          }
+        );
 
-    it('creates and destroys many watchers', function(done) {
-      let watcher = null;
-      let promiseChain = Promise.resolve();
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await exec(
+          `git clone https://github.com/implausible/nsfw-stress-test ${path.join('nsfw-stress-test', 'test')}`
+        );
+        await fse.stat(path.join(stressRepoPath, 'test'));
+        await fse.remove(path.join(stressRepoPath, 'test'));
+        await errorRestart;
 
-      for (let i = 0; i < 100; i++) {
-        promiseChain = promiseChain
-          .then(() => nsfw(stressRepoPath, () => {}))
-          .then(w => {
-            watcher = w;
-            return watcher.start();
-          })
-          .then(() => {
-            return watcher.stop();
-          });
+        assert.ok(count > 0);
+      } finally {
+        await watch.stop();
+        watch = null;
       }
-
-      promiseChain.then(done, err => done.fail(err));
     });
 
-    afterEach(function(done) {
-      return fse.remove(stressRepoPath)
-        .then(done);
+    it('creates and destroys many watchers', async function() {
+      for (let i = 0; i < 100; i++) {
+        const watcher = await nsfw(stressRepoPath, () => {});
+        await watcher.start();
+        await watcher.stop();
+      }
+    });
+
+    afterEach(function() {
+      return fse.remove(stressRepoPath);
     });
   });
 
   describe('Unicode support', function() {
     const watchPath = path.join(workDir, 'は');
-    beforeEach(function(done) {
-      return fse.mkdir(watchPath)
-        .then(done);
+    beforeEach(function() {
+      return fse.mkdir(watchPath);
     });
 
-    it('supports watching unicode directories', function(done) {
+    it('supports watching unicode directories', async function() {
       const file = 'unicoded_right_in_the.talker';
       let eventFound = false;
 
@@ -616,34 +502,33 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => fse.open(path.join(watchPath, file), 'w'))
-        .then(fd => {
-          return fse.write(fd, 'Unicode though.').then(() => fd);
-        })
-        .then(fd => fse.close(fd))
-        .then(() => new Promise(resolve => {
-          setTimeout(resolve, TIMEOUT_PER_STEP);
-        }))
-        .then(() => {
-          expect(eventFound).toBe(true);
-          return watch.stop();
-        })
-        .then(done, () =>
-          watch.stop().then((err) => done.fail(err)));
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(path.join(watchPath, file), 'Unicode though.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(eventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+  });
+
+  describe('Garbage collection', function() {
+    it('can garbage collect all instances', async function () {
+      this.timeout(60000);
+      while (nsfw.getAllocatedInstanceCount() > 0) {
+        global.gc();
+        await sleep(0);
+      }
     });
   });
 });

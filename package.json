@@ -32,7 +32,7 @@
     "fs-extra": "^7.0.0",
     "lodash.isinteger": "^4.0.4",
     "lodash.isundefined": "^3.0.1",
-    "nan": "^2.0.0"
+    "node-addon-api": "*"
   },
   "devDependencies": {
     "babel-cli": "^6.5.1",

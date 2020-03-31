@@ -1,4 +1,4 @@
-const { NSFW } = require('../../build/Release/nsfw.node');
+const NSFW = require('../../build/Release/nsfw.node');
 const fse = require('fs-extra');
 const path = require('path');
 const _isInteger = require('lodash.isinteger');
@@ -13,22 +13,9 @@ function nsfw() {
 
   const _nsfw = new NSFW(...arguments);
 
-  this.start = function start() {
-    return new Promise((resolve, reject) => {
-      _nsfw.start(err => {
-        if (err) {
-          reject(err);
-        }
-        resolve();
-      });
-    });
-  };
+  this.start = () => _nsfw.start();
 
-  this.stop = function stop() {
-    return new Promise(resolve => {
-      _nsfw.stop(resolve);
-    });
-  };
+  this.stop = () => _nsfw.stop();
 }
 
 nsfw.actions = {
@@ -64,7 +51,7 @@ _private.buildNSFW = function buildNSFW(watchPath, eventCallback, options) {
   return fse.stat(watchPath)
     .then(stats => {
       if (stats.isDirectory()) {
-        return new nsfw(debounceMS, watchPath, eventCallback, errorCallback);
+        return new nsfw(watchPath, eventCallback, { debounceMS, errorCallback });
       } else if (stats.isFile()) {
         return new _private.nsfwFilePoller(debounceMS, watchPath, eventCallback);
       } else {
@@ -119,5 +106,7 @@ _private.nsfwFilePoller = function(debounceMS, watchPath, eventCallback) {
       .then(() => clearInterval(filePollerInterval));
   };
 };
+
+nsfw.getAllocatedInstanceCount = NSFW.getAllocatedInstanceCount;
 
 module.exports = nsfw;

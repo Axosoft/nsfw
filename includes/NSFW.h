@@ -1,69 +1,70 @@
 #ifndef NSFW_H
 #define NSFW_H
 
-#include "Queue.h"
-#include "NativeInterface.h"
-#include <nan.h>
-#include <uv.h>
-#include <vector>
 #include <atomic>
+#include <chrono>
+#include <memory>
+#include <napi.h>
+#include <thread>
+#include <vector>
 
-using namespace Nan;
+#include "./Queue.h"
+#include "./NativeInterface.h"
 
-class NSFW : public ObjectWrap {
-public:
-  static NAN_MODULE_INIT(Init);
-
-  static void fireErrorCallback(uv_async_t *handle);
-  static void fireEventCallback(uv_async_t *handle);
-  static void pollForEvents(void *arg);
-
-  Persistent<v8::Object> mPersistentHandle;
-private:
-  NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback);
-  ~NSFW();
-
-  uint32_t mDebounceMS;
-  uv_async_t mErrorCallbackAsync;
-  uv_async_t mEventCallbackAsync;
-  Callback *mErrorCallback;
-  Callback *mEventCallback;
-  NativeInterface *mInterface;
-  uv_mutex_t mInterfaceLock;
-  bool mInterfaceLockValid;
-  std::string mPath;
-  uv_thread_t mPollThread;
-  std::atomic<bool> mRunning;
-  std::shared_ptr<EventQueue> mQueue;
-
-  struct ErrorBaton {
-    NSFW *nsfw;
-    std::string error;
-  };
-
-  static NAN_METHOD(JSNew);
-
-  static NAN_METHOD(Start);
-  class StartWorker : public AsyncWorker {
-  public:
-    StartWorker(NSFW *nsfw, Callback *callback);
-    void Execute();
-    void HandleOKCallback();
+class NSFW : public Napi::ObjectWrap<NSFW> {
   private:
-    NSFW *mNSFW;
-  };
+    static Napi::FunctionReference constructor;
+    static std::size_t instanceCount;
+    static bool gcEnabled;
 
-  static NAN_METHOD(Stop);
-  class StopWorker : public AsyncWorker {
+    std::unique_ptr<NativeInterface> mInterface;
+    Napi::ThreadSafeFunction mEventCallback;
+    Napi::ThreadSafeFunction mErrorCallback;
+    std::mutex mInterfaceLock;
+    std::string mPath;
+    std::shared_ptr<EventQueue> mQueue;
+    std::thread mPollThread;
+    std::atomic<bool> mRunning;
+    uint32_t mDebounceMS;
+
+    class StartWorker: public Napi::AsyncWorker {
+      public:
+        StartWorker(Napi::Env env, NSFW *nsfw);
+        void Execute();
+        void OnOK();
+        Napi::Promise RunJob();
+
+      private:
+        Napi::Promise::Deferred mDeferred;
+        bool mDidStartWatching;
+        NSFW *mNSFW;
+        bool mShouldUnref;
+    };
+
+    Napi::Value Start(const Napi::CallbackInfo &info);
+
+    class StopWorker: public Napi::AsyncWorker {
+      public:
+        StopWorker(Napi::Env env, NSFW *nsfw);
+        void Execute();
+        void OnOK();
+        Napi::Promise RunJob();
+
+      private:
+        Napi::Promise::Deferred mDeferred;
+        bool mDidStopWatching;
+        NSFW *mNSFW;
+    };
+
+    Napi::Value Stop(const Napi::CallbackInfo &info);
+
   public:
-    StopWorker(NSFW *nsfw, Callback *callback);
-    void Execute();
-    void HandleOKCallback();
-  private:
-    NSFW *mNSFW;
-  };
+    static Napi::Object Init(Napi::Env, Napi::Object exports);
+    static Napi::Value InstanceCount(const Napi::CallbackInfo &info);
+    void pollForEvents();
 
-  static Persistent<v8::Function> constructor;
+    NSFW(const Napi::CallbackInfo &info);
+    ~NSFW();
 };
 
 #endif

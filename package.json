@@ -2,12 +2,10 @@
   "name": "nsfw",
   "version": "1.2.7",
   "description": "A simple file watcher for Node",
-  "main": "lib/src/index.js",
+  "main": "js/src/index.js",
   "scripts": {
-    "compile": "babel --sourceMaps --presets es2015 -d ./lib/spec ./js/spec && babel --sourceMaps --presets es2015 -d ./lib/src ./js/src",
     "lint": "eslint js/src js/spec",
-    "prepublish": "babel --presets es2015 -d ./lib/src ./js/src",
-    "test": "yarn lint && yarn compile && mocha --expose-gc lib/spec"
+    "test": "yarn lint && mocha --expose-gc js/spec"
   },
   "repository": {
     "type": "git",
@@ -21,7 +19,7 @@
   },
   "files": [
     "index.d.ts",
-    "lib",
+    "js/src",
     "src",
     "includes",
     "binding.gyp"
@@ -31,8 +29,6 @@
     "node-addon-api": "*"
   },
   "devDependencies": {
-    "babel-cli": "^6.5.1",
-    "babel-preset-es2015": "^6.5.0",
     "eslint": "^6.8.0",
     "executive": "^1.6.3",
     "fs-extra": "^7.0.0",

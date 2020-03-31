@@ -27,7 +27,7 @@ describe('Node Sentinel File Watcher', function() {
 
     try {
       await fse.remove(workDir);
-    } catch (e) {}
+    } catch (e) {/* we don't care about this failure */}
 
     await fse.mkdir(workDir);
     const promises = [];
@@ -249,7 +249,7 @@ describe('Node Sentinel File Watcher', function() {
 
     it('will properly track the movement of watched directories across watched directories', async function() {
       const performRenameProcedure = async (number) => {
-        await fse.mkdir(path.join(workDir, `test${number}`, 'sneaky-folder'))
+        await fse.mkdir(path.join(workDir, `test${number}`, 'sneaky-folder'));
         await fse.move(
           path.join(workDir, `test${number}`, `folder${number}`),
           path.join(workDir, `test${number + 1}`, 'bad-folder')

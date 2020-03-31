@@ -5,10 +5,9 @@
   "main": "lib/src/index.js",
   "scripts": {
     "compile": "babel --sourceMaps --presets es2015 -d ./lib/spec ./js/spec && babel --sourceMaps --presets es2015 -d ./lib/src ./js/src",
-    "eslint": "eslint js/src js/spec",
+    "lint": "eslint js/src js/spec",
     "prepublish": "babel --presets es2015 -d ./lib/src ./js/src",
-    "debug-test": "npm run eslint && npm run compile && node-debug --debug-brk jasmine-node lib/spec",
-    "test": "npm run compile && mocha --expose-gc lib/spec"
+    "test": "yarn lint && yarn compile && mocha --expose-gc lib/spec"
   },
   "repository": {
     "type": "git",
@@ -29,16 +28,14 @@
   ],
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
-    "fs-extra": "^7.0.0",
-    "lodash.isinteger": "^4.0.4",
-    "lodash.isundefined": "^3.0.1",
     "node-addon-api": "*"
   },
   "devDependencies": {
     "babel-cli": "^6.5.1",
     "babel-preset-es2015": "^6.5.0",
-    "eslint": "^2.2.0",
+    "eslint": "^6.8.0",
     "executive": "^1.6.3",
+    "fs-extra": "^7.0.0",
     "mocha": "^7.1.1"
   },
   "keywords": [

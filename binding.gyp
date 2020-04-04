@@ -5,22 +5,27 @@
         "sources": [
             "src/NSFW.cpp",
             "src/Queue.cpp",
-            "src/NativeInterface.cpp",
-            "includes/NSFW.h",
-            "includes/Queue.h",
-            "includes/NativeInterface.h"
+            "src/NativeInterface.cpp"
         ],
         "include_dirs": [
-            "<!(node -e \"require('nan')\")",
-            "includes"
+            "includes",
+            "<!@(node -p \"require('node-addon-api').include\")"
         ],
+        "cflags!": ["-fno-exceptions"],
+        "cflags_cc!": ["-fno-exceptions"],
+        "xcode_settings": {
+            "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
+            "CLANG_CXX_LIBRARY": "libc++",
+            "MACOSX_DEPLOYMENT_TARGET": "10.7",
+        },
+        "msvs_settings": {
+            "VCCLCompilerTool": { "ExceptionHandling": 1 },
+        },
         "conditions": [
             ["OS=='win'", {
                 "sources": [
                     "src/win32/Controller.cpp",
-                    "src/win32/Watcher.cpp",
-                    "includes/win32/Controller.h",
-                    "includes/win32/Watcher.h"
+                    "src/win32/Watcher.cpp"
                 ],
                 "msvs_settings": {
                     "VCCLCompilerTool": {
@@ -32,14 +37,14 @@
                 }
             }],
             ["OS=='mac'", {
+                "cflags+": ["-fvisibility-hidden"],
                 "sources": [
                     "src/osx/RunLoop.cpp",
-                    "src/osx/FSEventsService.cpp",
-                    "includes/osx/RunLoop.h",
-                    "includes/osx/FSEventsService.h"
+                    "src/osx/FSEventsService.cpp"
                 ],
                 "xcode_settings": {
-                    'MACOSX_DEPLOYMENT_TARGET': '10.7',
+                    "GCC_SYMBOLS_PRIVATE_EXTERN": "YES", # -fvisibility=hidden
+                    "MACOSX_DEPLOYMENT_TARGET": "10.7",
                     "OTHER_CFLAGS": [
                         "-std=c++11",
                         "-stdlib=libc++"
@@ -60,10 +65,7 @@
                 "sources": [
                     "src/linux/InotifyEventLoop.cpp",
                     "src/linux/InotifyTree.cpp",
-                    "src/linux/InotifyService.cpp",
-                    "includes/linux/InotifyEventLoop.h",
-                    "includes/linux/InotifyTree.h",
-                    "includes/linux/InotifyService.h"
+                    "src/linux/InotifyService.cpp"
                 ],
                 "cflags": [
                     "-Wno-unknown-pragmas",

@@ -1,34 +1,91 @@
-const { NSFW } = require('../../build/Release/nsfw.node');
-const fse = require('fs-extra');
+const { promises: fs } = require('fs');
 const path = require('path');
-const _isInteger = require('lodash.isinteger');
-const _isUndefined = require('lodash.isundefined');
 
-const _private = {};
+const NSFW = require('../../build/Release/nsfw.node');
 
-function nsfw() {
-  if (!(this instanceof nsfw)) {
-    return _private.buildNSFW(...arguments);
+function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
+  const { CREATED, DELETED, MODIFIED } = nsfw.actions;
+  const directory = path.dirname(watchPath);
+  const file = path.basename(watchPath);
+
+  let fileStatus;
+  let filePollerInterval;
+
+  const getStatus = async () => {
+    try {
+      const status = await fs.stat(watchPath);
+      if (fileStatus === null) {
+        fileStatus = status;
+        eventCallback([{ action: CREATED, directory, file }]);
+      } else if (
+        status.mtime - fileStatus.mtime !== 0 ||
+        status.ctime - fileStatus.ctime !== 0
+      ) {
+        fileStatus = status;
+        eventCallback([{ action: MODIFIED, directory, file }]);
+      }
+    } catch (e) {
+      if (fileStatus !== null) {
+        fileStatus = null;
+        eventCallback([{ action: DELETED, directory, file }]);
+      }
+    }
+  };
+
+  this.start = async () => {
+    try {
+      fileStatus = await fs.stat(watchPath);
+    } catch (e) {
+      fileStatus = null;
+    }
+
+    filePollerInterval = setInterval(getStatus, debounceMS);
+  };
+
+  this.stop = async () => {
+    clearInterval(filePollerInterval);
+  };
+}
+
+
+const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCallback: _errorCallback } = {}) => {
+  if (Number.isInteger(debounceMS)) {
+    if (debounceMS < 1) {
+      throw new Error('Minimum debounce is 1ms.');
+    }
+  } else {
+    throw new Error('debounceMS must be an integer.');
   }
 
-  const _nsfw = new NSFW(...arguments);
+  const errorCallback = _errorCallback || ((nsfwError) => { throw nsfwError; });
 
-  this.start = function start() {
-    return new Promise((resolve, reject) => {
-      _nsfw.start(err => {
-        if (err) {
-          reject(err);
-        }
-        resolve();
-      });
-    });
-  };
+  if (!path.isAbsolute(watchPath)) {
+    throw new Error('Path to watch must be an absolute path.');
+  }
 
-  this.stop = function stop() {
-    return new Promise(resolve => {
-      _nsfw.stop(resolve);
-    });
-  };
+  try {
+    const stats = await fs.stat(watchPath);
+    if (stats.isDirectory()) {
+      return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback });
+    } else if (stats.isFile()) {
+      return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
+    } else {
+      throw new Error('Path must be a valid path to a file or a directory');
+    }
+  } catch (e) {
+    throw new Error('Path must be a valid path to a file or a directory.');
+  }
+};
+
+function nsfw(watchPath, eventCallback, options) {
+  if (!(this instanceof nsfw)) {
+    return buildNSFW(watchPath, eventCallback, options).then(implementation => new nsfw(implementation));
+  }
+
+  const implementation = watchPath;
+
+  this.start = () => implementation.start();
+  this.stop = () => implementation.stop();
 }
 
 nsfw.actions = {
@@ -38,86 +95,6 @@ nsfw.actions = {
   RENAMED: 3
 };
 
-_private.buildNSFW = function buildNSFW(watchPath, eventCallback, options) {
-  let { debounceMS, errorCallback } = options || {};
-
-  if (_isInteger(debounceMS)) {
-    if (debounceMS < 1) {
-      throw new Error('Minimum debounce is 1ms.');
-    }
-  } else if (_isUndefined(debounceMS)) {
-    debounceMS = 500;
-  } else {
-    throw new Error('Option debounceMS must be a positive integer greater than 1.');
-  }
-
-  if (_isUndefined(errorCallback)) {
-    errorCallback = function(nsfwError) {
-      throw nsfwError;
-    };
-  }
-
-  if (!path.isAbsolute(watchPath)) {
-    throw new Error('Path to watch must be an absolute path.');
-  }
-
-  return fse.stat(watchPath)
-    .then(stats => {
-      if (stats.isDirectory()) {
-        return new nsfw(debounceMS, watchPath, eventCallback, errorCallback);
-      } else if (stats.isFile()) {
-        return new _private.nsfwFilePoller(debounceMS, watchPath, eventCallback);
-      } else {
-        throw new Error('Path must be a valid path to a file or a directory.');
-      }
-    }, () => {
-      throw new Error('Path must be a valid path to a file or a directory.');
-    });
-};
-
-
-
-_private.nsfwFilePoller = function(debounceMS, watchPath, eventCallback) {
-  const { CREATED, DELETED, MODIFIED } = nsfw.actions;
-  const directory = path.dirname(watchPath);
-  const file = path.basename(watchPath);
-
-  let fileStatus;
-  let filePollerInterval;
-
-  function getStatus() {
-    return fse.stat(watchPath)
-      .then(status => {
-        if (fileStatus === null) {
-          fileStatus = status;
-          eventCallback([{ action: CREATED, directory, file }]);
-        } else if (
-          status.mtime - fileStatus.mtime !== 0 ||
-          status.ctime - fileStatus.ctime !== 0
-        ) {
-          fileStatus = status;
-          eventCallback([{ action: MODIFIED, directory, file }]);
-        }
-      }, () => {
-        if (fileStatus !== null) {
-          fileStatus = null;
-          eventCallback([{ action: DELETED, directory, file }]);
-        }
-      });
-  }
-
-  this.start = function start() {
-    return fse.stat(watchPath)
-      .then(status => fileStatus = status, () => fileStatus = null)
-      .then(() => {
-        filePollerInterval = setInterval(getStatus, debounceMS);
-      });
-  };
-
-  this.stop = function stop() {
-    return Promise.resolve()
-      .then(() => clearInterval(filePollerInterval));
-  };
-};
+nsfw.getAllocatedInstanceCount = NSFW.getAllocatedInstanceCount;
 
 module.exports = nsfw;

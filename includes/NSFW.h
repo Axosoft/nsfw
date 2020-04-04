@@ -17,15 +17,15 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     static std::size_t instanceCount;
     static bool gcEnabled;
 
-    std::unique_ptr<NativeInterface> mInterface;
-    Napi::ThreadSafeFunction mEventCallback;
+    uint32_t mDebounceMS;
     Napi::ThreadSafeFunction mErrorCallback;
+    Napi::ThreadSafeFunction mEventCallback;
+    std::unique_ptr<NativeInterface> mInterface;
     std::mutex mInterfaceLock;
-    std::string mPath;
     std::shared_ptr<EventQueue> mQueue;
+    std::string mPath;
     std::thread mPollThread;
     std::atomic<bool> mRunning;
-    uint32_t mDebounceMS;
 
     class StartWorker: public Napi::AsyncWorker {
       public:
@@ -35,10 +35,10 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
         Napi::Promise RunJob();
 
       private:
+        enum JobStatus { STARTED, ALREADY_RUNNING, COULD_NOT_START, JOB_NOT_EXECUTED_YET };
         Napi::Promise::Deferred mDeferred;
-        bool mDidStartWatching;
         NSFW *mNSFW;
-        bool mShouldUnref;
+        JobStatus mStatus;
     };
 
     Napi::Value Start(const Napi::CallbackInfo &info);

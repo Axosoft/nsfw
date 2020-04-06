@@ -227,7 +227,7 @@ void NSFW::pollForEvents() {
 
               if ((*events)[i]->type == RENAMED) {
                 event["oldFile"] = Napi::String::New(env, (*events)[i]->fromFile);
-                event["oldDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
+                event["newDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
                 event["newFile"] = Napi::String::New(env, (*events)[i]->toFile);
               } else {
                 event["file"] = Napi::String::New(env, (*events)[i]->fromFile);

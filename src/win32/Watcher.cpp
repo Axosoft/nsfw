@@ -194,7 +194,8 @@ void Watcher::handleEvents() {
     PFILE_NOTIFY_INFORMATION info = (PFILE_NOTIFY_INFORMATION)base;
     std::wstring fileName = getWStringFileName(info->FileName, info->FileNameLength);
 
-    if (info->Action == FILE_ACTION_RENAMED_OLD_NAME) {
+    switch (info->Action) {
+    case (FILE_ACTION_RENAMED_OLD_NAME):
       if (info->NextEntryOffset != 0) {
         base += info->NextEntryOffset;
         info = (PFILE_NOTIFY_INFORMATION)base;
@@ -210,15 +211,11 @@ void Watcher::handleEvents() {
           );
         } else {
           mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-          continue;
         }
       } else {
         mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-        break;
       }
-    }
-
-    switch (info->Action) {
+      break;
     case FILE_ACTION_ADDED:
     case FILE_ACTION_RENAMED_NEW_NAME: // in the case we just receive a new name and no old name in the buffer
       mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName));

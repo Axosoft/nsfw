@@ -200,6 +200,158 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('can listen for a rename event', async function() {
+      const srcFile = 'testing.file';
+      const destFile = 'new-testing.file';
+      const inPath = path.resolve(workDir, 'test4');
+      let eventListening = false;
+      let deleteEventFound = false;
+      let createEventFound = false;
+      let renameEventFound = false;
+      let extraEventFound = false;
+
+      function findEvent(element) {
+        if (!eventListening) {
+          return;
+        }
+        if (
+          element.action === nsfw.actions.RENAMED &&
+          element.directory === inPath &&
+          element.oldFile === srcFile &&
+          element.newDirectory === inPath &&
+          element.newFile === destFile
+        ) {
+          renameEventFound = true;
+        } else if (
+          element.action === nsfw.actions.DELETED &&
+          element.directory === path.resolve(inPath) &&
+          element.file === srcFile
+        ) {
+          deleteEventFound = true;
+        } else if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === path.resolve(inPath) &&
+          element.file === destFile
+        ) {
+          createEventFound = true;
+        } else {
+          if (element.directory === path.resolve(inPath)) {
+            extraEventFound = true;
+          }
+        }
+      }
+
+      let watch = await nsfw(
+        workDir,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.ensureFile(path.join(inPath, srcFile));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = true;
+        await fse.move(path.join(inPath, srcFile), path.join(inPath, destFile));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = false;
+
+        switch (process.platform) {
+          case 'darwin':
+            assert.ok(deleteEventFound && createEventFound !== renameEventFound);
+            break;
+
+          default:
+            assert.ok(renameEventFound);
+            assert.ok(!deleteEventFound && !createEventFound);
+            break;
+        }
+
+        assert.ok(!extraEventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('can listen for a move event', async function() {
+      const file = 'testing.file';
+      const srcInPath = path.resolve(workDir, 'test4', 'src');
+      const destInPath = path.resolve(workDir, 'test4', 'dest');
+      let eventListening = false;
+      let deleteEventFound = false;
+      let createEventFound = false;
+      let renameEventFound = false;
+      let extraEventFound = false;
+
+      function findEvent(element) {
+        if (!eventListening) {
+          return;
+        }
+        if (
+          element.action === nsfw.actions.RENAMED &&
+          element.directory === path.resolve(srcInPath) &&
+          element.oldFile === file &&
+          element.newDirectory === path.resolve(destInPath) &&
+          element.newFile === file
+        ) {
+          renameEventFound = true;
+        } else if (
+          element.action === nsfw.actions.DELETED &&
+          element.directory === path.resolve(srcInPath) &&
+          element.file === file
+        ) {
+          deleteEventFound = true;
+        } else if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === path.resolve(destInPath) &&
+          element.file === file
+        ) {
+          createEventFound = true;
+        } else {
+          if (element.file === file) {
+            extraEventFound = true;
+          }
+        }
+      }
+
+      let watch = await nsfw(
+        workDir,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.ensureFile(path.join(srcInPath, file));
+        await fse.ensureDir(path.join(destInPath));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = true;
+        await fse.move(path.join(srcInPath, file), path.join(destInPath, file));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = false;
+
+        switch (process.platform) {
+          case 'linux':
+            assert.ok(renameEventFound);
+            assert.ok(!deleteEventFound && !createEventFound);
+            break;
+
+          default:
+            assert.ok(deleteEventFound && createEventFound);
+            assert.ok(!renameEventFound);
+            break;
+        }
+
+        assert.ok(!extraEventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     it('can run multiple watchers at once', async function() {
       const dirA = path.resolve(workDir, 'test0');
       const fileA = 'testing1.file';

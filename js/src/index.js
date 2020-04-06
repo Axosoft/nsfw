@@ -63,17 +63,19 @@ const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCall
     throw new Error('Path to watch must be an absolute path.');
   }
 
+  let stats;
   try {
-    const stats = await fs.stat(watchPath);
-    if (stats.isDirectory()) {
-      return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback });
-    } else if (stats.isFile()) {
-      return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
-    } else {
-      throw new Error('Path must be a valid path to a file or a directory');
-    }
+    stats = await fs.stat(watchPath);
   } catch (e) {
     throw new Error('Path must be a valid path to a file or a directory.');
+  }
+
+  if (stats.isDirectory()) {
+    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback });
+  } else if (stats.isFile()) {
+    return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
+  } else {
+    throw new Error('Path must be a valid path to a file or a directory');
   }
 };
 

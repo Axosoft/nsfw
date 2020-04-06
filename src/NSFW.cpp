@@ -6,16 +6,17 @@ bool NSFW::gcEnabled = false;
 
 NSFW::NSFW(const Napi::CallbackInfo &info):
   Napi::ObjectWrap<NSFW>(info),
+  mDebounceMS(0),
+  mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
-  mRunning(false),
-  mDebounceMS(0)
+  mPath(""),
+  mRunning(false)
 {
   if (gcEnabled) {
     instanceCount++;
   }
 
   auto env = info.Env();
-
   if (info.Length() < 1 || !info[0].IsString()) {
     throw Napi::TypeError::New(env, "Must pass a string path as the first argument to NSFW.");
   }
@@ -75,6 +76,7 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 NSFW::~NSFW() {
   mErrorCallback.Release();
   mEventCallback.Release();
+
   if (gcEnabled) {
     instanceCount--;
   }
@@ -83,17 +85,11 @@ NSFW::~NSFW() {
 NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
   Napi::AsyncWorker(env, "nsfw"),
   mDeferred(Napi::Promise::Deferred::New(env)),
-  mDidStartWatching(false),
   mNSFW(nsfw),
-  mShouldUnref(false)
+  mStatus(JOB_NOT_EXECUTED_YET)
 {}
 
 Napi::Promise NSFW::StartWorker::RunJob() {
-  if (mNSFW->mInterface) {
-    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW cannot be started, because it is already running.").Value());
-    return mDeferred.Promise();
-  }
-
   mNSFW->Ref();
   this->Queue();
 
@@ -104,7 +100,7 @@ void NSFW::StartWorker::Execute() {
   std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
 
   if (mNSFW->mInterface) {
-    mShouldUnref = true;
+    mStatus = ALREADY_RUNNING;
     return;
   }
 
@@ -112,28 +108,41 @@ void NSFW::StartWorker::Execute() {
   mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mQueue));
 
   if (mNSFW->mInterface->isWatching()) {
-    mDidStartWatching = true;
+    mStatus = STARTED;
     mNSFW->mRunning = true;
     mNSFW->mErrorCallback.Acquire();
     mNSFW->mEventCallback.Acquire();
     mNSFW->mPollThread = std::thread([] (NSFW *nsfw) { nsfw->pollForEvents(); }, mNSFW);
   } else {
-    mShouldUnref = true;
+    mStatus = COULD_NOT_START;
     mNSFW->mInterface.reset(nullptr);
   }
 }
 
 void NSFW::StartWorker::OnOK() {
   std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
-  if (mShouldUnref) {
-    mNSFW->Unref();
-  }
-
   auto env = Env();
-  if (!mDidStartWatching) {
-    mDeferred.Reject(Napi::Error::New(env, "NSFW was unable to start watching that directory.").Value());
-  } else {
-    mDeferred.Resolve(env.Undefined());
+  switch (mStatus) {
+    case ALREADY_RUNNING:
+      mNSFW->Unref();
+      mDeferred.Reject(Napi::Error::New(env, "This NSFW cannot be started, because it is already running.").Value());
+      break;
+
+    case COULD_NOT_START:
+      mNSFW->Unref();
+      mDeferred.Reject(Napi::Error::New(env, "NSFW was unable to start watching that directory.").Value());
+      break;
+
+    case STARTED:
+      mDeferred.Resolve(env.Undefined());
+      break;
+
+    default:
+      mNSFW->Unref();
+      mDeferred.Reject(Napi::Error::New(
+        env,
+        "Execute did not run, but OnOK fired. This should never have happened."
+      ).Value());
   }
 }
 
@@ -149,13 +158,7 @@ NSFW::StopWorker::StopWorker(Napi::Env env, NSFW *nsfw):
 {}
 
 Napi::Promise NSFW::StopWorker::RunJob() {
-  if (!mNSFW->mInterface) {
-    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW cannot be stopped, because it is not running.").Value());
-    return mDeferred.Promise();
-  }
-
   this->Queue();
-
   return mDeferred.Promise();
 }
 
@@ -180,9 +183,10 @@ void NSFW::StopWorker::OnOK() {
   std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
   if (mDidStopWatching) {
     mNSFW->Unref();
+    mDeferred.Resolve(Env().Undefined());
+  } else {
+    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW cannot be stopped, because it is not running.").Value());
   }
-
-  mDeferred.Resolve(Env().Undefined());
 }
 
 Napi::Value NSFW::Stop(const Napi::CallbackInfo &info) {

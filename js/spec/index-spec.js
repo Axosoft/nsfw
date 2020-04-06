@@ -15,9 +15,6 @@ describe('Node Sentinel File Watcher', function() {
   this.timeout(120000);
 
   const workDir = path.resolve('./mockfs');
-  const isWin = process.platform === 'win32';
-  const isLinux = process.platform === 'linux';
-  const isOsx = process.platform === 'darwin';
 
   beforeEach(async function() {
     async function makeDir(identifier) {
@@ -203,10 +200,7 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
-    it('can listen for a rename event', function(done) {
-      const waitTimeout = () => new Promise(resolve => {
-        setTimeout(resolve, TIMEOUT_PER_STEP);
-      });
+    it('can listen for a rename event', async function() {
       const srcFile = 'testing.file';
       const destFile = 'new-testing.file';
       const inPath = path.resolve(workDir, 'test4');
@@ -222,9 +216,9 @@ describe('Node Sentinel File Watcher', function() {
         }
         if (
           element.action === nsfw.actions.RENAMED &&
-          element.directory === path.resolve(inPath) &&
+          element.directory === inPath &&
           element.oldFile === srcFile &&
-          element.newDirectory === path.resolve(inPath) &&
+          element.newDirectory === inPath &&
           element.newFile === destFile
         ) {
           renameEventFound = true;
@@ -247,51 +241,41 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(waitTimeout)
-        .then(() => {
-          fse.ensureFileSync(path.join(inPath, srcFile));
-        })
-        .then(waitTimeout)
-        .then(() => {
-          eventListening = true;
-          return fse.move(path.join(inPath, srcFile), path.join(inPath, destFile));
-        })
-        .then(waitTimeout)
-        .then(() => {
-          eventListening = false;
-        })
-        .then(() => {
-          if (isOsx) {
-            // on osx it could be either a rename event or one delete and one create event
-            expect(deleteEventFound && createEventFound).not.toBe(renameEventFound);
-          }
-          if (isWin || isLinux) {
-            expect(renameEventFound).toBe(true);
-            expect(deleteEventFound || createEventFound).toBe(false);
-          }
-          expect(extraEventFound).toBe(false);
-          return watch.stop();
-        })
-        .then(done, () => {
-          watch.stop().then((err) => done.fail(err));
-        });
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.ensureFile(path.join(inPath, srcFile));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = true;
+        await fse.move(path.join(inPath, srcFile), path.join(inPath, destFile));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = false;
+
+        switch (process.platform) {
+          case 'darwin':
+            assert.ok(deleteEventFound && createEventFound !== renameEventFound);
+            break;
+
+          default:
+            assert.ok(renameEventFound);
+            assert.ok(!deleteEventFound && !createEventFound);
+            break;
+        }
+
+        assert.ok(!extraEventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
-    it('can listen for a move event', function(done) {
-      const waitTimeout = () => new Promise(resolve => {
-        setTimeout(resolve, TIMEOUT_PER_STEP);
-      });
+    it('can listen for a move event', async function() {
       const file = 'testing.file';
       const srcInPath = path.resolve(workDir, 'test4', 'src');
       const destInPath = path.resolve(workDir, 'test4', 'dest');
@@ -332,46 +316,40 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
-      let watch;
-
-      return nsfw(
+      let watch = await nsfw(
         workDir,
         events => events.forEach(findEvent),
         { debounceMS: DEBOUNCE }
-      )
-        .then(_w => {
-          watch = _w;
-          return watch.start();
-        })
-        .then(waitTimeout)
-        .then(() => {
-          fse.ensureFileSync(path.join(srcInPath, file));
-          fse.ensureDirSync(path.join(destInPath));
-        })
-        .then(waitTimeout)
-        .then(() => {
-          eventListening = true;
-          return fse.move(path.join(srcInPath, file), path.join(destInPath, file));
-        })
-        .then(waitTimeout)
-        .then(() => {
-          eventListening = false;
-        })
-        .then(() => {
-          if (isWin || isOsx) {
-            expect(deleteEventFound && createEventFound).toBe(true);
-            expect(renameEventFound).toBe(false);
-          }
-          if (isLinux) {
-            expect(renameEventFound).toBe(true);
-            expect(deleteEventFound || createEventFound).toBe(false);
-          }
-          expect(extraEventFound).toBe(false);
-          return watch.stop();
-        })
-        .then(done, () => {
-          watch.stop().then((err) => done.fail(err));
-        });
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.ensureFile(path.join(srcInPath, file));
+        await fse.ensureDir(path.join(destInPath));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = true;
+        await fse.move(path.join(srcInPath, file), path.join(destInPath, file));
+        await sleep(TIMEOUT_PER_STEP);
+        eventListening = false;
+
+        switch (process.platform) {
+          case 'linux':
+            assert.ok(renameEventFound);
+            assert.ok(!deleteEventFound && !createEventFound);
+            break;
+
+          default:
+            assert.ok(deleteEventFound && createEventFound);
+            assert.ok(!renameEventFound);
+            break;
+        }
+
+        assert.ok(!extraEventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
     });
 
     it('can run multiple watchers at once', async function() {

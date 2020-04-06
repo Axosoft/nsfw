@@ -97,6 +97,8 @@ nsfw.actions = {
   RENAMED: 3
 };
 
-nsfw.getAllocatedInstanceCount = NSFW.getAllocatedInstanceCount;
+if (NSFW.getAllocatedInstanceCount) {
+  nsfw.getAllocatedInstanceCount = NSFW.getAllocatedInstanceCount;
+}
 
 module.exports = nsfw;

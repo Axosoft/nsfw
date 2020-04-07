@@ -34,6 +34,8 @@ declare module 'nsfw' {
     interface RenamedFileEvent {
         /** the type of event that occurred */
         action: ActionType.RENAMED;
+        /** the location where the event took place */
+        directory: string;
         /**  the name of the file before a rename*/
         oldFile: string;
         /** the new location of the file(only useful on linux) */

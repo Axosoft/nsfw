@@ -1,7 +1,8 @@
 const { promises: fs } = require('fs');
 const path = require('path');
+const { promisify } = require('util');
 
-const NSFW = require('../../build/Release/nsfw.node');
+const { NSFW } = require('../../build/Release/nsfw.node');
 
 function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
   const { CREATED, DELETED, MODIFIED } = nsfw.actions;
@@ -71,7 +72,7 @@ const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCall
   }
 
   if (stats.isDirectory()) {
-    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback });
+    return new NSFW(debounceMS, watchPath, eventCallback, errorCallback);
   } else if (stats.isFile()) {
     return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
   } else {
@@ -85,9 +86,13 @@ function nsfw(watchPath, eventCallback, options) {
   }
 
   const implementation = watchPath;
-
-  this.start = () => implementation.start();
-  this.stop = () => implementation.stop();
+  if (implementation instanceof NSFW) {
+    this.start = promisify((callback) => implementation.start(callback));
+    this.stop = promisify((callback) => implementation.stop(callback));
+  } else {
+    this.start = () => implementation.start();
+    this.stop = () => implementation.stop();
+  }
 }
 
 nsfw.actions = {

@@ -673,14 +673,4 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
   });
-
-  describe('Garbage collection', function() {
-    it('can garbage collect all instances', async function () {
-      this.timeout(60000);
-      while (nsfw.getAllocatedInstanceCount() > 0) {
-        global.gc();
-        await sleep(0);
-      }
-    });
-  });
 });

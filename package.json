@@ -17,6 +17,9 @@
   "bugs": {
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
   },
+  "engines": {
+    "node": ">=10.16.0"
+  },
   "files": [
     "index.d.ts",
     "js/src",

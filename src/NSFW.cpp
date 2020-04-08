@@ -1,284 +1,311 @@
 #include "../includes/NSFW.h"
 
-Napi::FunctionReference NSFW::constructor;
-std::size_t NSFW::instanceCount = 0;
-bool NSFW::gcEnabled = false;
+#if defined(_WIN32)
+#include <windows.h>
+#define sleep_for_ms(ms) Sleep(ms)
+#else
+#include <unistd.h>
+#define sleep_for_ms(ms) usleep(ms * 1000)
+#endif
 
-NSFW::NSFW(const Napi::CallbackInfo &info):
-  Napi::ObjectWrap<NSFW>(info),
-  mDebounceMS(0),
-  mInterface(nullptr),
-  mQueue(std::make_shared<EventQueue>()),
-  mPath(""),
-  mRunning(false)
-{
-  if (gcEnabled) {
-    instanceCount++;
+#pragma unmanaged
+Persistent<v8::Function> NSFW::constructor;
+
+NSFW::NSFW(uint32_t debounceMS, std::string path, Callback *eventCallback, Callback *errorCallback):
+  mDebounceMS(debounceMS),
+  mErrorCallback(errorCallback),
+  mEventCallback(eventCallback),
+  mInterface(NULL),
+  mInterfaceLockValid(false),
+  mPath(path),
+  mRunning(false),
+  mQueue(std::make_shared<EventQueue>())
+  {
+    HandleScope scope;
+    v8::Local<v8::Object> obj = New<v8::Object>();
+    mPersistentHandle.Reset(obj);
+    mInterfaceLockValid = uv_mutex_init(&mInterfaceLock) == 0;
   }
-
-  auto env = info.Env();
-  if (info.Length() < 1 || !info[0].IsString()) {
-    throw Napi::TypeError::New(env, "Must pass a string path as the first argument to NSFW.");
-  }
-
-  mPath = info[0].ToString();
-
-  if (info.Length() < 2 || !info[1].IsFunction()) {
-    throw Napi::TypeError::New(env, "Must pass an event callback as the second parameter to NSFW.");
-  }
-
-  mEventCallback = Napi::ThreadSafeFunction::New(
-    env,
-    info[1].As<Napi::Function>(),
-    "nsfw",
-    0,
-    1
-  );
-
-  if (info.Length() >= 3) {
-    if (!info[2].IsObject()) {
-      throw Napi::TypeError::New(env, "If the third parameter to NSFW is provided, it must be an object.");
-    }
-
-    Napi::Object options = info[2].ToObject();
-    Napi::Value maybeDebounceMS = options["debounceMS"];
-    if (options.Has("debounceMS") && !maybeDebounceMS.IsNumber()) {
-      throw Napi::TypeError::New(env, "options.debounceMS must be a number.");
-    }
-
-    if (maybeDebounceMS.IsNumber()) {
-      Napi::Number temp = maybeDebounceMS.ToNumber();
-      double bounds = temp.DoubleValue();
-      if (bounds < 1 || bounds > 60000) {
-        throw Napi::TypeError::New(env, "options.debounceMS must be >= 1 and <= 60000.");
-      }
-
-      mDebounceMS = temp;
-    }
-
-    Napi::Value maybeErrorCallback = options["errorCallback"];
-    if (options.Has("errorCallback") && !maybeErrorCallback.IsFunction()) {
-      throw Napi::TypeError::New(env, "options.errorCallback must be a function.");
-    }
-
-    mErrorCallback = Napi::ThreadSafeFunction::New(
-      env,
-      maybeErrorCallback.IsFunction()
-        ? maybeErrorCallback.As<Napi::Function>()
-        : Napi::Function::New(env, [](const Napi::CallbackInfo &info) {}),
-      "nsfw",
-      0,
-      1
-    );
-  }
-}
 
 NSFW::~NSFW() {
-  mErrorCallback.Release();
-  mEventCallback.Release();
+  if (mInterface != NULL) {
+    delete mInterface;
+  }
+  delete mEventCallback;
+  delete mErrorCallback;
 
-  if (gcEnabled) {
-    instanceCount--;
+  if (mInterfaceLockValid) {
+    uv_mutex_destroy(&mInterfaceLock);
   }
 }
 
-NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
-  Napi::AsyncWorker(env, "nsfw"),
-  mDeferred(Napi::Promise::Deferred::New(env)),
-  mNSFW(nsfw),
-  mStatus(JOB_NOT_EXECUTED_YET)
-{}
-
-Napi::Promise NSFW::StartWorker::RunJob() {
-  mNSFW->Ref();
-  this->Queue();
-
-  return mDeferred.Promise();
+void NSFW::fireErrorCallback(uv_async_t *handle) {
+  Nan::HandleScope scope;
+  ErrorBaton *baton = (ErrorBaton *)handle->data;
+  v8::Local<v8::Value> argv[] = {
+    New<v8::String>(baton->error).ToLocalChecked()
+  };
+  baton->nsfw->mErrorCallback->Call(1, argv);
+  delete baton;
 }
 
-void NSFW::StartWorker::Execute() {
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
+void NSFW::fireEventCallback(uv_async_t *handle) {
+  Nan::HandleScope scope;
+  NSFW *nsfw = (NSFW *)handle->data;
+  auto events = nsfw->mQueue->dequeueAll();
+  if (events == nullptr) {
+    return;
+  }
 
-  if (mNSFW->mInterface) {
-    mStatus = ALREADY_RUNNING;
+  v8::Local<v8::Array> eventArray = New<v8::Array>((int)events->size());
+
+  for (unsigned int i = 0; i < events->size(); ++i) {
+    v8::Local<v8::Object> jsEvent = New<v8::Object>();
+
+
+    Nan::Set(jsEvent, Nan::New("action").ToLocalChecked(), Nan::New<v8::Number>((*events)[i]->type));
+    Nan::Set(jsEvent, Nan::New("directory").ToLocalChecked(), Nan::New((*events)[i]->fromDirectory).ToLocalChecked());
+
+    if ((*events)[i]->type == RENAMED) {
+      Nan::Set(jsEvent, Nan::New("oldFile").ToLocalChecked(), Nan::New((*events)[i]->fromFile).ToLocalChecked());
+      Nan::Set(jsEvent, Nan::New("newDirectory").ToLocalChecked(), Nan::New((*events)[i]->toDirectory).ToLocalChecked());
+      Nan::Set(jsEvent, Nan::New("newFile").ToLocalChecked(), Nan::New((*events)[i]->toFile).ToLocalChecked());
+    } else {
+      Nan::Set(jsEvent, Nan::New("file").ToLocalChecked(), Nan::New((*events)[i]->fromFile).ToLocalChecked());
+    }
+
+    Nan::Set(eventArray, i, jsEvent);
+  }
+
+  v8::Local<v8::Value> argv[] = {
+    eventArray
+  };
+
+  nsfw->mEventCallback->Call(1, argv);
+}
+
+void NSFW::pollForEvents(void *arg) {
+  NSFW *nsfw = (NSFW *)arg;
+  while(nsfw->mRunning) {
+    uv_mutex_lock(&nsfw->mInterfaceLock);
+
+    if (nsfw->mInterface->hasErrored()) {
+      ErrorBaton *baton = new ErrorBaton;
+      baton->nsfw = nsfw;
+      baton->error = nsfw->mInterface->getError();
+
+      nsfw->mErrorCallbackAsync.data = (void *)baton;
+      uv_async_send(&nsfw->mErrorCallbackAsync);
+      nsfw->mRunning = false;
+      uv_mutex_unlock(&nsfw->mInterfaceLock);
+      break;
+    }
+
+    if (nsfw->mQueue->count() == 0) {
+      uv_mutex_unlock(&nsfw->mInterfaceLock);
+      sleep_for_ms(50);
+      continue;
+    }
+
+    nsfw->mEventCallbackAsync.data = (void *)nsfw;
+    uv_async_send(&nsfw->mEventCallbackAsync);
+
+    uv_mutex_unlock(&nsfw->mInterfaceLock);
+
+    sleep_for_ms(nsfw->mDebounceMS);
+  }
+}
+
+NAN_MODULE_INIT(NSFW::Init) {
+  Nan::HandleScope scope;
+
+  v8::Local<v8::FunctionTemplate> tpl = New<v8::FunctionTemplate>(JSNew);
+  tpl->SetClassName(New<v8::String>("NSFW").ToLocalChecked());
+  tpl->InstanceTemplate()->SetInternalFieldCount(1);
+
+  SetPrototypeMethod(tpl, "start", Start);
+  SetPrototypeMethod(tpl, "stop", Stop);
+
+  v8::Local<v8::Context> context = Nan::GetCurrentContext();
+  constructor.Reset(tpl->GetFunction(context).ToLocalChecked());
+  Set(target, New<v8::String>("NSFW").ToLocalChecked(), tpl->GetFunction(context).ToLocalChecked());
+}
+
+NAN_METHOD(NSFW::JSNew) {
+  if (!info.IsConstructCall()) {
+    const int argc = 4;
+    v8::Isolate *isolate = info.GetIsolate();
+    v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3]};
+    v8::Local<v8::Context> context = isolate->GetCurrentContext();
+    v8::Local<v8::Function> cons = v8::Local<v8::Function>::New(isolate, constructor);
+    info.GetReturnValue().Set(cons->NewInstance(context, argc, argv).ToLocalChecked());
+    return;
+  }
+
+  if (info.Length() < 1 || !info[0]->IsUint32()) {
+    return ThrowError("First argument of constructor must be a positive integer.");
+  }
+  if (info.Length() < 2 || !info[1]->IsString()) {
+    return ThrowError("Second argument of constructor must be a path.");
+  }
+  if (info.Length() < 3 || !info[2]->IsFunction()) {
+    return ThrowError("Third argument of constructor must be a callback.");
+  }
+  if (info.Length() < 4 || !info[3]->IsFunction()) {
+    return ThrowError("Fourth argument of constructor must be a callback.");
+  }
+
+  v8::Local<v8::Context> context = Nan::GetCurrentContext();
+  uint32_t debounceMS = info[0]->Uint32Value(context).FromJust();
+  Nan::Utf8String utf8Value(Nan::To<v8::String>(info[1]).ToLocalChecked());
+  std::string path = std::string(*utf8Value);
+  Callback *eventCallback = new Callback(info[2].As<v8::Function>());
+  Callback *errorCallback = new Callback(info[3].As<v8::Function>());
+
+  NSFW *nsfw = new NSFW(debounceMS, path, eventCallback, errorCallback);
+  nsfw->Wrap(info.This());
+  info.GetReturnValue().Set(info.This());
+}
+
+NAN_METHOD(NSFW::Start) {
+  Nan::HandleScope scope;
+
+  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
+  if (!nsfw->mInterfaceLockValid) {
+    return ThrowError("NSFW failed to initialize properly. Try creating a new NSFW.");
+  }
+
+  if (
+    info.Length() < 1 ||
+    !info[0]->IsFunction()
+  ) {
+    return ThrowError("Must provide callback to start.");
+  }
+
+  Callback *callback = new Callback(info[0].As<v8::Function>());
+
+  if (nsfw->mInterface != NULL) {
+    v8::Local<v8::Value> argv[1] = {
+      Nan::Error("This NSFW cannot be started, because it is already running.")
+    };
+    callback->Call(1, argv);
+    delete callback;
+    return;
+  }
+
+  Nan::Set(Nan::New(nsfw->mPersistentHandle), Nan::New("nsfw").ToLocalChecked(), info.This());
+
+  AsyncQueueWorker(new StartWorker(nsfw, callback));
+}
+
+NSFW::StartWorker::StartWorker(NSFW *nsfw, Callback *callback):
+  AsyncWorker(callback), mNSFW(nsfw) {
+    uv_async_init(uv_default_loop(), &nsfw->mErrorCallbackAsync, &NSFW::fireErrorCallback);
+    uv_async_init(uv_default_loop(), &nsfw->mEventCallbackAsync, &NSFW::fireEventCallback);
+  }
+
+void NSFW::StartWorker::Execute() {
+  uv_mutex_lock(&mNSFW->mInterfaceLock);
+
+  if (mNSFW->mInterface != NULL) {
+    uv_mutex_unlock(&mNSFW->mInterfaceLock);
     return;
   }
 
   mNSFW->mQueue->clear();
-  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mQueue));
-
+  mNSFW->mInterface = new NativeInterface(mNSFW->mPath, mNSFW->mQueue);
   if (mNSFW->mInterface->isWatching()) {
-    mStatus = STARTED;
     mNSFW->mRunning = true;
-    mNSFW->mErrorCallback.Acquire();
-    mNSFW->mEventCallback.Acquire();
-    mNSFW->mPollThread = std::thread([] (NSFW *nsfw) { nsfw->pollForEvents(); }, mNSFW);
+    uv_thread_create(&mNSFW->mPollThread, NSFW::pollForEvents, mNSFW);
   } else {
-    mStatus = COULD_NOT_START;
-    mNSFW->mInterface.reset(nullptr);
+    delete mNSFW->mInterface;
+    mNSFW->mInterface = NULL;
+  }
+
+  uv_mutex_unlock(&mNSFW->mInterfaceLock);
+}
+
+void NSFW::StartWorker::HandleOKCallback() {
+  HandleScope();
+  if (mNSFW->mInterface == NULL) {
+    if (!mNSFW->mPersistentHandle.IsEmpty()) {
+      v8::Local<v8::Object> obj = New<v8::Object>();
+      mNSFW->mPersistentHandle.Reset(obj);
+    }
+    v8::Local<v8::Value> argv[1] = {
+      Nan::Error("NSFW was unable to start watching that directory.")
+    };
+    callback->Call(1, argv);
+  } else {
+    callback->Call(0, NULL);
   }
 }
 
-void NSFW::StartWorker::OnOK() {
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
-  auto env = Env();
-  switch (mStatus) {
-    case ALREADY_RUNNING:
-      mNSFW->Unref();
-      mDeferred.Reject(Napi::Error::New(env, "This NSFW cannot be started, because it is already running.").Value());
-      break;
+NAN_METHOD(NSFW::Stop) {
+  Nan::HandleScope scope;
 
-    case COULD_NOT_START:
-      mNSFW->Unref();
-      mDeferred.Reject(Napi::Error::New(env, "NSFW was unable to start watching that directory.").Value());
-      break;
-
-    case STARTED:
-      mDeferred.Resolve(env.Undefined());
-      break;
-
-    default:
-      mNSFW->Unref();
-      mDeferred.Reject(Napi::Error::New(
-        env,
-        "Execute did not run, but OnOK fired. This should never have happened."
-      ).Value());
+  NSFW *nsfw = ObjectWrap::Unwrap<NSFW>(info.This());
+  if (!nsfw->mInterfaceLockValid) {
+    return ThrowError("NSFW failed to initialize properly. Try creating a new NSFW.");
   }
+
+  if (
+    info.Length() < 1 ||
+    !info[0]->IsFunction()
+  ) {
+    return ThrowError("Must provide callback to stop.");
+  }
+
+  Callback *callback = new Callback(info[0].As<v8::Function>());
+
+  if (nsfw->mInterface == NULL) {
+    v8::Local<v8::Value> argv[1] = {
+      Nan::Error("This NSFW cannot be stopped, because it is not running.")
+    };
+    callback->Call(1, argv);
+    delete callback;
+    return;
+  }
+
+  AsyncQueueWorker(new StopWorker(nsfw, callback));
 }
 
-Napi::Value NSFW::Start(const Napi::CallbackInfo &info) {
-  return (new StartWorker(info.Env(), this))->RunJob();
-}
-
-NSFW::StopWorker::StopWorker(Napi::Env env, NSFW *nsfw):
-  Napi::AsyncWorker(env, "nsfw"),
-  mDeferred(Napi::Promise::Deferred::New(env)),
-  mDidStopWatching(false),
-  mNSFW(nsfw)
-{}
-
-Napi::Promise NSFW::StopWorker::RunJob() {
-  this->Queue();
-  return mDeferred.Promise();
-}
+NSFW::StopWorker::StopWorker(NSFW *nsfw, Callback *callback):
+  AsyncWorker(callback), mNSFW(nsfw) {}
 
 void NSFW::StopWorker::Execute() {
-  {
-    std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
-    if (!mNSFW->mInterface) {
-      return;
-    }
+  uv_mutex_lock(&mNSFW->mInterfaceLock);
+  if (mNSFW->mInterface == NULL) {
+    uv_mutex_unlock(&mNSFW->mInterfaceLock);
+    return;
   }
+  uv_mutex_unlock(&mNSFW->mInterfaceLock);
 
-  mDidStopWatching = true;
+  // unlock the mInterfaceLock mutex while operate on the running identifier
   mNSFW->mRunning = false;
-  mNSFW->mPollThread.join();
 
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
-  mNSFW->mInterface.reset(nullptr);
+  uv_thread_join(&mNSFW->mPollThread);
+
+  uv_mutex_lock(&mNSFW->mInterfaceLock);
+  delete mNSFW->mInterface;
+  mNSFW->mInterface = NULL;
   mNSFW->mQueue->clear();
+
+  uv_mutex_unlock(&mNSFW->mInterfaceLock);
 }
 
-void NSFW::StopWorker::OnOK() {
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
-  if (mDidStopWatching) {
-    mNSFW->Unref();
-    mDeferred.Resolve(Env().Undefined());
-  } else {
-    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW cannot be stopped, because it is not running.").Value());
-  }
-}
+void NSFW::StopWorker::HandleOKCallback() {
+  HandleScope();
 
-Napi::Value NSFW::Stop(const Napi::CallbackInfo &info) {
-  return (new StopWorker(info.Env(), this))->RunJob();
-}
-
-void NSFW::pollForEvents() {
-  while (mRunning) {
-    uint32_t sleepDuration = 50;
-    {
-      std::lock_guard<std::mutex> lock(mInterfaceLock);
-
-      if (mInterface->hasErrored()) {
-        const std::string &error = mInterface->getError();
-        mErrorCallback.NonBlockingCall([error](Napi::Env env, Napi::Function jsCallback) {
-          Napi::Value jsError = Napi::Error::New(env, error).Value();
-          jsCallback.Call({ jsError });
-        });
-        mRunning = false;
-        break;
-      }
-
-      if (mQueue->count() != 0) {
-        auto events = mQueue->dequeueAll();
-        if (events != nullptr) {
-          sleepDuration = mDebounceMS;
-          auto callback = [](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
-            std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(eventsRaw);
-            eventsRaw = nullptr;
-
-            int numEvents = events->size();
-            Napi::Array eventArray = Napi::Array::New(env, numEvents);
-
-            for (int i = 0; i < numEvents; ++i) {
-              auto event = Napi::Object::New(env);
-              event["action"] = Napi::Number::New(env, (*events)[i]->type);
-              event["directory"] = Napi::String::New(env, (*events)[i]->fromDirectory);
-
-              if ((*events)[i]->type == RENAMED) {
-                event["oldFile"] = Napi::String::New(env, (*events)[i]->fromFile);
-                event["newDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
-                event["newFile"] = Napi::String::New(env, (*events)[i]->toFile);
-              } else {
-                event["file"] = Napi::String::New(env, (*events)[i]->fromFile);
-              }
-
-              eventArray[(uint32_t)i] = event;
-            }
-
-            jsCallback.Call({ eventArray });
-          };
-
-          mEventCallback.NonBlockingCall(events.release(), callback);
-        }
-      }
-    }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
+  if (!mNSFW->mPersistentHandle.IsEmpty()) {
+    v8::Local<v8::Object> obj = New<v8::Object>();
+    mNSFW->mPersistentHandle.Reset(obj);
   }
 
-  mErrorCallback.Release();
-  mEventCallback.Release();
+  uv_close(reinterpret_cast<uv_handle_t*>(&mNSFW->mErrorCallbackAsync), nullptr);
+  uv_close(reinterpret_cast<uv_handle_t*>(&mNSFW->mEventCallbackAsync), nullptr);
+
+  callback->Call(0, NULL);
 }
 
-Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {
-  return Napi::Number::New(info.Env(), instanceCount);
-}
-
-Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
-  gcEnabled = ((Napi::Value)env.Global()["gc"]).IsFunction();
-
-  Napi::Function nsfwConstructor = DefineClass(env, "NSFW", {
-    InstanceMethod("start", &NSFW::Start),
-    InstanceMethod("stop", &NSFW::Stop)
-  });
-
-  if (gcEnabled) {
-    nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Function(
-      "getAllocatedInstanceCount",
-      &NSFW::InstanceCount,
-      napi_static
-    ));
-  }
-
-  constructor = Napi::Persistent(nsfwConstructor);
-  constructor.SuppressDestruct();
-
-  return nsfwConstructor;
-}
-
-static Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  return NSFW::Init(env, exports);
-}
-
-NODE_API_MODULE(nsfw, Init)
+NODE_MODULE(nsfw, NSFW::Init)

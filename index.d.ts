@@ -26,14 +26,16 @@ declare module 'nsfw' {
         RENAMED = 3
     }
 
-    type CreatedFileEvent = GenericFileEvent<ActionType.CREATED>;
-    type DeletedFileEvent = GenericFileEvent<ActionType.DELETED>;
-    type ModifiedFileEvent = GenericFileEvent<ActionType.MODIFIED>;
-    type FileChangeEvent = CreatedFileEvent | DeletedFileEvent | ModifiedFileEvent | RenamedFileEvent;
+    export type CreatedFileEvent = GenericFileEvent<ActionType.CREATED>;
+    export type DeletedFileEvent = GenericFileEvent<ActionType.DELETED>;
+    export type ModifiedFileEvent = GenericFileEvent<ActionType.MODIFIED>;
+    export type FileChangeEvent = CreatedFileEvent | DeletedFileEvent | ModifiedFileEvent | RenamedFileEvent;
 
-    interface RenamedFileEvent {
+    export interface RenamedFileEvent {
         /** the type of event that occurred */
         action: ActionType.RENAMED;
+        /** the directory before a rename */
+        directory: string;
         /**  the name of the file before a rename*/
         oldFile: string;
         /** the new location of the file(only useful on linux) */
@@ -42,7 +44,7 @@ declare module 'nsfw' {
         newFile: string;
     }
 
-    interface GenericFileEvent<T extends ActionType> {
+    export interface GenericFileEvent<T extends ActionType> {
         /** the type of event that occurred */
         action: T;
         /** the location the event took place */

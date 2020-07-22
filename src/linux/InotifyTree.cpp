@@ -2,9 +2,10 @@
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
-InotifyTree::InotifyTree(int inotifyInstance, std::string path):
+InotifyTree::InotifyTree(int inotifyInstance, std::string path, std::function<bool(std::string path)> ignorePath):
   mError(""),
-  mInotifyInstance(inotifyInstance) {
+  mInotifyInstance(inotifyInstance),
+  mIgnorePath(ignorePath) {
   mInotifyNodeByWatchDescriptor = new std::map<int, InotifyNode *>;
 
   std::string directory;
@@ -28,6 +29,7 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path):
   mRoot = new InotifyNode(
     this,
     mInotifyInstance,
+    mIgnorePath,
     NULL,
     directory,
     watchName,
@@ -159,6 +161,7 @@ InotifyTree::~InotifyTree() {
 InotifyTree::InotifyNode::InotifyNode(
   InotifyTree *tree,
   int inotifyInstance,
+  std::function<bool(std::string path)> ignorePath,
   InotifyNode *parent,
   std::string directory,
   std::string name,
@@ -167,6 +170,7 @@ InotifyTree::InotifyNode::InotifyNode(
   mDirectory(directory),
   mInodeNumber(inodeNumber),
   mInotifyInstance(inotifyInstance),
+  mIgnorePath(ignorePath),
   mName(name),
   mParent(parent),
   mTree(tree) {
@@ -201,6 +205,10 @@ InotifyTree::InotifyNode::InotifyNode(
 
     std::string filePath = createFullPath(mFullPath, fileName);
 
+    if (mIgnorePath(filePath)) {
+      continue;
+    }
+
     struct stat file;
 
     if (
@@ -214,6 +222,7 @@ InotifyTree::InotifyNode::InotifyNode(
     InotifyNode *child = new InotifyNode(
       mTree,
       mInotifyInstance,
+      mIgnorePath,
       this,
       mFullPath,
       fileName,
@@ -256,6 +265,7 @@ void InotifyTree::InotifyNode::addChild(std::string name) {
     InotifyNode *child = new InotifyNode(
       mTree,
       mInotifyInstance,
+      mIgnorePath,
       this,
       mFullPath,
       name,

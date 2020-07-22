@@ -13,11 +13,15 @@ using NativeImplementation = InotifyService;
 #endif
 
 #include "Queue.h"
+#include <functional>
 #include <vector>
 
 class NativeInterface {
 public:
-  NativeInterface(const std::string &path, std::shared_ptr<EventQueue> queue);
+  NativeInterface(
+    const std::string &path,
+    std::shared_ptr<EventQueue> queue,
+    std::function<bool(std::string path)> ignorePath);
   ~NativeInterface();
 
   std::string getError();
@@ -26,6 +30,7 @@ public:
 
 private:
   std::unique_ptr<NativeImplementation> mNativeInterface;
+  std::function<bool(std::string path)> mIgnorePath;
 };
 
 #endif

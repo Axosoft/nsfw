@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <functional>
 #include <errno.h>
 #include <sstream>
 #include <vector>
@@ -13,7 +14,7 @@
 
 class InotifyTree {
 public:
-  InotifyTree(int inotifyInstance, std::string path);
+  InotifyTree(int inotifyInstance, std::string path, std::function<bool(std::string path)> ignorePath);
 
   void addDirectory(int wd, std::string name);
   std::string getError();
@@ -31,6 +32,7 @@ private:
     InotifyNode(
       InotifyTree *tree,
       int inotifyInstance,
+      std::function<bool(std::string path)> ignorePath,
       InotifyNode *parent,
       std::string directory,
       std::string name,
@@ -68,6 +70,7 @@ private:
     std::string mFullPath;
     ino_t mInodeNumber;
     const int mInotifyInstance;
+    std::function<bool(std::string path)> mIgnorePath;
     std::string mName;
     InotifyNode *mParent;
     InotifyTree *mTree;
@@ -83,6 +86,7 @@ private:
 
   std::string mError;
   const int mInotifyInstance;
+  std::function<bool(std::string path)> mIgnorePath;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   std::unordered_set<ino_t> inodes;
   InotifyNode *mRoot;

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <memory>
 #include <napi.h>
+#include <regex>
 #include <thread>
 #include <vector>
 
@@ -24,6 +25,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::mutex mInterfaceLock;
     std::shared_ptr<EventQueue> mQueue;
     std::string mPath;
+    std::vector<std::regex> mIgnorePathRegexVector;
     std::thread mPollThread;
     std::atomic<bool> mRunning;
 
@@ -62,6 +64,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     static Napi::Object Init(Napi::Env, Napi::Object exports);
     static Napi::Value InstanceCount(const Napi::CallbackInfo &info);
     void pollForEvents();
+    bool ignorePath(std::string path);
 
     NSFW(const Napi::CallbackInfo &info);
     ~NSFW();

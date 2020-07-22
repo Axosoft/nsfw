@@ -48,7 +48,7 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
 }
 
 
-const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCallback: _errorCallback } = {}) => {
+const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCallback: _errorCallback, pathIgnoreRegexArray } = {}) => {
   if (Number.isInteger(debounceMS)) {
     if (debounceMS < 1) {
       throw new Error('Minimum debounce is 1ms.');
@@ -71,7 +71,7 @@ const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCall
   }
 
   if (stats.isDirectory()) {
-    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback });
+    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, pathIgnoreRegexArray });
   } else if (stats.isFile()) {
     return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
   } else {

@@ -54,7 +54,9 @@ declare module 'nsfw' {
     interface Options {
         /** time in milliseconds to debounce the event callback */
         debounceMS?: number;
-        /**  callback to fire in the case of errors */
-        errorCallback: (err: any) => void
+        /** callback to fire in the case of errors */
+        errorCallback: (err: any) => void;
+        /** js regex array to filter which path to watch or not */
+        ignorePathRegexArray?: string[];
     }
 }

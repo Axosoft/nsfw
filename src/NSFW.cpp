@@ -70,7 +70,33 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       0,
       1
     );
+
+    Napi::Value maybeIgnorePathRegexArray = options["ignorePathRegexArray"];
+    if (options.Has("ignorePathRegexArray") && !maybeIgnorePathRegexArray.IsUndefined()) {
+      if (!maybeIgnorePathRegexArray.IsArray()) {
+        throw Napi::TypeError::New(env, "options.ignorePathRegexArray must be a string array.");
+      }
+      Napi::Array array(maybeIgnorePathRegexArray.As<Napi::Array>());
+      uint32_t length(array.Length());
+      for (uint32_t i(0); i < length; ++i) {
+        Napi::Value item(array.Get(i));
+        if (!item.IsString()) {
+          throw Napi::TypeError::New(env, "options.ignorePathRegexArray must be a string array.");
+        }
+        mIgnorePathRegexVector.push_back(std::regex(item.ToString().Utf8Value(), std::regex::ECMAScript | std::regex::icase));
+      }
+    }
   }
+}
+
+bool NSFW::ignorePath(std::string path) {
+  std::smatch match;
+  for (std::regex re : mIgnorePathRegexVector) {
+    if (std::regex_match(path, match, re)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 NSFW::~NSFW() {
@@ -105,7 +131,9 @@ void NSFW::StartWorker::Execute() {
   }
 
   mNSFW->mQueue->clear();
-  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mQueue));
+  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mQueue, [this] (std::string path) {
+    return mNSFW->ignorePath(path);
+  }));
 
   if (mNSFW->mInterface->isWatching()) {
     mStatus = STARTED;

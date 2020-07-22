@@ -534,6 +534,12 @@ describe('Node Sentinel File Watcher', function() {
         watch = null;
       }
     });
+
+    if (process.platform === 'linux') {
+      it('can cut part of the watch tree (linux)', async function () {
+        // todo
+      });
+    }
   });
 
   describe('Errors', function() {

@@ -1,8 +1,9 @@
 #include "../../includes/linux/InotifyService.h"
 
-InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path):
+InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path, std::function<bool(std::string path)> ignorePath):
   mEventLoop(NULL),
   mQueue(queue),
+  mIgnorePath(ignorePath),
   mTree(NULL) {
   mInotifyInstance = inotify_init();
 
@@ -10,7 +11,7 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
     return;
   }
 
-  mTree = new InotifyTree(mInotifyInstance, path);
+  mTree = new InotifyTree(mInotifyInstance, path, mIgnorePath);
   if (!mTree->isRootAlive()) {
     delete mTree;
     mTree = NULL;

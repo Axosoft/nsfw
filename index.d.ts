@@ -62,5 +62,7 @@ declare module 'nsfw' {
         debounceMS?: number;
         /**  callback to fire in the case of errors */
         errorCallback: (err: any) => void
+        /** glob-like patterns to ignore paths while watching */
+        ignoreGlobs: string[];
     }
 }

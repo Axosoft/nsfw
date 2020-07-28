@@ -10,6 +10,7 @@ const nsfw = require('nsfw');
  - **options**
    - **debounceMS**: time in milliseconds to debounce the event callback
    - **errorCallback**: callback to fire in the case of errors
+   - **ignoreGlobs**: glob-like patterns to ignore paths while watching
 
 
   Returns a Promise that resolves to the created NSFW Object.

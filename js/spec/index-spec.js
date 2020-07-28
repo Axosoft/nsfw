@@ -534,6 +534,78 @@ describe('Node Sentinel File Watcher', function() {
         watch = null;
       }
     });
+
+    if (process.platform === 'linux') {
+      it('can cut part of the watch tree (linux)', async function () {
+        // Creates `${name}/test.file`
+        async function mkdir(name) {
+          const folder = path.resolve(workDir, name);
+          await fse.mkdir(folder, { recursive: true });
+          await fse.writeFile(path.resolve(folder, 'test.file'), name);
+        }
+        // `workDir/aaa`
+        const aaa = path.resolve(workDir, 'aaa'); // ignored
+        const aaab = path.resolve(workDir, 'aaab'); // not ignored
+        // `workDir/bb*`
+        const baa = path.resolve(workDir, 'baa'); // not ignored
+        const bbb = path.resolve(workDir, 'bbb'); // ignored
+        const bbc = path.resolve(workDir, 'bbc'); // ignored
+        // `*zz`
+        const czz = path.resolve(workDir, 'czz'); // ignored
+        const dzza = path.resolve(workDir, 'dzza'); // not ignored
+        // `**/eee`
+        const eee = path.resolve(workDir, 'eee'); // ignored
+        const feee = path.resolve(workDir, 'feee'); // not ignored
+        // `**/gaa///`
+        const gaa = path.resolve(workDir, 'gaa'); // ignored
+        const gaab = path.resolve(workDir, 'gaab'); // not ignored
+        const folders = [aaa, aaab, baa, bbb, bbc, czz, dzza, eee, feee, gaa, gaab];
+        await Promise.all(folders.map(mkdir));
+        const expectIgnored = new Set([bbb, bbc, czz, eee, gaa]);
+        const expectNotIgnored = new Set([aaab, baa, dzza, feee, gaab]);
+        const expectWorkDirEvents = new Set(Array.from(expectNotIgnored, folder => path.basename(folder)));
+        const actualIgnored = new Set(); // should be empty
+        const actualNotIgnored = new Set(); // should be == expectNotIgnored
+        const actualWorkDirEvents = new Set(); // should be == expectWorkDirEvents
+        function findEvent(element) {
+          if (element.action === nsfw.actions.DELETED)
+          {
+            if (element.directory === workDir && expectWorkDirEvents.has(element.file)) {
+              actualWorkDirEvents.add(element.file); // Ok.
+            } else if (element.file === 'test.file') {
+              if (expectIgnored.has(element.directory)) {
+                actualIgnored.add(element.directory); // This should fail the test.
+              } else if (expectNotIgnored.has(element.directory)) {
+                actualNotIgnored.add(element.directory); // Ok.
+              }
+            }
+          }
+        }
+        let watch = await nsfw(
+          workDir,
+          events => events.forEach(findEvent),
+          { debounceMS: DEBOUNCE, ignoreGlobs: [
+            workDir + '/aaa',
+            workDir + '/bb*',
+            '*zz',
+            '**/eee',
+            '**/gaa///',
+          ] }
+        );
+        try {
+          await watch.start();
+          await sleep(TIMEOUT_PER_STEP);
+          await Promise.all(folders.map(folder => fse.remove(folder)));
+          await sleep(TIMEOUT_PER_STEP);
+        } finally {
+          await watch.stop();
+          watch = null;
+        }
+        assert.deepStrictEqual(new Set(), actualIgnored, 'some folders were not ignored');
+        assert.deepStrictEqual(expectNotIgnored, actualNotIgnored, 'some folders got ignored');
+        assert.deepStrictEqual(expectWorkDirEvents, actualWorkDirEvents);
+      });
+    }
   });
 
   describe('Pausing', function () {

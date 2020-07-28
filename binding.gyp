@@ -5,7 +5,8 @@
         "sources": [
             "src/NSFW.cpp",
             "src/Queue.cpp",
-            "src/NativeInterface.cpp"
+            "src/NativeInterface.cpp",
+            "src/PathFilter.cpp"
         ],
         "include_dirs": [
             "includes",
@@ -102,7 +103,7 @@
                 ],
                 "libraries": [
                     "-L/usr/local/lib",
-                    "-linotify" 
+                    "-linotify"
                 ]
             }],
         ]

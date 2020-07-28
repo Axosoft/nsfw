@@ -1,6 +1,8 @@
 #ifndef NSFW_QUEUE_H
 #define NSFW_QUEUE_H
 
+#include "./PathFilter.h"
+
 #include <string>
 #include <memory>
 #include <deque>
@@ -40,6 +42,7 @@ public:
   std::size_t count();
   std::unique_ptr<Event> dequeue();
   std::unique_ptr<std::vector<std::unique_ptr<Event>>> dequeueAll();
+  std::unique_ptr<std::vector<std::unique_ptr<Event>>> dequeueAll(const std::shared_ptr<PathFilter> &pathFilter);
   void enqueue(
     const EventType type,
     const std::string &fromDirectory,

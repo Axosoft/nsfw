@@ -4,6 +4,7 @@
 #include "InotifyEventLoop.h"
 #include "InotifyTree.h"
 #include "../Queue.h"
+#include "../PathFilter.h"
 #include <queue>
 #include <map>
 
@@ -12,7 +13,7 @@ class InotifyTree;
 
 class InotifyService {
 public:
-  InotifyService(std::shared_ptr<EventQueue> queue, std::string path);
+  InotifyService(std::shared_ptr<EventQueue> queue, std::string path, std::shared_ptr<PathFilter> pathFilter);
 
   std::string getError();
   bool hasErrored();

@@ -10,6 +10,7 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
   mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
   mPath(""),
+  mPaused(false),
   mRunning(false)
 {
   if (gcEnabled) {
@@ -193,10 +194,68 @@ Napi::Value NSFW::Stop(const Napi::CallbackInfo &info) {
   return (new StopWorker(info.Env(), this))->RunJob();
 }
 
+NSFW::PauseWorker::PauseWorker(Napi::Env env, NSFW *nsfw):
+  Napi::AsyncWorker(env, "nsfw"),
+  mDeferred(Napi::Promise::Deferred::New(env)),
+  mDidPauseEvents(false),
+  mNSFW(nsfw)
+{}
+
+Napi::Promise NSFW::PauseWorker::RunJob() {
+  this->Queue();
+  return mDeferred.Promise();
+}
+
+void NSFW::PauseWorker::Execute() {
+  mDidPauseEvents = true;
+  mNSFW->mPaused = true;
+}
+
+void NSFW::PauseWorker::OnOK() {
+  if (mDidPauseEvents) {
+    mDeferred.Resolve(Env().Undefined());
+  } else {
+    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW could not be paused.").Value());
+  }
+}
+
+Napi::Value NSFW::Pause(const Napi::CallbackInfo &info) {
+  return (new PauseWorker(info.Env(), this))->RunJob();
+}
+
+NSFW::ResumeWorker::ResumeWorker(Napi::Env env, NSFW *nsfw):
+  Napi::AsyncWorker(env, "nsfw"),
+  mDeferred(Napi::Promise::Deferred::New(env)),
+  mDidResumeEvents(false),
+  mNSFW(nsfw)
+{}
+
+Napi::Promise NSFW::ResumeWorker::RunJob() {
+  this->Queue();
+  return mDeferred.Promise();
+}
+
+void NSFW::ResumeWorker::Execute() {
+  mDidResumeEvents = true;
+  mNSFW->mPaused = false;
+}
+
+void NSFW::ResumeWorker::OnOK() {
+  if (mDidResumeEvents) {
+    mDeferred.Resolve(Env().Undefined());
+  } else {
+    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW could not be resumed.").Value());
+  }
+}
+
+Napi::Value NSFW::Resume(const Napi::CallbackInfo &info) {
+  return (new ResumeWorker(info.Env(), this))->RunJob();
+}
+
 void NSFW::pollForEvents() {
   while (mRunning) {
     uint32_t sleepDuration = 50;
-    {
+    if (!mPaused) {
       std::lock_guard<std::mutex> lock(mInterfaceLock);
 
       if (mInterface->hasErrored()) {
@@ -260,7 +319,9 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
 
   Napi::Function nsfwConstructor = DefineClass(env, "NSFW", {
     InstanceMethod("start", &NSFW::Start),
-    InstanceMethod("stop", &NSFW::Stop)
+    InstanceMethod("stop", &NSFW::Stop),
+    InstanceMethod("pause", &NSFW::Pause),
+    InstanceMethod("resume", &NSFW::Resume)
   });
 
   if (gcEnabled) {

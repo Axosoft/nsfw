@@ -45,6 +45,10 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
   this.stop = async () => {
     clearInterval(filePollerInterval);
   };
+
+  // Because I'm not that concerned about pausing a single-file watcher
+  this.pause = () => Promise.resolve();
+  this.resume = () => Promise.resolve();
 }
 
 
@@ -88,6 +92,8 @@ function nsfw(watchPath, eventCallback, options) {
 
   this.start = () => implementation.start();
   this.stop = () => implementation.stop();
+  this.pause = () => implementation.pause();
+  this.resume = () => implementation.resume();
 }
 
 nsfw.actions = {

@@ -50,6 +50,21 @@ void EventQueue::enqueue(
   const std::string &toDirectory,
   const std::string &toFile
 ) {
+  if (mPaused) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(mutex);
   queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile)));
 }
+
+void EventQueue::pause() {
+  mPaused = true;
+}
+
+void EventQueue::resume() {
+  mPaused = false;
+}
+
+EventQueue::EventQueue():
+  mPaused(false)
+{}

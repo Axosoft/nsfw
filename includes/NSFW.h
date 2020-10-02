@@ -24,7 +24,6 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::mutex mInterfaceLock;
     std::shared_ptr<EventQueue> mQueue;
     std::string mPath;
-    std::atomic<bool> mPaused;
     std::thread mPollThread;
     std::atomic<bool> mRunning;
 
@@ -92,6 +91,8 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
   public:
     static Napi::Object Init(Napi::Env, Napi::Object exports);
     static Napi::Value InstanceCount(const Napi::CallbackInfo &info);
+    void pauseQueue();
+    void resumeQueue();
     void pollForEvents();
 
     NSFW(const Napi::CallbackInfo &info);

@@ -47,9 +47,15 @@ public:
     const std::string &toFile = ""
   );
 
+  void pause();
+  void resume();
+
+  EventQueue();
+
 private:
   std::deque<std::unique_ptr<Event>> queue;
   std::mutex mutex;
+  bool mPaused;
 };
 
 #endif

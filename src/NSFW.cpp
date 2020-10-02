@@ -10,7 +10,6 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
   mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
   mPath(""),
-  mPaused(false),
   mRunning(false)
 {
   if (gcEnabled) {
@@ -208,7 +207,7 @@ Napi::Promise NSFW::PauseWorker::RunJob() {
 
 void NSFW::PauseWorker::Execute() {
   mDidPauseEvents = true;
-  mNSFW->mPaused = true;
+  mNSFW->pauseQueue();
 }
 
 void NSFW::PauseWorker::OnOK() {
@@ -237,7 +236,7 @@ Napi::Promise NSFW::ResumeWorker::RunJob() {
 
 void NSFW::ResumeWorker::Execute() {
   mDidResumeEvents = true;
-  mNSFW->mPaused = false;
+  mNSFW->resumeQueue();
 }
 
 void NSFW::ResumeWorker::OnOK() {
@@ -252,12 +251,18 @@ Napi::Value NSFW::Resume(const Napi::CallbackInfo &info) {
   return (new ResumeWorker(info.Env(), this))->RunJob();
 }
 
+void NSFW::pauseQueue() {
+  mQueue->pause();
+}
+
+void NSFW::resumeQueue() {
+  mQueue->resume();
+}
+
 void NSFW::pollForEvents() {
   while (mRunning) {
     uint32_t sleepDuration = 50;
-    if (mPaused) {
-      mQueue->clear();
-    } else {
+    {
       std::lock_guard<std::mutex> lock(mInterfaceLock);
 
       if (mInterface->hasErrored()) {

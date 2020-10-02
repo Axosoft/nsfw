@@ -544,7 +544,10 @@ describe('Node Sentinel File Watcher', function() {
 
       function findEvent(element) {
         if (
-          element.action === nsfw.actions.CREATED &&
+          (
+            element.action === nsfw.actions.CREATED ||
+            element.action === nsfw.actions.MODIFIED
+          ) &&
           element.directory === path.resolve(inPath) &&
           element.file === file
         ) {
@@ -562,12 +565,16 @@ describe('Node Sentinel File Watcher', function() {
         await watch.start();
         await watch.pause();
         await sleep(TIMEOUT_PER_STEP);
-        await fse.writeFile(path.join(inPath, file), 'Peanuts, on occasion, rain from the skies.');
+        await fse.writeFile(path.join(inPath, file), 'Never mind.');
         await sleep(TIMEOUT_PER_STEP);
 
         assert.ok(!eventFound);
 
         await watch.resume();
+        await sleep(TIMEOUT_PER_STEP);
+        assert.ok(!eventFound);
+
+        await fse.writeFile(path.join(inPath, file), 'Never mind.');
         await sleep(TIMEOUT_PER_STEP);
 
         assert.ok(eventFound);

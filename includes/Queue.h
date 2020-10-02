@@ -6,6 +6,7 @@
 #include <deque>
 #include <vector>
 #include <mutex>
+#include <atomic>
 
 enum EventType {
   CREATED = 0,
@@ -55,7 +56,7 @@ public:
 private:
   std::deque<std::unique_ptr<Event>> queue;
   std::mutex mutex;
-  bool mPaused;
+  std::atomic<bool> mPaused;
 };
 
 #endif

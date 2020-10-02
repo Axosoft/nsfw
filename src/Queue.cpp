@@ -59,6 +59,7 @@ void EventQueue::enqueue(
 
 void EventQueue::pause() {
   mPaused = true;
+  clear();
 }
 
 void EventQueue::resume() {

@@ -565,7 +565,7 @@ describe('Node Sentinel File Watcher', function() {
         await watch.start();
         await watch.pause();
         await sleep(TIMEOUT_PER_STEP);
-        await fse.writeFile(path.join(inPath, file), 'Never mind.');
+        await fse.writeFile(path.join(inPath, file), 'You will not see me.');
         await sleep(TIMEOUT_PER_STEP);
 
         assert.ok(!eventFound);
@@ -574,7 +574,7 @@ describe('Node Sentinel File Watcher', function() {
         await sleep(TIMEOUT_PER_STEP);
         assert.ok(!eventFound);
 
-        await fse.writeFile(path.join(inPath, file), 'Never mind.');
+        await fse.writeFile(path.join(inPath, file), 'But you will see me.');
         await sleep(TIMEOUT_PER_STEP);
 
         assert.ok(eventFound);

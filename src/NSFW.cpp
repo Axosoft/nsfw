@@ -255,7 +255,9 @@ Napi::Value NSFW::Resume(const Napi::CallbackInfo &info) {
 void NSFW::pollForEvents() {
   while (mRunning) {
     uint32_t sleepDuration = 50;
-    if (!mPaused) {
+    if (mPaused) {
+      mQueue->clear();
+    } else {
       std::lock_guard<std::mutex> lock(mInterfaceLock);
 
       if (mInterface->hasErrored()) {

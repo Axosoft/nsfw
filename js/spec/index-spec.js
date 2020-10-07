@@ -536,6 +536,55 @@ describe('Node Sentinel File Watcher', function() {
     });
   });
 
+  describe('Pausing', function () {
+    it('can pause and resume event reporting', async function () {
+      const file = 'another_test.file';
+      const inPath = path.resolve(workDir, 'test2', 'folder2');
+      let eventFound = false;
+
+      function findEvent(element) {
+        if (
+          (
+            element.action === nsfw.actions.CREATED ||
+            element.action === nsfw.actions.MODIFIED
+          ) &&
+          element.directory === path.resolve(inPath) &&
+          element.file === file
+        ) {
+          eventFound = true;
+        }
+      }
+
+      let watch = await nsfw(
+        workDir,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      );
+
+      try {
+        await watch.start();
+        await watch.pause();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(path.join(inPath, file), 'You will not see me.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(!eventFound);
+
+        await watch.resume();
+        await sleep(TIMEOUT_PER_STEP);
+        assert.ok(!eventFound);
+
+        await fse.writeFile(path.join(inPath, file), 'But you will see me.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(eventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+  });
+
   describe('Errors', function() {
     it('can gracefully recover when the watch folder is deleted', async function() {
       const inPath = path.join(workDir, 'test4');

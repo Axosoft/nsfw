@@ -193,6 +193,72 @@ Napi::Value NSFW::Stop(const Napi::CallbackInfo &info) {
   return (new StopWorker(info.Env(), this))->RunJob();
 }
 
+NSFW::PauseWorker::PauseWorker(Napi::Env env, NSFW *nsfw):
+  Napi::AsyncWorker(env, "nsfw"),
+  mDeferred(Napi::Promise::Deferred::New(env)),
+  mDidPauseEvents(false),
+  mNSFW(nsfw)
+{}
+
+Napi::Promise NSFW::PauseWorker::RunJob() {
+  this->Queue();
+  return mDeferred.Promise();
+}
+
+void NSFW::PauseWorker::Execute() {
+  mDidPauseEvents = true;
+  mNSFW->pauseQueue();
+}
+
+void NSFW::PauseWorker::OnOK() {
+  if (mDidPauseEvents) {
+    mDeferred.Resolve(Env().Undefined());
+  } else {
+    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW could not be paused.").Value());
+  }
+}
+
+Napi::Value NSFW::Pause(const Napi::CallbackInfo &info) {
+  return (new PauseWorker(info.Env(), this))->RunJob();
+}
+
+NSFW::ResumeWorker::ResumeWorker(Napi::Env env, NSFW *nsfw):
+  Napi::AsyncWorker(env, "nsfw"),
+  mDeferred(Napi::Promise::Deferred::New(env)),
+  mDidResumeEvents(false),
+  mNSFW(nsfw)
+{}
+
+Napi::Promise NSFW::ResumeWorker::RunJob() {
+  this->Queue();
+  return mDeferred.Promise();
+}
+
+void NSFW::ResumeWorker::Execute() {
+  mDidResumeEvents = true;
+  mNSFW->resumeQueue();
+}
+
+void NSFW::ResumeWorker::OnOK() {
+  if (mDidResumeEvents) {
+    mDeferred.Resolve(Env().Undefined());
+  } else {
+    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW could not be resumed.").Value());
+  }
+}
+
+Napi::Value NSFW::Resume(const Napi::CallbackInfo &info) {
+  return (new ResumeWorker(info.Env(), this))->RunJob();
+}
+
+void NSFW::pauseQueue() {
+  mQueue->pause();
+}
+
+void NSFW::resumeQueue() {
+  mQueue->resume();
+}
+
 void NSFW::pollForEvents() {
   while (mRunning) {
     uint32_t sleepDuration = 50;
@@ -260,7 +326,9 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
 
   Napi::Function nsfwConstructor = DefineClass(env, "NSFW", {
     InstanceMethod("start", &NSFW::Start),
-    InstanceMethod("stop", &NSFW::Stop)
+    InstanceMethod("stop", &NSFW::Stop),
+    InstanceMethod("pause", &NSFW::Pause),
+    InstanceMethod("resume", &NSFW::Resume)
   });
 
   if (gcEnabled) {

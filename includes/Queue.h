@@ -6,6 +6,7 @@
 #include <deque>
 #include <vector>
 #include <mutex>
+#include <atomic>
 
 enum EventType {
   CREATED = 0,
@@ -47,9 +48,15 @@ public:
     const std::string &toFile = ""
   );
 
+  void pause();
+  void resume();
+
+  EventQueue();
+
 private:
   std::deque<std::unique_ptr<Event>> queue;
   std::mutex mutex;
+  std::atomic<bool> mPaused;
 };
 
 #endif

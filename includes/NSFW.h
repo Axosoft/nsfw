@@ -58,9 +58,41 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
 
     Napi::Value Stop(const Napi::CallbackInfo &info);
 
+    class PauseWorker: public Napi::AsyncWorker {
+      public:
+        PauseWorker(Napi::Env env, NSFW *nsfw);
+        void Execute();
+        void OnOK();
+        Napi::Promise RunJob();
+
+      private:
+        Napi::Promise::Deferred mDeferred;
+        std::atomic<bool> mDidPauseEvents;
+        NSFW *mNSFW;
+    };
+
+    Napi::Value Pause(const Napi::CallbackInfo &info);
+
+    class ResumeWorker: public Napi::AsyncWorker {
+      public:
+        ResumeWorker(Napi::Env env, NSFW *nsfw);
+        void Execute();
+        void OnOK();
+        Napi::Promise RunJob();
+
+      private:
+        Napi::Promise::Deferred mDeferred;
+        std::atomic<bool> mDidResumeEvents;
+        NSFW *mNSFW;
+    };
+
+    Napi::Value Resume(const Napi::CallbackInfo &info);
+
   public:
     static Napi::Object Init(Napi::Env, Napi::Object exports);
     static Napi::Value InstanceCount(const Napi::CallbackInfo &info);
+    void pauseQueue();
+    void resumeQueue();
     void pollForEvents();
 
     NSFW(const Napi::CallbackInfo &info);

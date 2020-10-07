@@ -67,7 +67,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
 
       private:
         Napi::Promise::Deferred mDeferred;
-        bool mDidPauseEvents;
+        std::atomic<bool> mDidPauseEvents;
         NSFW *mNSFW;
     };
 
@@ -82,7 +82,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
 
       private:
         Napi::Promise::Deferred mDeferred;
-        bool mDidResumeEvents;
+        std::atomic<bool> mDidResumeEvents;
         NSFW *mNSFW;
     };
 

@@ -13,6 +13,10 @@ declare module 'nsfw' {
     export default func;
 
     export interface NSFW {
+        /** Returns a Promise that resolves after NSFW has paused listening to events. */
+        pause: () => Promise<void>;
+        /** Returns a Promise that resolves after NSFW has resumed listening to events. */
+        resume: () => Promise<void>;
         /** Returns a Promise that resolves when the NSFW object has started watching the path. */
         start: () => Promise<void>;
         /** Returns a Promise that resolves when NSFW object has halted. */

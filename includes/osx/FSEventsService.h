@@ -3,6 +3,7 @@
 
 #include "RunLoop.h"
 #include "../Queue.h"
+#include "../PathFilter.h"
 
 #include <CoreServices/CoreServices.h>
 #include <time.h>
@@ -24,7 +25,7 @@ class RunLoop;
 
 class FSEventsService {
 public:
-  FSEventsService(std::shared_ptr<EventQueue> queue, std::string path);
+  FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, std::shared_ptr<PathFilter> pathFilter);
 
   friend void FSEventsServiceCallback(
     ConstFSEventStreamRef streamRef,

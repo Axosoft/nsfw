@@ -13,11 +13,12 @@ using NativeImplementation = InotifyService;
 #endif
 
 #include "Queue.h"
+#include "PathFilter.h"
 #include <vector>
 
 class NativeInterface {
 public:
-  NativeInterface(const std::string &path, std::shared_ptr<EventQueue> queue);
+  NativeInterface(const std::string &path, std::shared_ptr<EventQueue> queue, std::shared_ptr<PathFilter> pathFilter);
   ~NativeInterface();
 
   std::string getError();
@@ -26,6 +27,7 @@ public:
 
 private:
   std::unique_ptr<NativeImplementation> mNativeInterface;
+  std::shared_ptr<PathFilter> mPathFilter;
 };
 
 #endif

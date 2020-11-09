@@ -10,6 +10,7 @@
 
 #include "./Queue.h"
 #include "./NativeInterface.h"
+#include "./PathFilter.h"
 
 class NSFW : public Napi::ObjectWrap<NSFW> {
   private:
@@ -23,6 +24,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::unique_ptr<NativeInterface> mInterface;
     std::mutex mInterfaceLock;
     std::shared_ptr<EventQueue> mQueue;
+    std::shared_ptr<PathFilter> mPathFilter;
     std::string mPath;
     std::thread mPollThread;
     std::atomic<bool> mRunning;

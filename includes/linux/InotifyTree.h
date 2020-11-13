@@ -21,7 +21,7 @@ using EmitCreatedEvent = std::function<void(std::string, std::string)>;
 
 class InotifyTree {
 public:
-  InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths);
+  InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths, bool followSymlinks);
 
   void addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent = nullptr);
   std::string getError();
@@ -97,6 +97,7 @@ private:
   std::string getParentPath(const std::string &filePath);
   bool existWatchedPath();
 
+  bool mFollowSymlinks;
   std::string mError;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;

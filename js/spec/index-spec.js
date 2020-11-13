@@ -1128,4 +1128,115 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
   });
+
+  describe('followSymlinks', () => {
+    const watchPath = path.join(workDir, 'test0');
+    const targetPath = path.join(workDir, 'test1');
+    const linkName = 'link';
+    const linkPath = path.join(watchPath, linkName);
+    const createdFileName = 'created.file';
+
+    beforeEach((done) => {
+      if (process.platform === 'linux') {
+        fse.ensureSymlink(targetPath, linkPath).then(done);
+      } else {
+        throw new Error('followSymlinks tests only run on linux');
+      }
+    });
+
+    it('fires a create event for a file in a symlink target directory when followSymlinks is true', (done) => {
+      let foundEvent = false;
+
+      const findEvent = events => {
+        events.forEach(event => {
+          if (
+            event.action === nsfw.actions.CREATED &&
+            event.directory === linkPath &&
+            event.file === createdFileName
+          ) {
+            foundEvent = true;
+          }
+        });
+      };
+
+      let watch;
+
+      nsfw(watchPath, findEvent, { debounceMS: DEBOUNCE })
+        .then(w => {
+          watch = w;
+          return watch.start();
+        })
+        .then(() => {
+          const fd = fse.openSync(path.join(targetPath, createdFileName), 'w');
+          return fse.close(fd);
+        })
+        .then(() => new Promise(resolve => setTimeout(resolve, TIMEOUT_PER_STEP)))
+        .then(() => {
+          assert.ok(foundEvent);
+          return watch.stop();
+        })
+        .then(done);
+    });
+
+    it('ignores events for files in a symlink target directory when followSymlinks is false', (done) => {
+      let eventCount = 0;
+
+      const countEvents = events => {
+        eventCount += events.length;
+      };
+
+      let watch;
+
+      nsfw(watchPath, countEvents, { debounceMS: DEBOUNCE, followSymlinks: false })
+        .then(w => {
+          watch = w;
+          return watch.start();
+        })
+        .then(() => {
+          const fd = fse.openSync(path.join(targetPath, createdFileName), 'w');
+          return fse.close(fd);
+        })
+        .then(() => new Promise(resolve => setTimeout(resolve, TIMEOUT_PER_STEP)))
+        .then(() => {
+          assert.equal(eventCount, 0);
+          return watch.stop();
+        })
+        .then(done);
+    });
+
+    it('fires events for the symlink itself when followSymlinks is false', (done) => {
+      const newTargetPath = path.join(workDir, 'test2');
+      const firedEvents = [];
+
+      const storeEvents = events => {
+        firedEvents.push(...events);
+      };
+
+      let watch;
+
+      nsfw(watchPath, storeEvents, { debounceMS: DEBOUNCE, followSymlinks: false })
+        .then(w => {
+          watch = w;
+          return watch.start();
+        })
+        .then(() =>
+          fse.unlink(linkPath)
+            .then(() => fse.symlink(newTargetPath, linkPath))
+        )
+        .then(() => new Promise(resolve => setTimeout(resolve, TIMEOUT_PER_STEP)))
+        .then(() => {
+          assert.strictEqual(firedEvents.length, 2);
+          assert.deepStrictEqual(
+            firedEvents[0],
+            { action: nsfw.actions.DELETED, directory: watchPath, file: linkName }
+          );
+          assert.deepStrictEqual(
+            firedEvents[1],
+            { action: nsfw.actions.CREATED, directory: watchPath, file: linkName }
+          );
+          return watch.stop();
+        })
+        .then(done);
+    });
+  });
 });

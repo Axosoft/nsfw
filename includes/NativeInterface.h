@@ -17,7 +17,7 @@ using NativeImplementation = InotifyService;
 
 class NativeInterface {
 public:
-  NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths, std::shared_ptr<EventQueue> queue);
+  NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths, std::shared_ptr<EventQueue> queue, bool followSymlinks);
   ~NativeInterface();
 
   std::string getError();

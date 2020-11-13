@@ -6,6 +6,7 @@ bool NSFW::gcEnabled = false;
 NSFW::NSFW(const Napi::CallbackInfo &info):
   Napi::ObjectWrap<NSFW>(info),
   mDebounceMS(0),
+  mFollowSymlinks(true),
   mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
   mPath(""),
@@ -91,6 +92,13 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       }
     }
 
+    if (options.Has("followSymlinks")) {
+      Napi::Value maybeFollowSymlinks = options["followSymlinks"];
+      if (!maybeFollowSymlinks.IsBoolean()) {
+        throw Napi::TypeError::New(env, "options.followSymlinks must be a boolean.");
+      }
+      mFollowSymlinks = maybeFollowSymlinks.ToBoolean();
+    }
   }
 
   if (gcEnabled) {
@@ -141,7 +149,7 @@ void NSFW::StartWorker::Execute() {
   }
 
   mNSFW->mQueue->clear();
-  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mExcludedPaths, mNSFW->mQueue));
+  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mExcludedPaths, mNSFW->mQueue, mNSFW->mFollowSymlinks));
 
   if (mNSFW->mInterface->isWatching()) {
     mStatus = STARTED;

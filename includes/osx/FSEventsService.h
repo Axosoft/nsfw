@@ -24,7 +24,7 @@ class RunLoop;
 
 class FSEventsService {
 public:
-  FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths);
+  FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths, bool followSymlinks);
 
   friend void FSEventsServiceCallback(
     ConstFSEventStreamRef streamRef,

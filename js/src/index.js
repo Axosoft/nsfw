@@ -52,7 +52,8 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
 
 
 const buildNSFW = async (watchPath, eventCallback,
-  { debounceMS = 500, errorCallback: _errorCallback, excludedPaths = [] } = {}) => {
+  { debounceMS = 500, errorCallback: _errorCallback, excludedPaths = [], followSymlinks } = {}) => {
+
   if (Number.isInteger(debounceMS)) {
     if (debounceMS < 1) {
       throw new Error('Minimum debounce is 1ms.');
@@ -61,10 +62,14 @@ const buildNSFW = async (watchPath, eventCallback,
     throw new Error('debounceMS must be an integer.');
   }
 
-  const errorCallback = _errorCallback || ((nsfwError) => { throw nsfwError; });
+  const errorCallback = errorCallback || ((nsfwError) => { throw nsfwError; });
 
   if (!path.isAbsolute(watchPath)) {
     throw new Error('Path to watch must be an absolute path.');
+  }
+
+  if (followSymlinks === undefined) {
+    followSymlinks = true;
   }
 
   let stats;
@@ -93,7 +98,7 @@ const buildNSFW = async (watchPath, eventCallback,
   if (stats.isDirectory()) {
     return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, excludedPaths });
   } else if (stats.isFile()) {
-    return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
+    return new NSFWFilePoller(watchPath, eventCallback, debounceMS, errorCallback);
   } else {
     throw new Error('Path must be a valid path to a file or a directory');
   }

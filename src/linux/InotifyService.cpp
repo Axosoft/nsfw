@@ -1,6 +1,6 @@
 #include "../../includes/linux/InotifyService.h"
 
-InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
+InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths, bool followSymlinks):
   mEventLoop(NULL),
   mQueue(queue),
   mTree(NULL) {
@@ -10,7 +10,7 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
     return;
   }
 
-  mTree = new InotifyTree(mInotifyInstance, path, excludedPaths);
+  mTree = new InotifyTree(mInotifyInstance, path, excludedPaths, followSymlinks);
   if (!mTree->isRootAlive()) {
     delete mTree;
     mTree = NULL;

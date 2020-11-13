@@ -18,6 +18,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     static bool gcEnabled;
 
     uint32_t mDebounceMS;
+    bool mFollowSymlinks;
     Napi::ThreadSafeFunction mErrorCallback;
     Napi::ThreadSafeFunction mEventCallback;
     std::unique_ptr<NativeInterface> mInterface;

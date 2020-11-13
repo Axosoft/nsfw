@@ -1,7 +1,7 @@
 #include "../../includes/osx/FSEventsService.h"
 #include <iostream>
 
-FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
+FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths, bool followSymlinks):
   mPath(path), mQueue(queue), mRootChanged(false) {
   mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
   for (const std::string &excludedPath : excludedPaths) {

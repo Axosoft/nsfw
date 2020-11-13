@@ -39,7 +39,24 @@ static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
   return wideString;
 }
 
-Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path, const std::vector<std::string> &excludedPaths) {
+HANDLE Controller::openDirectory(const std::wstring &path) {
+  return CreateFileW(
+          path.data(),
+          FILE_LIST_DIRECTORY,
+          FILE_SHARE_READ
+          | FILE_SHARE_WRITE
+          | FILE_SHARE_DELETE,
+          NULL,
+          OPEN_EXISTING,
+          FILE_FLAG_BACKUP_SEMANTICS
+          | FILE_FLAG_OVERLAPPED,
+          NULL
+         );
+}
+
+Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path, const std::vector<std::string> &excludedPaths, bool followSymlinks) {
+  : mDirectoryHandle(INVALID_HANDLE_VALUE)
+{
   auto widePath = convertMultiByteToWideChar(path);
   const bool isNt = isNtPath(widePath);
   if (!isNt) {

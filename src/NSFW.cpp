@@ -68,22 +68,23 @@ void NSFW::fireEventCallback(uv_async_t *handle) {
 
   v8::Local<v8::Array> eventArray = New<v8::Array>((int)baton->events->size());
 
+  v8::Local<v8::Context> context = Nan::GetCurrentContext();
   for (unsigned int i = 0; i < baton->events->size(); ++i) {
     v8::Local<v8::Object> jsEvent = New<v8::Object>();
 
 
-    jsEvent->Set(New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*baton->events)[i]->type));
-    jsEvent->Set(New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromDirectory).ToLocalChecked());
+    jsEvent->Set(context, New<v8::String>("action").ToLocalChecked(), New<v8::Number>((*baton->events)[i]->type));
+    jsEvent->Set(context, New<v8::String>("directory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromDirectory).ToLocalChecked());
 
     if ((*baton->events)[i]->type == RENAMED) {
-      jsEvent->Set(New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
-      jsEvent->Set(New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toDirectory).ToLocalChecked());
-      jsEvent->Set(New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toFile).ToLocalChecked());
+      jsEvent->Set(context, New<v8::String>("oldFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
+      jsEvent->Set(context, New<v8::String>("newDirectory").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toDirectory).ToLocalChecked());
+      jsEvent->Set(context, New<v8::String>("newFile").ToLocalChecked(), New<v8::String>((*baton->events)[i]->toFile).ToLocalChecked());
     } else {
-      jsEvent->Set(New<v8::String>("file").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
+      jsEvent->Set(context, New<v8::String>("file").ToLocalChecked(), New<v8::String>((*baton->events)[i]->fromFile).ToLocalChecked());
     }
 
-    eventArray->Set(i, jsEvent);
+    eventArray->Set(context, i, jsEvent);
   }
 
   v8::Local<v8::Value> argv[] = {
@@ -213,7 +214,8 @@ NAN_METHOD(NSFW::Start) {
     return;
   }
 
-  New(nsfw->mPersistentHandle)->Set(New("nsfw").ToLocalChecked(), info.This());
+  v8::Local<v8::Context> context = Nan::GetCurrentContext();
+  New(nsfw->mPersistentHandle)->Set(context, New("nsfw").ToLocalChecked(), info.This());
 
   AsyncQueueWorker(new StartWorker(nsfw, callback));
 }

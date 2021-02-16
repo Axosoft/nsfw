@@ -1,4 +1,6 @@
 #include "../../includes/linux/InotifyTree.h"
+#include <cstdio>
+#include <sys/stat.h>
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
@@ -6,7 +8,6 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path):
   mError(""),
   mInotifyInstance(inotifyInstance) {
   mInotifyNodeByWatchDescriptor = new std::map<int, InotifyNode *>;
-
   std::string directory;
   std::string watchName;
   if (path.length() == 1 && path[0] == '/') {
@@ -41,14 +42,14 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path):
   }
 }
 
-void InotifyTree::addDirectory(int wd, std::string name) {
+void InotifyTree::addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent) {
   auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
   if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {
     return;
   }
 
   InotifyNode *node = nodeIterator->second;
-  node->addChild(name);
+  node->addChild(name, emitCreatedEvent);
 }
 
 void InotifyTree::addNodeReferenceByWD(int wd, InotifyNode *node) {
@@ -159,7 +160,8 @@ InotifyTree::InotifyNode::InotifyNode(
   InotifyNode *parent,
   std::string directory,
   std::string name,
-  ino_t inodeNumber
+  ino_t inodeNumber,
+  EmitCreatedEvent emitCreatedEvent
 ):
   mDirectory(directory),
   mInodeNumber(inodeNumber),
@@ -170,6 +172,10 @@ InotifyTree::InotifyNode::InotifyNode(
   mChildren = new std::map<std::string, InotifyNode *>;
   mFullPath = createFullPath(mDirectory, mName);
   mWatchDescriptorInitialized = false;
+
+  #ifdef NSFW_TEST_SLOW_1
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  #endif
 
   if (!inotifyInit()) {
     return;
@@ -200,6 +206,10 @@ InotifyTree::InotifyNode::InotifyNode(
       continue;
     }
 
+    if (emitCreatedEvent) {
+      emitCreatedEvent(mFullPath, fileName);
+    }
+
     std::string filePath = createFullPath(mFullPath, fileName);
 
     struct stat file;
@@ -218,7 +228,8 @@ InotifyTree::InotifyNode::InotifyNode(
       this,
       mFullPath,
       fileName,
-      file.st_ino
+      file.st_ino,
+      emitCreatedEvent
     );
 
     if (child->isAlive()) {
@@ -250,7 +261,7 @@ InotifyTree::InotifyNode::~InotifyNode() {
   delete mChildren;
 }
 
-void InotifyTree::InotifyNode::addChild(std::string name) {
+void InotifyTree::InotifyNode::addChild(std::string name, EmitCreatedEvent emitCreatedEvent) {
   struct stat file;
 
   if (stat(createFullPath(mFullPath, name).c_str(), &file) >= 0 && mTree->addInode(file.st_ino)) {
@@ -260,7 +271,8 @@ void InotifyTree::InotifyNode::addChild(std::string name) {
       this,
       mFullPath,
       name,
-      file.st_ino
+      file.st_ino,
+      emitCreatedEvent
     );
 
     if (child->isAlive()) {

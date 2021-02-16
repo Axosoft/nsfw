@@ -2,19 +2,15 @@ const assert = require('assert');
 const exec = require('executive');
 const fse = require('fs-extra');
 const path = require('path');
-const { promisify } = require('util');
 
-const nsfw = require('../src/');
+const { DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, sleep } = require('./common');
 
-const DEBOUNCE = 1000;
-const TIMEOUT_PER_STEP = 3000;
-
-const sleep = promisify(setTimeout);
+const nsfw = require('../src');
 
 describe('Node Sentinel File Watcher', function() {
   this.timeout(120000);
 
-  const workDir = path.resolve('./mockfs');
+  assert.ok(typeof nsfw._native.NSFW_TEST_SLOW === 'undefined', 'NSFW should NOT be built in slow mode');
 
   beforeEach(async function() {
     async function makeDir(identifier) {
@@ -438,49 +434,6 @@ describe('Node Sentinel File Watcher', function() {
   });
 
   describe('Recursive', function() {
-    it('can listen for the creation of a deeply nested file', async function() {
-      const folders = 'a_very_deep_tree'.split(''); // ['a', '_', ...]
-      const file = 'a_file.txt';
-
-      const events = new Map();
-      let directory = workDir; for (const folder of folders) {
-        events.set(directory, { file: folder, found: false });
-        directory = path.join(directory, folder);
-      }
-      events.set(directory, { file, found: false });
-
-      function findEvent(element) {
-        if (element.action === nsfw.actions.CREATED) {
-          const item = events.get(element.directory);
-          if (item === undefined || item.file !== element.file) {
-            return;
-          }
-          item.found = true;
-        }
-      }
-
-      let watch = await nsfw(
-        workDir,
-        events => events.forEach(findEvent),
-        { debounceMS: DEBOUNCE }
-      );
-
-      try {
-        await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
-        await fse.mkdirp(directory);
-        await fse.close(await fse.open(path.join(directory, file), 'w'));
-        await sleep(TIMEOUT_PER_STEP);
-
-        for (const [directory, item] of events.entries()) {
-          assert.ok(item.found, `${path.join(directory, item.file)} wasn't found`);
-        }
-      } finally {
-        await watch.stop();
-        watch = null;
-      }
-    });
-
     it('can listen for the destruction of a directory and its subtree', async function() {
       const inPath = path.resolve(workDir, 'test4');
       let deletionCount = 0;

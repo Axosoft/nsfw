@@ -102,6 +102,8 @@ nsfw.actions = {
   RENAMED: 3
 };
 
+nsfw._native = NSFW;
+
 if (NSFW.getAllocatedInstanceCount) {
   nsfw.getAllocatedInstanceCount = NSFW.getAllocatedInstanceCount;
 }

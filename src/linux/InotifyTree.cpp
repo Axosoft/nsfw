@@ -34,10 +34,7 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path):
     file.st_ino
   );
 
-  if (
-    !mRoot->isAlive() ||
-    !mRoot->inotifyInit()
-  ) {
+  if (!mRoot->isAlive()) {
     delete mRoot;
     mRoot = NULL;
     return;
@@ -174,6 +171,10 @@ InotifyTree::InotifyNode::InotifyNode(
   mFullPath = createFullPath(mDirectory, mName);
   mWatchDescriptorInitialized = false;
 
+  if (!inotifyInit()) {
+    return;
+  }
+
   dirent ** directoryContents = NULL;
 
   int resultCountOrError = scandir(
@@ -262,10 +263,7 @@ void InotifyTree::InotifyNode::addChild(std::string name) {
       file.st_ino
     );
 
-    if (
-      child->isAlive() &&
-      child->inotifyInit()
-    ) {
+    if (child->isAlive()) {
       (*mChildren)[name] = child;
     } else {
       delete child;
@@ -334,34 +332,8 @@ bool InotifyTree::InotifyNode::inotifyInit() {
     return false;
   }
 
-  auto *childrenToRemove = new std::vector<std::string>;
-  childrenToRemove->reserve(mChildren->size());
-  for (auto i = mChildren->begin(); i != mChildren->end(); ++i) {
-    if (!i->second->inotifyInit()) {
-      childrenToRemove->push_back(i->second->getName());
-    }
-  }
-
-  if (childrenToRemove->size() > 0) {
-    struct stat file;
-
-    if (
-      stat(mFullPath.c_str(), &file) < 0 ||
-      !S_ISDIR(file.st_mode)
-    ) {
-      mAlive = false;
-    } else {
-      for (auto i = childrenToRemove->begin(); i != childrenToRemove->end(); ++i) {
-        removeChild(*i);
-      }
-      mWatchDescriptorInitialized = true;
-      mTree->addNodeReferenceByWD(mWatchDescriptor, this);
-    }
-  } else {
-    mWatchDescriptorInitialized = true;
-    mTree->addNodeReferenceByWD(mWatchDescriptor, this);
-  }
-  delete childrenToRemove;
+  mWatchDescriptorInitialized = true;
+  mTree->addNodeReferenceByWD(mWatchDescriptor, this);
 
   return mAlive;
 }

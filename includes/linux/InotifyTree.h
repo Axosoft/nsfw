@@ -10,12 +10,20 @@
 #include <vector>
 #include <map>
 #include <unordered_set>
+#include <functional>
+#include <chrono>
+#include <thread>
+
+/**
+ * void EmitCreatedEvent(std::string directory, std::string file);
+ */
+using EmitCreatedEvent = std::function<void(std::string, std::string)>;
 
 class InotifyTree {
 public:
   InotifyTree(int inotifyInstance, std::string path);
 
-  void addDirectory(int wd, std::string name);
+  void addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent = nullptr);
   std::string getError();
   bool getPath(std::string &out, int wd);
   bool hasErrored();
@@ -34,10 +42,11 @@ private:
       InotifyNode *parent,
       std::string directory,
       std::string name,
-      ino_t inodeNumber
+      ino_t inodeNumber,
+      EmitCreatedEvent emitCreatedEvent = nullptr
     );
 
-    void addChild(std::string name);
+    void addChild(std::string name, EmitCreatedEvent emitCreatedEvent = nullptr);
     void fixPaths();
     std::string getFullPath();
     std::string getName();
@@ -60,7 +69,8 @@ private:
                                 | IN_MODIFY
                                 | IN_MOVED_FROM
                                 | IN_MOVED_TO
-                                | IN_DELETE_SELF;
+                                | IN_DELETE_SELF
+                                | IN_ONLYDIR;
 
     bool mAlive;
     std::map<std::string, InotifyNode *> *mChildren;

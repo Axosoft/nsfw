@@ -98,8 +98,10 @@ void InotifyService::createDirectory(int wd, std::string name) {
     return;
   }
 
-  mTree->addDirectory(wd, name);
   dispatch(CREATED, wd, name);
+  mTree->addDirectory(wd, name, [this](std::string directory, std::string file) {
+    mQueue->enqueue(CREATED, directory, file);
+  });
 }
 
 void InotifyService::removeDirectory(int wd) {

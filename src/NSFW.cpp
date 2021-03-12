@@ -339,6 +339,13 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
     ));
   }
 
+  #ifdef NSFW_TEST_SLOW_1
+    nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Value(
+      "NSFW_TEST_SLOW",
+      Napi::Boolean::New(env, true)
+    ));
+  #endif
+
   constructor = Napi::Persistent(nsfwConstructor);
   constructor.SuppressDestruct();
 

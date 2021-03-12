@@ -62,6 +62,9 @@
                 }
             }],
             ["OS=='linux' or OS=='freebsd'", {
+                "defines": [
+                    "NSFW_TEST_SLOW_<!(node -p process.env.NSFW_TEST_SLOW)"
+                ],
                 "sources": [
                     "src/linux/InotifyEventLoop.cpp",
                     "src/linux/InotifyTree.cpp",
@@ -102,7 +105,7 @@
                 ],
                 "libraries": [
                     "-L/usr/local/lib",
-                    "-linotify" 
+                    "-linotify"
                 ]
             }],
         ]

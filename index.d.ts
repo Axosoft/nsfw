@@ -60,8 +60,8 @@ declare module 'nsfw' {
         interface Options {
             /** time in milliseconds to debounce the event callback */
             debounceMS?: number;
-            /**  callback to fire in the case of errors */
-            errorCallback: (err: any) => void
+            /** callback to fire in the case of errors */
+            errorCallback?: (err: any) => void
         }
     }
 

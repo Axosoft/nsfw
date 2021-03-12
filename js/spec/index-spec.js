@@ -562,6 +562,31 @@ describe('Node Sentinel File Watcher', function() {
         watch = null;
       }
     });
+
+    it('Can pass falsy values to errorCallback', async function() {
+      const ok = [undefined, null, 0, '', false];
+      const notOk = [1, true, 'a', {}, []];
+      await Promise.all([
+        ...ok.map(async errorCallback => nsfw(
+          workDir,
+          () => {},
+          { errorCallback }
+        )),
+        ...notOk.map(async errorCallback => {
+          try {
+            await nsfw(
+              workDir,
+              () => {},
+              { errorCallback },
+            );
+          } catch (error) {
+            assert.ok(error.message === 'options.errorCallback must be a function.');
+            return;
+          }
+          assert.fail('nsfw must error if errorCallback is not a function nor a falsy value');
+        })
+      ]);
+    });
   });
 
   describe('Stress', function() {

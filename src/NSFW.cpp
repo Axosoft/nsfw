@@ -12,10 +12,6 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
   mPath(""),
   mRunning(false)
 {
-  if (gcEnabled) {
-    instanceCount++;
-  }
-
   auto env = info.Env();
   if (info.Length() < 1 || !info[0].IsString()) {
     throw Napi::TypeError::New(env, "Must pass a string path as the first argument to NSFW.");
@@ -70,6 +66,10 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       0,
       1
     );
+  }
+
+  if (gcEnabled) {
+    instanceCount++;
   }
 }
 

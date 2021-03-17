@@ -684,6 +684,15 @@ describe('Node Sentinel File Watcher', function() {
   describe('Garbage collection', function() {
     it('can garbage collect all instances', async function () {
       this.timeout(60000);
+      let threw = false;
+      try {
+        // Try to get an error coming from the C++ constructor by passing a bad callback
+        await nsfw(workDir, () => {}, { errorCallback: 'not a callback' });
+      } catch (e) {
+        threw = true;
+      } if (!threw) {
+        assert.fail('nsfw must throw when provided a bad callback');
+      }
       while (nsfw.getAllocatedInstanceCount() > 0) {
         global.gc();
         await sleep(0);

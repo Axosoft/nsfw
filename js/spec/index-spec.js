@@ -562,6 +562,31 @@ describe('Node Sentinel File Watcher', function() {
         watch = null;
       }
     });
+
+    it('Can pass falsy values to errorCallback', async function() {
+      const ok = [undefined, null, 0, '', false];
+      const notOk = [1, true, 'a', {}, []];
+      await Promise.all([
+        ...ok.map(async errorCallback => nsfw(
+          workDir,
+          () => {},
+          { errorCallback }
+        )),
+        ...notOk.map(async errorCallback => {
+          try {
+            await nsfw(
+              workDir,
+              () => {},
+              { errorCallback },
+            );
+          } catch (error) {
+            assert.ok(error.message === 'options.errorCallback must be a function.');
+            return;
+          }
+          assert.fail('nsfw must error if errorCallback is not a function nor a falsy value');
+        })
+      ]);
+    });
   });
 
   describe('Stress', function() {
@@ -684,6 +709,15 @@ describe('Node Sentinel File Watcher', function() {
   describe('Garbage collection', function() {
     it('can garbage collect all instances', async function () {
       this.timeout(60000);
+      let threw = false;
+      try {
+        // Try to get an error coming from the C++ constructor by passing a bad callback
+        await nsfw(workDir, () => {}, { errorCallback: 'not a callback' });
+      } catch (e) {
+        threw = true;
+      } if (!threw) {
+        assert.fail('nsfw must throw when provided a bad callback');
+      }
       while (nsfw.getAllocatedInstanceCount() > 0) {
         global.gc();
         await sleep(0);

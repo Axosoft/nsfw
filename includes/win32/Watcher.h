@@ -36,6 +36,7 @@ class Watcher
 
     std::atomic<bool> mRunning;
     SingleshotSemaphore mHasStartedSemaphore;
+    SingleshotSemaphore mIsRunningSemaphore;
     mutable std::mutex mErrorMutex;
     std::string mError;
 

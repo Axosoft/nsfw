@@ -38,7 +38,7 @@ std::string Watcher::getUTF8Directory(std::wstring path) {
     // before returning it to the user
     stripNTPrefix(uft16DirectoryString);
   }
-  
+
   int utf8length = WideCharToMultiByte(
       CP_UTF8,
       0,
@@ -239,6 +239,7 @@ void Watcher::start() {
   mRunner = std::thread([this] {
     // mRunning is set to false in the d'tor
     mRunning = true;
+    mIsRunningSemaphore.signal();
     run();
   });
 
@@ -247,11 +248,16 @@ void Watcher::start() {
     return;
   }
 
+  if (!mIsRunningSemaphore.waitFor(std::chrono::seconds(10))) {
+    setError("Watcher is not started");
+    return;
+  }
+
   QueueUserAPC([](__in ULONG_PTR self) {
     auto watcher = reinterpret_cast<Watcher*>(self);
     watcher->pollDirectoryChanges();
     watcher->mHasStartedSemaphore.signal();
-  } , mRunner.native_handle(), (ULONG_PTR)this);
+  }, mRunner.native_handle(), (ULONG_PTR)this);
 
   if (!mHasStartedSemaphore.waitFor(std::chrono::seconds(10))) {
     setError("Watcher is not started");

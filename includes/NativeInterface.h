@@ -7,7 +7,7 @@ using NativeImplementation = Controller;
 #elif defined(__APPLE_CC__)
 #include "../includes/osx/FSEventsService.h"
 using NativeImplementation = FSEventsService;
-#elif defined(__linux__) || defined(__FreeBSD__)
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 #include "../includes/linux/InotifyService.h"
 using NativeImplementation = InotifyService;
 #endif

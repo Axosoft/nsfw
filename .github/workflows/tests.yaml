@@ -8,27 +8,8 @@ on:
 name: Run Tests
 
 jobs:
-
-  test:
-    name: Tests
-    strategy:
-        matrix:
-          node: [10, 12]
-          os: [windows-2016, ubuntu-16.04, ubuntu-18.04, macOS-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@master
-
-      - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@master
-        with:
-          node-version: ${{ matrix.node }}
-
-      - run: yarn
-
-      - run: yarn test
-
   prebuild:
+    name: Prebuild
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -66,3 +47,34 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           path: ./prebuilds
+
+  test:
+    name: Tests
+    needs: prebuild
+    strategy:
+        matrix:
+          node: [10, 12]
+          os: [windows-2016, ubuntu-16.04, ubuntu-18.04, macOS-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@master
+
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@master
+        with:
+          node-version: ${{ matrix.node }}
+
+      - run: yarn
+
+      - name: Download prebuilds
+        uses: actions/download-artifact@v2
+
+      - name: Install prebuilds
+        shell: bash
+        run: |
+          rm -rf build
+          mkdir prebuilds
+          mv artifact/* prebuilds/
+          ls prebuilds
+
+      - run: yarn test

@@ -55,6 +55,12 @@ jobs:
         matrix:
           node: [10, 12]
           os: [windows-2016, ubuntu-16.04, ubuntu-18.04, macOS-latest]
+          node_arch:
+            - x64
+          include:
+            - os: windows-latest
+              node: 14
+              node_arch: x86
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@master
@@ -63,8 +69,7 @@ jobs:
         uses: actions/setup-node@master
         with:
           node-version: ${{ matrix.node }}
-
-      - run: yarn
+          architecture: ${{ matrix.node_arch }}
 
       - name: Download prebuilds
         uses: actions/download-artifact@v2
@@ -76,5 +81,7 @@ jobs:
           mkdir prebuilds
           mv artifact/* prebuilds/
           ls prebuilds
+
+      - run: yarn
 
       - run: yarn test

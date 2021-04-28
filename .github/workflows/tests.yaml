@@ -27,3 +27,42 @@ jobs:
       - run: yarn
 
       - run: yarn test
+
+  prebuild:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-20.04
+          - macos-latest
+          - windows-latest
+        node_version:
+          - 14
+        node_arch:
+          - x64
+        include:
+          - os: windows-latest
+            node_version: 14
+            node_arch: x86
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node_version }}
+          architecture: ${{ matrix.node_arch }}
+
+      - name: Install Dependencies and Build
+        run: yarn
+
+      - name: Prebuild
+        run: yarn run prebuild
+        env:
+          ARCH: ${{ matrix.node_arch }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          path: ./prebuilds

@@ -4,6 +4,7 @@
   "description": "A simple file watcher for Node",
   "main": "js/src/index.js",
   "scripts": {
+    "install": "node-gyp-build",
     "lint": "eslint js/src js/spec",
     "test": "yarn lint && node js/scripts/test.js"
   },
@@ -29,7 +30,8 @@
   ],
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
-    "node-addon-api": "*"
+    "node-addon-api": "*",
+    "node-gyp-build": "^4.2.3"
   },
   "devDependencies": {
     "eslint": "^6.8.0",

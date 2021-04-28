@@ -1,7 +1,7 @@
 const { promises: fs } = require('fs');
 const path = require('path');
 
-const NSFW = require('../../build/Release/nsfw.node');
+const NSFW = require('../../binding');
 
 function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
   const { CREATED, DELETED, MODIFIED } = nsfw.actions;

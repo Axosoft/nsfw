@@ -1,0 +1,25 @@
+name: CI
+
+on: [push]
+
+env:
+  CI: true
+
+jobs:
+  Test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+      - name: Install windows-build-tools
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: npm config set msvs_version 2019
+      - name: Install dependencies
+        run: npm i
+      - name: Run tests
+        run: npm run test

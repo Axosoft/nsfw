@@ -704,6 +704,39 @@ describe('Node Sentinel File Watcher', function() {
         watch = null;
       }
     });
+
+    it('supports watching unicode directories and uncode files', async function() {
+      const file = 'は.starts_with_unicode';
+      let eventFound = false;
+
+      function findEvent(element) {
+        if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === watchPath &&
+          element.file === file
+        ) {
+          eventFound = true;
+        }
+      }
+
+      let watch = await nsfw(
+        workDir,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE }
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(path.join(watchPath, file), 'Unicode though.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(eventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
   });
 
   describe('Garbage collection', function() {

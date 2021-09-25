@@ -351,6 +351,50 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('can listen for an event after deleting and restoring root', async function () {
+      if (process.platform !== 'darwin') {
+        this.skip(); // only supported on macOS
+      }
+
+      const file = 'another_test.file';
+      const inPath = path.join(workDir, 'test4');
+      let eventFound = false;
+      let erroredOut = false;
+
+      function findEvent(element) {
+        if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === path.resolve(inPath) &&
+          element.file === file
+        ) {
+          eventFound = true;
+        }
+      }
+
+      let watch = await nsfw(
+        inPath,
+        events => events.forEach(findEvent),
+        { debounceMS: DEBOUNCE, errorCallback() { erroredOut = true; } }
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.remove(inPath);
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.mkdir(inPath);
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.writeFile(path.join(inPath, file), 'Peanuts, on occasion, rain from the skies.');
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(eventFound);
+        assert.ok(!erroredOut);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     it('can run multiple watchers at once', async function() {
       const dirA = path.resolve(workDir, 'test0');
       const fileA = 'testing1.file';

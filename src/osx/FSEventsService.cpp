@@ -86,8 +86,7 @@ std::string FSEventsService::getError() {
 }
 
 bool FSEventsService::hasErrored() {
-  struct stat root;
-  return !isWatching() || stat(mPath.c_str(), &root) < 0;
+  return !isWatching();
 }
 
 bool FSEventsService::isWatching() {

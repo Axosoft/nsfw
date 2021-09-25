@@ -146,12 +146,7 @@ bool Watcher::pollDirectoryChanges() {
     TRUE,                           // recursive watching
     FILE_NOTIFY_CHANGE_FILE_NAME
     | FILE_NOTIFY_CHANGE_DIR_NAME
-    | FILE_NOTIFY_CHANGE_ATTRIBUTES
-    | FILE_NOTIFY_CHANGE_SIZE
-    | FILE_NOTIFY_CHANGE_LAST_WRITE
-    | FILE_NOTIFY_CHANGE_LAST_ACCESS
-    | FILE_NOTIFY_CHANGE_CREATION
-    | FILE_NOTIFY_CHANGE_SECURITY,
+    | FILE_NOTIFY_CHANGE_LAST_WRITE,
     &bytes,                         // num bytes written
     &mOverlapped,
     [](DWORD errorCode, DWORD numBytes, LPOVERLAPPED overlapped) {

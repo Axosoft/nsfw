@@ -41,7 +41,7 @@ public:
   ~FSEventsService();
 private:
   void create(std::string path);
-  void demangle(std::string path);
+  void demangle(std::string path, bool gotCreatedOrRenamed);
   void dispatch(EventType action, std::string path);
   void modify(std::string path);
   void remove(std::string path);

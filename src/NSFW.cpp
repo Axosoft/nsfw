@@ -10,7 +10,8 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
   mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
   mPath(""),
-  mRunning(false)
+  mRunning(false),
+  mFinalizing(false)
 {
   auto env = info.Env();
   if (info.Length() < 1 || !info[0].IsString()) {
@@ -74,11 +75,17 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 }
 
 NSFW::~NSFW() {
-  mErrorCallback.Release();
-  mEventCallback.Release();
-
   if (gcEnabled) {
     instanceCount--;
+  }
+}
+
+void NSFW::Finalize(Napi::Env env) {
+  if (mRunning) {
+    Unref();
+    mFinalizing = true;
+    mRunning = false;
+    mPollThread.join();
   }
 }
 
@@ -313,8 +320,12 @@ void NSFW::pollForEvents() {
     std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
   }
 
-  mErrorCallback.Release();
-  mEventCallback.Release();
+  // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point
+  // or we get a segfault
+  if (!mFinalizing) {
+    mErrorCallback.Release();
+    mEventCallback.Release();
+  }
 }
 
 Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {

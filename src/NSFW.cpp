@@ -82,9 +82,10 @@ NSFW::~NSFW() {
 
 void NSFW::Finalize(Napi::Env env) {
   if (mRunning) {
-    Unref();
     mFinalizing = true;
     mRunning = false;
+    Unref();
+    mWaitPoolEvents.notify_one();
     mPollThread.join();
   }
 }
@@ -179,6 +180,7 @@ void NSFW::StopWorker::Execute() {
 
   mDidStopWatching = true;
   mNSFW->mRunning = false;
+  mNSFW->mWaitPoolEvents.notify_one();
   mNSFW->mPollThread.join();
 
   std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
@@ -267,6 +269,8 @@ void NSFW::resumeQueue() {
 }
 
 void NSFW::pollForEvents() {
+  std::mutex mtx;
+  std::unique_lock<std::mutex> lck(mtx);
   while (mRunning) {
     uint32_t sleepDuration = 50;
     {
@@ -317,7 +321,7 @@ void NSFW::pollForEvents() {
       }
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
+    mWaitPoolEvents.wait_for(lck,std::chrono::milliseconds(sleepDuration));
   }
 
   // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point

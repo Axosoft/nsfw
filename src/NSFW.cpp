@@ -83,7 +83,10 @@ NSFW::~NSFW() {
 void NSFW::Finalize(Napi::Env env) {
   if (mRunning) {
     mFinalizing = true;
-    mRunning = false;
+    {
+      std::lock_guard<std::mutex> lock(mRunningLock);
+      mRunning = false;
+    }
     Unref();
     mWaitPoolEvents.notify_one();
     mPollThread.join();
@@ -117,7 +120,10 @@ void NSFW::StartWorker::Execute() {
 
   if (mNSFW->mInterface->isWatching()) {
     mStatus = STARTED;
-    mNSFW->mRunning = true;
+    {
+      std::lock_guard<std::mutex> lock(mNSFW->mRunningLock);
+      mNSFW->mRunning = true;
+    }
     mNSFW->mErrorCallback.Acquire();
     mNSFW->mEventCallback.Acquire();
     mNSFW->mPollThread = std::thread([] (NSFW *nsfw) { nsfw->pollForEvents(); }, mNSFW);
@@ -179,7 +185,10 @@ void NSFW::StopWorker::Execute() {
   }
 
   mDidStopWatching = true;
-  mNSFW->mRunning = false;
+  {
+    std::lock_guard<std::mutex> lock(mNSFW->mRunningLock);
+    mNSFW->mRunning = false;
+  }
   mNSFW->mWaitPoolEvents.notify_one();
   mNSFW->mPollThread.join();
 
@@ -269,8 +278,6 @@ void NSFW::resumeQueue() {
 }
 
 void NSFW::pollForEvents() {
-  std::mutex mtx;
-  std::unique_lock<std::mutex> lck(mtx);
   while (mRunning) {
     uint32_t sleepDuration = 50;
     {
@@ -282,7 +289,10 @@ void NSFW::pollForEvents() {
           Napi::Value jsError = Napi::Error::New(env, error).Value();
           jsCallback.Call({ jsError });
         });
-        mRunning = false;
+        {
+         std::lock_guard<std::mutex> lock(mRunningLock);
+          mRunning = false;
+        }
         break;
       }
 
@@ -321,7 +331,13 @@ void NSFW::pollForEvents() {
       }
     }
 
-    mWaitPoolEvents.wait_for(lck,std::chrono::milliseconds(sleepDuration));
+    std::unique_lock<std::mutex> lck(mRunningLock);
+    const auto waitUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(sleepDuration);
+    mWaitPoolEvents.wait_until(lck, waitUntil,
+      [this, waitUntil](){
+        return !mRunning || std::chrono::steady_clock::now() >= waitUntil;
+      }
+    );
   }
 
   // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point

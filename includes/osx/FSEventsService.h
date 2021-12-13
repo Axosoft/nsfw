@@ -51,6 +51,7 @@ private:
   std::string mPath;
   RunLoop *mRunLoop;
   std::shared_ptr<EventQueue> mQueue;
+  bool mRootChanged;
 };
 
 #endif

@@ -333,13 +333,6 @@ std::string Watcher::getError() {
     return "Failed to start watcher";
   }
 
-  {
-    std::lock_guard<std::mutex> lock(mErrorMutex);
-    if (!mError.empty()) {
-      return mError;
-    }
-  }
-
   checkWatchedPath();
 
   std::lock_guard<std::mutex> lock(mErrorMutex);

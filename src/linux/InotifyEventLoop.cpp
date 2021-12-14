@@ -108,10 +108,6 @@ void InotifyEventLoop::work() {
       isDirectoryRemoval = event->mask & (uint32_t)(IN_IGNORED | IN_DELETE_SELF);
       isDirectoryEvent = event->mask & (uint32_t)(IN_ISDIR);
 
-      if (!isDirectoryRemoval && *event->name <= 31) {
-        continue;
-      }
-
       if (event->mask & (uint32_t)(IN_ATTRIB | IN_MODIFY)) {
         modify();
       } else if (event->mask & (uint32_t)IN_CREATE) {
@@ -133,7 +129,6 @@ void InotifyEventLoop::work() {
 
         renameStart();
       } else if (event->mask & (uint32_t)IN_MOVE_SELF) {
-        inotifyService->remove(event->wd, event->name);
         inotifyService->removeDirectory(event->wd);
       }
     } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);

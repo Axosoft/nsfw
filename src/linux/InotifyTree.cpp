@@ -19,8 +19,10 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path):
     watchName = path.substr(location + 1);
   }
 
+  mWatchedPath = directory + "/" + watchName;
+
   struct stat file;
-  if (stat((directory + "/" + watchName).c_str(), &file) < 0) {
+  if (stat(mWatchedPath.c_str(), &file) < 0) {
     mRoot = NULL;
     return;
   }
@@ -40,6 +42,11 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path):
     mRoot = NULL;
     return;
   }
+}
+
+bool InotifyTree::existWatchedPath() {
+  struct stat file;
+  return stat(mWatchedPath.c_str(), &file) >= 0;
 }
 
 void InotifyTree::addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent) {
@@ -71,6 +78,9 @@ bool InotifyTree::getPath(std::string &out, int wd) {
 }
 
 bool InotifyTree::hasErrored() {
+  if (!existWatchedPath()) {
+    mError = "Service shutdown: root path changed (renamed or deleted)";
+  }
   return mError != "";
 }
 
@@ -94,6 +104,7 @@ void InotifyTree::removeDirectory(int wd) {
   if (parent == NULL) {
     delete mRoot;
     mRoot = NULL;
+    setError("Service shutdown: root path changed (renamed or deleted)");
     return;
   }
 

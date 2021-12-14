@@ -31,6 +31,7 @@ public:
   bool nodeExists(int wd);
   void removeDirectory(int wd);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
+  bool existWatchedPath();
 
   ~InotifyTree();
 private:
@@ -96,6 +97,7 @@ private:
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   std::unordered_set<ino_t> inodes;
   InotifyNode *mRoot;
+  std::string mWatchedPath;
 
   friend class InotifyNode;
 };

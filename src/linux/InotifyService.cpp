@@ -58,12 +58,12 @@ void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, 
 }
 
 std::string InotifyService::getError() {
-  if (!isWatching()) {
-    return "Service shutdown unexpectedly";
+  if (mTree != NULL && mTree->hasErrored()) {
+    return mTree->getError();
   }
 
-  if (mTree->hasErrored()) {
-    return mTree->getError();
+  if (!isWatching()) {
+    return "Service shutdown unexpectedly";
   }
 
   return "";

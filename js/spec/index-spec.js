@@ -828,6 +828,71 @@ describe('Node Sentinel File Watcher', function() {
     });
   });
 
+  describe('Excluded paths', function() {
+    it('can ignore events from excluded paths', async function () {
+      const inPath = path.join(workDir, 'test4');
+      const exludedPath = path.join(inPath, 'exluded');
+      await fse.mkdir(exludedPath);
+      const file = 'excluded.file';
+      const filePath = path.join(exludedPath, file);
+      const TIMEOUT = 300;
+
+      let changeEvents = 0;
+      let createEvents = 0;
+      let deleteEvents = 0;
+
+      function findEvents(element) {
+        if (
+          element.action === nsfw.actions.MODIFIED
+        ) {
+          changeEvents++;
+        } else if (
+          element.action === nsfw.actions.CREATED
+        ) {
+          createEvents++;
+        } else if (
+          element.action === nsfw.actions.DELETED
+        ) {
+          deleteEvents++;
+        }
+      }
+
+      await sleep(TIMEOUT);
+      let watch = await nsfw(
+        inPath,
+        events => events.forEach(findEvents),
+        {
+          debounceMS: 100,
+          excludedPaths: [exludedPath]
+        }
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT);
+        await fse.writeFile(filePath, 'Excluded.');
+        await sleep(TIMEOUT);
+        await fse.remove(filePath);
+        await sleep(TIMEOUT);
+        await fse.writeFile(filePath, 'Excluded.');
+        await sleep(TIMEOUT);
+        await fse.appendFile(filePath, 'Append');
+        await sleep(TIMEOUT);
+        // A delete event will be captured
+        await fse.remove(path.join(inPath, 'testing4.file'));
+        await sleep(TIMEOUT);
+
+        assert.equal(changeEvents, 0);
+        assert.equal(createEvents, 0);
+        assert.equal(deleteEvents, 1);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+
+    });
+  });
+
   describe('Garbage collection', function() {
     it('can garbage collect all instances', async function () {
       this.timeout(60000);

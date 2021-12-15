@@ -9,21 +9,76 @@ name: Run Tests
 
 jobs:
 
-  test:
-    name: Tests
+  linux-tests:
+    name: "Linux Tests"
     strategy:
         matrix:
-          node: [10, 12]
-          os: [windows-2016, ubuntu-16.04, ubuntu-18.04, macOS-latest]
-    runs-on: ${{ matrix.os }}
+          container: ["centos:7", "ubuntu:18.04"]
+          node: [12, 14]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.container }}
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v2
 
       - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@master
+        uses: actions/setup-node@v2
         with:
           node-version: ${{ matrix.node }}
+          check-latest: true
 
-      - run: yarn
+      - name: Install Ubuntu dependencies
+        if: ${{ startsWith(matrix.container, 'ubuntu') }}
+        run: |
+          apt update && apt install -y software-properties-common && apt install -y git build-essential
 
-      - run: yarn test
+      - name: Install CentOS dependencies
+        if: ${{ startsWith(matrix.container, 'centos') }}
+        run: |
+          yum install -y git gcc gcc-c++ make
+
+      - name: Run tests
+        run: |
+          npm install --global yarn
+          yarn
+          yarn test
+
+  macos-tests:
+    name: "MacOS Tests"
+    strategy:
+        matrix:
+          node: [12, 14]
+    runs-on: macOS-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+
+      - run: |
+          npm install --global yarn
+          yarn
+          yarn test
+
+  windows-tests:
+    name: "Windows Tests"
+    strategy:
+        matrix:
+          node: [12, 14]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+
+      - run: |
+          npm install --global yarn
+          yarn
+          yarn test

@@ -795,7 +795,7 @@ describe('Node Sentinel File Watcher', function() {
     });
 
     it('supports watching unicode directories', async function() {
-      const file = 'unicoded_right_in_the.talker';
+      const file = 'ñ_unicoded_right_in_the.talker';
       let eventFound = false;
 
       function findEvent(element) {

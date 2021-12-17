@@ -558,7 +558,6 @@ describe('Node Sentinel File Watcher', function() {
 
         assert.ok(erroredOut);
       } finally {
-        await watch.stop();
         watch = null;
       }
     });

@@ -10,7 +10,8 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
   mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
   mPath(""),
-  mRunning(false)
+  mRunning(false),
+  mFinalizing(false)
 {
   auto env = info.Env();
   if (info.Length() < 1 || !info[0].IsString()) {
@@ -74,11 +75,21 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 }
 
 NSFW::~NSFW() {
-  mErrorCallback.Release();
-  mEventCallback.Release();
-
   if (gcEnabled) {
     instanceCount--;
+  }
+}
+
+void NSFW::Finalize(Napi::Env env) {
+  if (mRunning) {
+    mFinalizing = true;
+    {
+      std::lock_guard<std::mutex> lock(mRunningLock);
+      mRunning = false;
+    }
+    Unref();
+    mWaitPoolEvents.notify_one();
+    mPollThread.join();
   }
 }
 
@@ -109,7 +120,10 @@ void NSFW::StartWorker::Execute() {
 
   if (mNSFW->mInterface->isWatching()) {
     mStatus = STARTED;
-    mNSFW->mRunning = true;
+    {
+      std::lock_guard<std::mutex> lock(mNSFW->mRunningLock);
+      mNSFW->mRunning = true;
+    }
     mNSFW->mErrorCallback.Acquire();
     mNSFW->mEventCallback.Acquire();
     mNSFW->mPollThread = std::thread([] (NSFW *nsfw) { nsfw->pollForEvents(); }, mNSFW);
@@ -171,7 +185,11 @@ void NSFW::StopWorker::Execute() {
   }
 
   mDidStopWatching = true;
-  mNSFW->mRunning = false;
+  {
+    std::lock_guard<std::mutex> lock(mNSFW->mRunningLock);
+    mNSFW->mRunning = false;
+  }
+  mNSFW->mWaitPoolEvents.notify_one();
   mNSFW->mPollThread.join();
 
   std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
@@ -271,7 +289,10 @@ void NSFW::pollForEvents() {
           Napi::Value jsError = Napi::Error::New(env, error).Value();
           jsCallback.Call({ jsError });
         });
-        mRunning = false;
+        {
+         std::lock_guard<std::mutex> lock(mRunningLock);
+          mRunning = false;
+        }
         break;
       }
 
@@ -310,11 +331,21 @@ void NSFW::pollForEvents() {
       }
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
+    std::unique_lock<std::mutex> lck(mRunningLock);
+    const auto waitUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(sleepDuration);
+    mWaitPoolEvents.wait_until(lck, waitUntil,
+      [this, waitUntil](){
+        return !mRunning || std::chrono::steady_clock::now() >= waitUntil;
+      }
+    );
   }
 
-  mErrorCallback.Release();
-  mEventCallback.Release();
+  // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point
+  // or we get a segfault
+  if (!mFinalizing) {
+    mErrorCallback.Release();
+    mEventCallback.Release();
+  }
 }
 
 Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {

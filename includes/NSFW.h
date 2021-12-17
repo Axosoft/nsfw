@@ -26,6 +26,9 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::string mPath;
     std::thread mPollThread;
     std::atomic<bool> mRunning;
+    std::atomic<bool> mFinalizing;
+    std::condition_variable mWaitPoolEvents;
+    std::mutex mRunningLock;
 
     class StartWorker: public Napi::AsyncWorker {
       public:
@@ -95,6 +98,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     void resumeQueue();
     void pollForEvents();
 
+    void Finalize(Napi::Env env);
     NSFW(const Napi::CallbackInfo &info);
     ~NSFW();
 };

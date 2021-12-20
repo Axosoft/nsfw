@@ -78,10 +78,10 @@ bool InotifyTree::getPath(std::string &out, int wd) {
 }
 
 bool InotifyTree::hasErrored() {
-  if (!existWatchedPath()) {
+  if (mError.empty() && !existWatchedPath()) {
     mError = "Service shutdown: root path changed (renamed or deleted)";
   }
-  return mError != "";
+  return !mError.empty();
 }
 
 bool InotifyTree::isRootAlive() {

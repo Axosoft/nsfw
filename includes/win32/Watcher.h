@@ -18,7 +18,7 @@ class Watcher
     ~Watcher();
 
     bool isRunning() const { return mRunning; }
-    std::string getError() const;
+    std::string getError();
 
   private:
     void run();
@@ -34,11 +34,15 @@ class Watcher
 
     std::string getUTF8Directory(std::wstring path) ;
 
+    std::wstring Watcher::getWatchedPath();
+    void Watcher::checkWatchedPath();
+
     std::atomic<bool> mRunning;
     SingleshotSemaphore mHasStartedSemaphore;
     SingleshotSemaphore mIsRunningSemaphore;
     mutable std::mutex mErrorMutex;
     std::string mError;
+    std::wstring mWatchedPath;
 
     const std::wstring mPath;
     std::shared_ptr<EventQueue> mQueue;

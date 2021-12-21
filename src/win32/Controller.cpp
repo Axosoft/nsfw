@@ -1,4 +1,4 @@
-#include "../includes/win32/Controller.h"
+#include "../../includes/win32/Controller.h"
 
 static bool isNtPath(const std::wstring &path) {
   return path.rfind(L"\\\\?\\", 0) == 0 || path.rfind(L"\\??\\", 0) == 0;

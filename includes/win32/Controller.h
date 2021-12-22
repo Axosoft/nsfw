@@ -18,9 +18,6 @@ class Controller {
     ~Controller();
   private:
     std::unique_ptr<Watcher> mWatcher;
-
-    HANDLE openDirectory(const std::wstring &path);
-    HANDLE mDirectoryHandle;
 };
 
 #endif

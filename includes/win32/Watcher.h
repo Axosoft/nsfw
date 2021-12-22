@@ -14,7 +14,7 @@
 class Watcher
 {
   public:
-    Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path, bool pathWasNtPrefixed);
+    Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed);
     ~Watcher();
 
     bool isRunning() const { return mRunning; }
@@ -29,18 +29,21 @@ class Watcher
     void setError(const std::string &error);
     void eventCallback(DWORD errorCode);
     void handleEvents();
+    void reopenWathedFolder();
+    HANDLE openDirectory(const std::wstring &path);
 
     void resizeBuffers(std::size_t size);
 
     std::string getUTF8Directory(std::wstring path) ;
 
-    std::wstring Watcher::getWatchedPath();
+    std::wstring Watcher::getWatchedPathFromHandle();
     void Watcher::checkWatchedPath();
 
     std::atomic<bool> mRunning;
     SingleshotSemaphore mHasStartedSemaphore;
     SingleshotSemaphore mIsRunningSemaphore;
     mutable std::mutex mErrorMutex;
+    mutable std::mutex mHandleMutex;
     std::string mError;
     std::wstring mWatchedPath;
 

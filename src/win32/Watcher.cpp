@@ -104,22 +104,31 @@ std::string getUTF8FileName(std::wstring path) {
   return utf8Directory;
 }
 
-Watcher::Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std::wstring &path, bool pathWasNtPrefixed)
+Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed)
   : mRunning(false),
-  mDirectoryHandle(dirHandle),
   mQueue(queue),
   mPath(path),
   mPathWasNtPrefixed(pathWasNtPrefixed)
 {
-  ZeroMemory(&mOverlapped, sizeof(OVERLAPPED));
-  mOverlapped.hEvent = this;
-  resizeBuffers(1024 * 1024);
-  mWatchedPath = getWatchedPath();
-  start();
+  mDirectoryHandle = openDirectory(mPath);
+  if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
+    setError("Failed to open directory");
+  } else {
+    ZeroMemory(&mOverlapped, sizeof(OVERLAPPED));
+    mOverlapped.hEvent = this;
+    resizeBuffers(1024 * 1024);
+    mWatchedPath = getWatchedPathFromHandle();
+    start();
+  }
 }
 
 Watcher::~Watcher() {
   stop();
+  std::lock_guard<std::mutex> lock(mHandleMutex);
+  if (mDirectoryHandle != INVALID_HANDLE_VALUE) {
+    CancelIo(mDirectoryHandle);
+    CloseHandle(mDirectoryHandle);
+  }
 }
 
 void Watcher::resizeBuffers(std::size_t size) {
@@ -140,6 +149,7 @@ bool Watcher::pollDirectoryChanges() {
     return false;
   }
 
+  std::lock_guard<std::mutex> lock(mHandleMutex);
   if (!ReadDirectoryChangesW(
     mDirectoryHandle,
     mWriteBuffer.data(),
@@ -167,6 +177,39 @@ bool Watcher::pollDirectoryChanges() {
   return true;
 }
 
+HANDLE Watcher::openDirectory(const std::wstring &path) {
+  return CreateFileW(
+          path.data(),
+          FILE_LIST_DIRECTORY,
+          FILE_SHARE_READ
+          | FILE_SHARE_WRITE
+          | FILE_SHARE_DELETE,
+          NULL,
+          OPEN_EXISTING,
+          FILE_FLAG_BACKUP_SEMANTICS
+          | FILE_FLAG_OVERLAPPED,
+          NULL
+         );
+}
+
+void Watcher::reopenWathedFolder() {
+  std::lock_guard<std::mutex> lock(mHandleMutex);
+  {
+    CancelIo(mDirectoryHandle);
+    CloseHandle(mDirectoryHandle);
+    mDirectoryHandle = openDirectory(mPath);
+    if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
+      if(GetFileAttributesW(mWatchedPath.data()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_PATH_NOT_FOUND) {
+        setError("Service shutdown: root path changed (renamed or deleted)");
+      } else {
+        setError("Service shutdown unexpectedly");
+      }
+      return;
+    }
+  }
+  pollDirectoryChanges();
+}
+
 void Watcher::eventCallback(DWORD errorCode) {
   if (errorCode != ERROR_SUCCESS) {
     if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
@@ -179,7 +222,10 @@ void Watcher::eventCallback(DWORD errorCode) {
         setError("failed resizing buffers for network traffic");
       }
     } else if (errorCode == ERROR_ACCESS_DENIED) {
-      pollDirectoryChanges();
+      // Access denied can happen when we try to delete the watched folder
+      // In Windows Server 2019 and older the folder is not removed until folder handler is released
+      // So the code will reopen the watched folder to release the handler and it will try to open it again
+      reopenWathedFolder();
     } else {
       setError("Service shutdown unexpectedly");
     }
@@ -268,11 +314,13 @@ void Watcher::start() {
 }
 
 void Watcher::stop() {
-  mRunning = false;
-  // schedule a NOOP APC to force the running loop in `Watcher::run()` to wake
-  // up, notice the changed `mRunning` and properly terminate the running loop
-  QueueUserAPC([](__in ULONG_PTR) {}, mRunner.native_handle(), (ULONG_PTR)this);
-  mRunner.join();
+  if (isRunning()) {
+    mRunning = false;
+    // schedule a NOOP APC to force the running loop in `Watcher::run()` to wake
+    // up, notice the changed `mRunning` and properly terminate the running loop
+    QueueUserAPC([](__in ULONG_PTR) {}, mRunner.native_handle(), (ULONG_PTR)this);
+    mRunner.join();
+  }
 }
 
 void Watcher::setError(const std::string &error) {
@@ -298,7 +346,11 @@ std::string Watcher::getError() {
   return mError;
 }
 
-std::wstring Watcher::getWatchedPath() {
+std::wstring Watcher::getWatchedPathFromHandle() {
+  std::lock_guard<std::mutex> lock(mHandleMutex);
+  if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
+    return NULL;
+  }
   DWORD pathLen = GetFinalPathNameByHandleW(mDirectoryHandle, NULL, 0, VOLUME_NAME_NT);
   if (pathLen == 0) {
     setError("Service shutdown: root path changed (renamed or deleted)");
@@ -306,7 +358,6 @@ std::wstring Watcher::getWatchedPath() {
   }
 
   WCHAR* path = new WCHAR[pathLen];
-
   if (GetFinalPathNameByHandleW(mDirectoryHandle, path, pathLen, VOLUME_NAME_NT) != pathLen - 1) {
     setError("Service shutdown: root path changed (renamed or deleted)");
     delete[] path;
@@ -319,7 +370,7 @@ std::wstring Watcher::getWatchedPath() {
 }
 
 void Watcher::checkWatchedPath() {
-  std::wstring path = getWatchedPath();
+  std::wstring path = getWatchedPathFromHandle();
   if (!path.empty() && path.compare(mWatchedPath) != 0) {
     setError("Service shutdown: root path changed (renamed or deleted)");
   }

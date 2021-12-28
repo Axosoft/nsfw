@@ -56,7 +56,7 @@ void RunLoop::work() {
     pathsToWatch,
     kFSEventStreamEventIdSinceNow,
     latency,
-    kFSEventStreamCreateFlagFileEvents
+    kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot
   );
 
   FSEventStreamScheduleWithRunLoop(mEventStream, mRunLoop, kCFRunLoopDefaultMode);

@@ -2,7 +2,7 @@
 #include <iostream>
 
 FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path):
-  mPath(path), mQueue(queue) {
+  mPath(path), mQueue(queue), mRootChanged(false) {
   mRunLoop = new RunLoop(this, path);
 
   if (!mRunLoop->isLooping()) {
@@ -29,7 +29,11 @@ void FSEventsServiceCallback(
   FSEventsService *eventsService = (FSEventsService *)clientCallBackInfo;
   char **paths = (char **)eventPaths;
   std::vector<std::string> *renamedPaths = new std::vector<std::string>;
-  for (size_t i = 0; i < numEvents; ++i) {
+  for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
+    if (eventIds[i] == 0 && (eventFlags[i] & kFSEventStreamEventFlagRootChanged) == kFSEventStreamEventFlagRootChanged) {
+      eventsService->mRootChanged = true;
+      break;
+    }
     bool isCreated = (eventFlags[i] & kFSEventStreamEventFlagItemCreated) == kFSEventStreamEventFlagItemCreated;
     bool isRemoved = (eventFlags[i] & kFSEventStreamEventFlagItemRemoved) == kFSEventStreamEventFlagItemRemoved;
     bool isModified = (eventFlags[i] & kFSEventStreamEventFlagItemModified) == kFSEventStreamEventFlagItemModified ||
@@ -51,7 +55,9 @@ void FSEventsServiceCallback(
       eventsService->demangle(paths[i]);
     }
   }
-  eventsService->rename(renamedPaths);
+  if(!eventsService->mRootChanged) {
+    eventsService->rename(renamedPaths);
+  }
   delete renamedPaths;
 }
 
@@ -82,12 +88,14 @@ void FSEventsService::dispatch(EventType action, std::string path) {
 }
 
 std::string FSEventsService::getError() {
+  if (mRootChanged) {
+    return "Service shutdown: root path changed (renamed or deleted)";
+  }
   return "Service shutdown unexpectedly";
 }
 
 bool FSEventsService::hasErrored() {
-  struct stat root;
-  return !isWatching() || stat(mPath.c_str(), &root) < 0;
+  return !isWatching() || mRootChanged;
 }
 
 bool FSEventsService::isWatching() {

@@ -1,4 +1,4 @@
-#include "../includes/win32/Watcher.h"
+#include "../../includes/win32/Watcher.h"
 
 #include <sstream>
 
@@ -114,6 +114,7 @@ Watcher::Watcher(std::shared_ptr<EventQueue> queue, HANDLE dirHandle, const std:
   ZeroMemory(&mOverlapped, sizeof(OVERLAPPED));
   mOverlapped.hEvent = this;
   resizeBuffers(1024 * 1024);
+  mWatchedPath = getWatchedPath();
   start();
 }
 
@@ -177,6 +178,8 @@ void Watcher::eventCallback(DWORD errorCode) {
       if (!pollDirectoryChanges()) {
         setError("failed resizing buffers for network traffic");
       }
+    } else if (errorCode == ERROR_ACCESS_DENIED) {
+      pollDirectoryChanges();
     } else {
       setError("Service shutdown unexpectedly");
     }
@@ -277,11 +280,47 @@ void Watcher::setError(const std::string &error) {
   mError = error;
 }
 
-std::string Watcher::getError() const {
+std::string Watcher::getError() {
   if (!isRunning()) {
     return "Failed to start watcher";
   }
 
+  {
+    std::lock_guard<std::mutex> lock(mErrorMutex);
+    if (!mError.empty()) {
+      return mError;
+    }
+  }
+
+  checkWatchedPath();
+
   std::lock_guard<std::mutex> lock(mErrorMutex);
   return mError;
+}
+
+std::wstring Watcher::getWatchedPath() {
+  DWORD pathLen = GetFinalPathNameByHandleW(mDirectoryHandle, NULL, 0, VOLUME_NAME_NT);
+  if (pathLen == 0) {
+    setError("Service shutdown: root path changed (renamed or deleted)");
+    return NULL;
+  }
+
+  WCHAR* path = new WCHAR[pathLen];
+
+  if (GetFinalPathNameByHandleW(mDirectoryHandle, path, pathLen, VOLUME_NAME_NT) != pathLen - 1) {
+    setError("Service shutdown: root path changed (renamed or deleted)");
+    delete[] path;
+    return NULL;
+  }
+
+  std::wstring res(path);
+  delete[] path;
+  return res;
+}
+
+void Watcher::checkWatchedPath() {
+  std::wstring path = getWatchedPath();
+  if (!path.empty() && path.compare(mWatchedPath) != 0) {
+    setError("Service shutdown: root path changed (renamed or deleted)");
+  }
 }

@@ -39,55 +39,27 @@ static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
   return wideString;
 }
 
-HANDLE Controller::openDirectory(const std::wstring &path) {
-  return CreateFileW(
-          path.data(),
-          FILE_LIST_DIRECTORY,
-          FILE_SHARE_READ
-          | FILE_SHARE_WRITE
-          | FILE_SHARE_DELETE,
-          NULL,
-          OPEN_EXISTING,
-          FILE_FLAG_BACKUP_SEMANTICS
-          | FILE_FLAG_OVERLAPPED,
-          NULL
-         );
-}
-
-Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path)
-  : mDirectoryHandle(INVALID_HANDLE_VALUE)
-{
+Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path) {
   auto widePath = convertMultiByteToWideChar(path);
   const bool isNt = isNtPath(widePath);
   if (!isNt) {
     // We convert to an NT Path to support paths > MAX_PATH
     widePath = prefixWithNtPath(widePath);
   }
-  mDirectoryHandle = openDirectory(widePath);
 
-  if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
-    return;
-  }
-
-  mWatcher.reset(new Watcher(queue, mDirectoryHandle, widePath, isNt));
+  mWatcher.reset(new Watcher(queue, widePath, isNt));
 }
 
 Controller::~Controller() {
   mWatcher.reset();
-  CancelIo(mDirectoryHandle);
-  CloseHandle(mDirectoryHandle);
-  mDirectoryHandle = INVALID_HANDLE_VALUE;
 }
 
 std::string Controller::getError() {
-  if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
-    return "Failed to open directory";
-  }
   return mWatcher->getError();
 }
 
 bool Controller::hasErrored() {
-  return mDirectoryHandle == INVALID_HANDLE_VALUE || !mWatcher->getError().empty();
+  return !mWatcher->getError().empty();
 }
 
 bool Controller::isWatching() {

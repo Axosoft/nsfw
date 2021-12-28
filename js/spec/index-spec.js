@@ -587,6 +587,128 @@ describe('Node Sentinel File Watcher', function() {
         })
       ]);
     });
+
+    it('Report error on rename watched folder', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const renamed = path.join(workDir, 'test4_renamed');
+      let errorOk = false;
+      let watch = await nsfw(
+        inPath,
+        () => { },
+        {
+          errorCallback: (error) => {
+            errorOk = error.message === 'Service shutdown: root path changed (renamed or deleted)';
+          }
+        }
+      );
+      try {
+        await watch.start();
+        await sleep(TIMEOUT_PER_STEP);
+        await fse.rename(inPath, renamed);
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.ok(errorOk);
+      } finally {
+        try {
+          await watch.stop();
+        } catch (err) { /* do nothing */ }
+        watch = null;
+      }
+    });
+
+    if (process.platform !== 'win32') {
+      it('Report error on delete watched folder', async function() {
+        const inPath = path.join(workDir, 'test5');
+        let errorMsg = '';
+        let watch = await nsfw(
+          inPath,
+          () => { },
+          {
+            errorCallback: (error) => {
+              errorMsg = error.message;
+            }
+          }
+        );
+        try {
+          await sleep(100);
+          await watch.start();
+          await sleep(TIMEOUT_PER_STEP);
+          await fse.remove(inPath);
+          await sleep(TIMEOUT_PER_STEP);
+
+          assert.equal(errorMsg, 'Service shutdown: root path changed (renamed or deleted)');
+        } finally {
+          try {
+            await watch.stop();
+          } catch (err) { /* do nothing */ }
+          watch = null;
+        }
+      });
+
+      it('Report error on rename parent of the watched folder', async function() {
+        const parentPath = path.join(workDir, 'test4');
+        const renamed = path.join(workDir, 'test4_renamed');
+        const inPath = path.join(parentPath, 'test4_watched');
+        let errorOk = false;
+        let watch;
+        try {
+          await fse.mkdir(inPath);
+          await sleep(TIMEOUT_PER_STEP);
+          watch = await nsfw(
+            inPath,
+            () => { },
+            {
+              errorCallback: (error) => {
+                errorOk = error.message === 'Service shutdown: root path changed (renamed or deleted)';
+              }
+            }
+          );
+          await watch.start();
+          await sleep(TIMEOUT_PER_STEP);
+          await fse.rename(parentPath, renamed);
+          await sleep(TIMEOUT_PER_STEP);
+
+          assert.ok(errorOk);
+        } finally {
+          try {
+            await watch.stop();
+          } catch (err) { /* do nothing */ }
+          watch = null;
+        }
+      });
+
+      it('Report error on delete parent of the watched folder', async function() {
+        const parentPath = path.join(workDir, 'test4');
+        const inPath = path.join(parentPath, 'test4_watched');
+        let errorOk = false;
+        let watch;
+        try {
+          await fse.mkdir(inPath);
+          await sleep(TIMEOUT_PER_STEP);
+          watch = await nsfw(
+            inPath,
+            () => { },
+            {
+              errorCallback: (error) => {
+                errorOk = error.message === 'Service shutdown: root path changed (renamed or deleted)';
+              }
+            }
+          );
+          await watch.start();
+          await sleep(TIMEOUT_PER_STEP);
+          await fse.remove(parentPath);
+          await sleep(TIMEOUT_PER_STEP);
+
+          assert.ok(errorOk);
+        } finally {
+          try {
+            await watch.stop();
+          } catch (err) { /* do nothing */ }
+          watch = null;
+        }
+      });
+    }
+
   });
 
   describe('Stress', function() {

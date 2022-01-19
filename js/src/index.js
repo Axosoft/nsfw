@@ -76,20 +76,21 @@ const buildNSFW = async (watchPath, eventCallback,
 
   if (excludedPaths) {
     for (let i = 0; i < excludedPaths.length; i++) {
-      const excludePath = excludedPaths[i];
+      const excludedPath = excludedPaths[i];
       if (process.platform === 'win32') {
-        if (!excludePath.regionMatches(true, 0, watchPath, 0, watchPath.length())) {
-          throw new Error('Exclude path must be a valid subdirectory of the watching path.');
+        if (!excludedPath.substring(0, watchPath.length - 1).
+          localeCompare(watchPath, undefined, { sensitivity: 'accent' })) {
+          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
         }
       } else {
-        if (!excludePath.startsWith(watchPath)) {
-          throw new Error('Exclude path must be a valid subdirectory of the watching path.');
+        if (!excludedPath.startsWith(watchPath)) {
+          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
         }
       }
       try {
-        await fs.stat(excludePath);
+        await fs.stat(excludedPath);
       } catch (e) {
-        throw new Error('Exclude path must be a valid path to a file or a directory.');
+        throw new Error('Excluded path must be a valid path to a file or a directory.');
       }
     }
   }

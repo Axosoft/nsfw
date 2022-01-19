@@ -14,7 +14,8 @@
 class Watcher
 {
   public:
-    Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed);
+    Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed,
+      const std::vector<std::wstring> &excludedPaths);
     ~Watcher();
 
     bool isRunning() const { return mRunning; }
@@ -35,6 +36,7 @@ class Watcher
     void resizeBuffers(std::size_t size);
 
     std::string getUTF8Directory(std::wstring path) ;
+    bool Watcher::isExcluded(const std::wstring &fileName);
 
     std::wstring Watcher::getWatchedPathFromHandle();
     void Watcher::checkWatchedPath();
@@ -51,6 +53,7 @@ class Watcher
     std::shared_ptr<EventQueue> mQueue;
     HANDLE mDirectoryHandle;
     bool mPathWasNtPrefixed;
+    const std::vector<std::wstring> mExcludedPaths;
 
     std::vector<BYTE> mReadBuffer, mWriteBuffer;
     OVERLAPPED mOverlapped;

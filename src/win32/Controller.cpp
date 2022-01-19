@@ -39,7 +39,7 @@ static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
   return wideString;
 }
 
-Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path) {
+Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path, const std::vector<std::string> &excludedPaths) {
   auto widePath = convertMultiByteToWideChar(path);
   const bool isNt = isNtPath(widePath);
   if (!isNt) {
@@ -47,7 +47,18 @@ Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &pat
     widePath = prefixWithNtPath(widePath);
   }
 
-  mWatcher.reset(new Watcher(queue, widePath, isNt));
+  std::vector<std::wstring> excludedWidePaths;
+  for (const std::string &path : excludedPaths) {
+    std::wstring widePath = convertMultiByteToWideChar(path);
+    const bool isNt = isNtPath(widePath);
+    if (!isNt) {
+      // We convert to an NT Path to support paths > MAX_PATH
+      widePath = prefixWithNtPath(widePath);
+    }
+    excludedWidePaths.push_back(widePath);
+  }
+
+  mWatcher.reset(new Watcher(queue, widePath, isNt, excludedWidePaths));
 }
 
 Controller::~Controller() {

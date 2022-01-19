@@ -60,7 +60,8 @@ return nsfw(
     debounceMS: 250,
     errorCallback(errors) {
       //handle errors
-    }
+    },
+    excludedPaths: ['dir2/node_modules']
   })
   .then(function(watcher) {
     watcher2 = watcher;
@@ -74,6 +75,13 @@ return nsfw(
     watcher2.stop();
   })
 ```
+
+## Options
+
+- debounceMS: delays notifications emitted by the library. Default 500 ms.
+- errorCallback(errors): the library will call this callback when an error happens.
+At the moment when an error happens the service does not stop, this may change in the near future.
+- excludedPaths: array with the absolute paths we want to exclude watching.
 
 ## Callback Argument
 

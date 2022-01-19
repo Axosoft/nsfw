@@ -81,7 +81,11 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       Napi::Value path = paths[i];
       if (path.IsString())
       {
-        mExcludedPaths.push_back(path.ToString().Utf8Value());
+        std::string str = path.ToString().Utf8Value();
+        if (str.back() == '/') {
+          str.pop_back();
+        }
+        mExcludedPaths.push_back(str);
       } else {
         throw Napi::TypeError::New(env, "options.excludedPaths elements must be strings.");
       }

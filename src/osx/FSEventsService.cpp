@@ -1,8 +1,18 @@
 #include "../../includes/osx/FSEventsService.h"
 #include <iostream>
 
-FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path):
+FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
   mPath(path), mQueue(queue), mRootChanged(false) {
+  mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
+  for (const std::string &excludedPath : excludedPaths) {
+    CFStringRef str = CFStringCreateWithCString(
+      NULL,
+      excludedPath.c_str(),
+      kCFStringEncodingUTF8
+    );
+    mExcludedPaths.push_back(str);
+  }
+
   mRunLoop = new RunLoop(this, path);
 
   if (!mRunLoop->isLooping()) {
@@ -28,7 +38,7 @@ void FSEventsServiceCallback(
 ) {
   FSEventsService *eventsService = (FSEventsService *)clientCallBackInfo;
   char **paths = (char **)eventPaths;
-  std::vector<std::string> *renamedPaths = new std::vector<std::string>;
+  std::vector<std::string> renamedPaths;
   for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
     if (eventIds[i] == 0 && (eventFlags[i] & kFSEventStreamEventFlagRootChanged) == kFSEventStreamEventFlagRootChanged) {
       eventsService->mRootChanged = true;
@@ -43,22 +53,49 @@ void FSEventsServiceCallback(
                       (eventFlags[i] & kFSEventStreamEventFlagItemXattrMod) == kFSEventStreamEventFlagItemXattrMod;
     bool isRenamed = (eventFlags[i] & kFSEventStreamEventFlagItemRenamed) == kFSEventStreamEventFlagItemRenamed;
 
-    if (isCreated && !(isRemoved || isModified || isRenamed)) {
-      eventsService->create(paths[i]);
-    } else if (isRemoved && !(isCreated || isModified || isRenamed)) {
-      eventsService->remove(paths[i]);
-    } else if (isModified && !(isCreated || isRemoved || isRenamed)) {
-      eventsService->modify(paths[i]);
-    } else if (isRenamed && !(isCreated || isModified || isRemoved)) {
-      renamedPaths->push_back(paths[i]);
-    } else {
-      eventsService->demangle(paths[i]);
+    if(!eventsService->isExcluded(paths[i])) {
+      if (isCreated && !(isRemoved || isModified || isRenamed)) {
+        eventsService->create(paths[i]);
+      } else if (isRemoved && !(isCreated || isModified || isRenamed)) {
+        eventsService->remove(paths[i]);
+      } else if (isModified && !(isCreated || isRemoved || isRenamed)) {
+        eventsService->modify(paths[i]);
+      } else if (isRenamed && !(isCreated || isModified || isRemoved)) {
+        renamedPaths.push_back(paths[i]);
+      } else {
+        eventsService->demangle(paths[i]);
+      }
     }
   }
   if(!eventsService->mRootChanged) {
     eventsService->rename(renamedPaths);
   }
-  delete renamedPaths;
+}
+
+bool FSEventsService::isExcluded(std::string filePath) {
+  uint32_t location = filePath.find_last_of("/");
+  std::string directory = (location == 0) ? "" : filePath.substr(0, location);
+  CFStringRef fileDirectory = CFStringCreateWithCString(
+    NULL,
+    directory.c_str(),
+    kCFStringEncodingUTF8
+  );
+  CFIndex lenDirectory = CFStringGetLength(fileDirectory);
+  CFStringCompareFlags flags;
+  if (!mCaseSensitive) {
+    flags = kCFCompareLocalized | kCFCompareCaseInsensitive;
+  } else {
+    flags = kCFCompareLocalized;
+  }
+  for (CFStringRef excludedPath : mExcludedPaths) {
+    CFIndex lenExclude = CFStringGetLength(excludedPath);
+    if (lenDirectory >= lenExclude) {
+      if (CFStringCompareWithOptions(fileDirectory, excludedPath, CFRangeMake(0, lenExclude), flags) == kCFCompareEqualTo) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 void FSEventsService::create(std::string path) {
@@ -110,12 +147,12 @@ void FSEventsService::remove(std::string path) {
   dispatch(DELETED, path);
 }
 
-void FSEventsService::rename(std::vector<std::string> *paths) {
+void FSEventsService::rename(std::vector<std::string> &paths) {
   auto *binNamesByPath = new std::map<std::string, std::vector<std::string> *>;
 
-  for (auto pathIterator = paths->begin(); pathIterator != paths->end(); ++pathIterator) {
+  for (const std::string &path : paths) {
     std::string directory, name;
-    splitFilePath(directory, name, *pathIterator);
+    splitFilePath(directory, name, path);
     if (binNamesByPath->find(directory) == binNamesByPath->end()) {
       (*binNamesByPath)[directory] = new std::vector<std::string>;
     }
@@ -152,7 +189,7 @@ void FSEventsService::rename(std::vector<std::string> *paths) {
   delete binNamesByPath;
 }
 
-void FSEventsService::splitFilePath(std::string &directory, std::string &name, std::string path) {
+void FSEventsService::splitFilePath(std::string &directory, std::string &name, const std::string &path) {
   if (path.length() == 1 && path[0] == '/') {
     directory = "/";
     name = "";

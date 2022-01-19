@@ -87,11 +87,6 @@ const buildNSFW = async (watchPath, eventCallback,
           throw new Error('Excluded path must be a valid subdirectory of the watching path.');
         }
       }
-      try {
-        await fs.stat(excludedPath);
-      } catch (e) {
-        throw new Error('Excluded path must be a valid path to a file or a directory.');
-      }
     }
   }
 

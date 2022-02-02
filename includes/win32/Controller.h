@@ -9,7 +9,7 @@ class EventQueue;
 
 class Controller {
   public:
-    Controller(std::shared_ptr<EventQueue> queue, const std::string &path);
+    Controller(std::shared_ptr<EventQueue> queue, const std::string &path, const std::vector<std::string> &excludedPaths);
 
     std::string getError();
     bool hasErrored();

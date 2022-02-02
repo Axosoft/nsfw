@@ -38,6 +38,8 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
     }
 
     Napi::Object options = info[2].ToObject();
+
+    // debounceMS
     Napi::Value maybeDebounceMS = options["debounceMS"];
     if (options.Has("debounceMS") && !maybeDebounceMS.IsNumber()) {
       throw Napi::TypeError::New(env, "options.debounceMS must be a number.");
@@ -53,6 +55,7 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       mDebounceMS = temp;
     }
 
+    // errorCallback
     Napi::Value maybeErrorCallback = options["errorCallback"];
     if (options.Has("errorCallback") && !maybeErrorCallback.IsFunction()) {
       throw Napi::TypeError::New(env, "options.errorCallback must be a function.");
@@ -67,6 +70,27 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       0,
       1
     );
+
+    // excludedPaths
+    Napi::Value maybeExcludedPaths = options["excludedPaths"];
+    if (options.Has("excludedPaths") && !maybeExcludedPaths.IsArray()) {
+      throw Napi::TypeError::New(env, "options.excludedPaths must be an array.");
+    }
+    Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
+    for(uint32_t i = 0; i < paths.Length(); i++) {
+      Napi::Value path = paths[i];
+      if (path.IsString())
+      {
+        std::string str = path.ToString().Utf8Value();
+        if (str.back() == '/') {
+          str.pop_back();
+        }
+        mExcludedPaths.push_back(str);
+      } else {
+        throw Napi::TypeError::New(env, "options.excludedPaths elements must be strings.");
+      }
+    }
+
   }
 
   if (gcEnabled) {
@@ -116,7 +140,7 @@ void NSFW::StartWorker::Execute() {
   }
 
   mNSFW->mQueue->clear();
-  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mQueue));
+  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mExcludedPaths, mNSFW->mQueue));
 
   if (mNSFW->mInterface->isWatching()) {
     mStatus = STARTED;

@@ -51,7 +51,8 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
 }
 
 
-const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCallback: _errorCallback } = {}) => {
+const buildNSFW = async (watchPath, eventCallback,
+  { debounceMS = 500, errorCallback: _errorCallback, excludedPaths = [] } = {}) => {
   if (Number.isInteger(debounceMS)) {
     if (debounceMS < 1) {
       throw new Error('Minimum debounce is 1ms.');
@@ -73,8 +74,24 @@ const buildNSFW = async (watchPath, eventCallback, { debounceMS = 500, errorCall
     throw new Error('Path must be a valid path to a file or a directory.');
   }
 
+  if (excludedPaths) {
+    for (let i = 0; i < excludedPaths.length; i++) {
+      const excludedPath = excludedPaths[i];
+      if (process.platform === 'win32') {
+        if (!excludedPath.substring(0, watchPath.length - 1).
+          localeCompare(watchPath, undefined, { sensitivity: 'accent' })) {
+          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
+        }
+      } else {
+        if (!excludedPath.startsWith(watchPath)) {
+          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
+        }
+      }
+    }
+  }
+
   if (stats.isDirectory()) {
-    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback });
+    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, excludedPaths });
   } else if (stats.isFile()) {
     return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
   } else {

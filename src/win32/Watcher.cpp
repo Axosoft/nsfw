@@ -104,11 +104,13 @@ std::string getUTF8FileName(std::wstring path) {
   return utf8Directory;
 }
 
-Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed)
+Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed,
+    const std::vector<std::wstring> &excludedPaths)
   : mRunning(false),
   mQueue(queue),
   mPath(path),
-  mPathWasNtPrefixed(pathWasNtPrefixed)
+  mPathWasNtPrefixed(pathWasNtPrefixed),
+  mExcludedPaths(excludedPaths)
 {
   mDirectoryHandle = openDirectory(mPath);
   if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
@@ -157,12 +159,7 @@ bool Watcher::pollDirectoryChanges() {
     TRUE,                           // recursive watching
     FILE_NOTIFY_CHANGE_FILE_NAME
     | FILE_NOTIFY_CHANGE_DIR_NAME
-    | FILE_NOTIFY_CHANGE_ATTRIBUTES
-    | FILE_NOTIFY_CHANGE_SIZE
-    | FILE_NOTIFY_CHANGE_LAST_WRITE
-    | FILE_NOTIFY_CHANGE_LAST_ACCESS
-    | FILE_NOTIFY_CHANGE_CREATION
-    | FILE_NOTIFY_CHANGE_SECURITY,
+    | FILE_NOTIFY_CHANGE_LAST_WRITE,
     &bytes,                         // num bytes written
     &mOverlapped,
     [](DWORD errorCode, DWORD numBytes, LPOVERLAPPED overlapped) {
@@ -237,45 +234,74 @@ void Watcher::eventCallback(DWORD errorCode) {
   handleEvents();
 }
 
+bool Watcher::isExcluded(const std::wstring &fileName) {
+  std::wstring::size_type found = fileName.rfind('\\');
+
+  std::wstring path;
+  if (found != std::wstring::npos) {
+    path = mPath + L"\\" + fileName.substr(0, found);
+  } else {
+    path = mPath + L"\\" + fileName;
+  }
+  for (const std::wstring &excludePath : mExcludedPaths) {
+    if (path.size() >= excludePath.size() &&
+      CompareStringEx(
+      LOCALE_NAME_SYSTEM_DEFAULT,
+      LINGUISTIC_IGNORECASE,
+      path.data(),
+      excludePath.size(),
+      excludePath.data(),
+      excludePath.size(),
+      NULL,
+      NULL,
+      0) == CSTR_EQUAL) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void Watcher::handleEvents() {
   BYTE *base = mReadBuffer.data();
   while (true) {
     PFILE_NOTIFY_INFORMATION info = (PFILE_NOTIFY_INFORMATION)base;
     std::wstring fileName = getWStringFileName(info->FileName, info->FileNameLength);
 
-    switch (info->Action) {
-    case (FILE_ACTION_RENAMED_OLD_NAME):
-      if (info->NextEntryOffset != 0) {
-        base += info->NextEntryOffset;
-        info = (PFILE_NOTIFY_INFORMATION)base;
-        if (info->Action == FILE_ACTION_RENAMED_NEW_NAME) {
-          std::wstring fileNameNew = getWStringFileName(info->FileName, info->FileNameLength);
+    if (!isExcluded(fileName)) {
+      switch (info->Action) {
+      case (FILE_ACTION_RENAMED_OLD_NAME):
+        if (info->NextEntryOffset != 0) {
+          base += info->NextEntryOffset;
+          info = (PFILE_NOTIFY_INFORMATION)base;
+          if (info->Action == FILE_ACTION_RENAMED_NEW_NAME) {
+            std::wstring fileNameNew = getWStringFileName(info->FileName, info->FileNameLength);
 
-          mQueue->enqueue(
-            RENAMED,
-            getUTF8Directory(fileName),
-            getUTF8FileName(fileName),
-            getUTF8Directory(fileName),
-            getUTF8FileName(fileNameNew)
-          );
+            mQueue->enqueue(
+              RENAMED,
+              getUTF8Directory(fileName),
+              getUTF8FileName(fileName),
+              getUTF8Directory(fileName),
+              getUTF8FileName(fileNameNew)
+            );
+          } else {
+            mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+          }
         } else {
           mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
         }
-      } else {
+        break;
+      case FILE_ACTION_ADDED:
+      case FILE_ACTION_RENAMED_NEW_NAME: // in the case we just receive a new name and no old name in the buffer
+        mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        break;
+      case FILE_ACTION_REMOVED:
         mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-      }
-      break;
-    case FILE_ACTION_ADDED:
-    case FILE_ACTION_RENAMED_NEW_NAME: // in the case we just receive a new name and no old name in the buffer
-      mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-      break;
-    case FILE_ACTION_REMOVED:
-      mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-      break;
-    case FILE_ACTION_MODIFIED:
-    default:
-      mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-    };
+        break;
+      case FILE_ACTION_MODIFIED:
+      default:
+        mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+      };
+    }
 
     if (info->NextEntryOffset == 0) {
       break;
@@ -333,14 +359,9 @@ std::string Watcher::getError() {
     return "Failed to start watcher";
   }
 
-  {
-    std::lock_guard<std::mutex> lock(mErrorMutex);
-    if (!mError.empty()) {
-      return mError;
-    }
+  if (mError.empty()) {
+    checkWatchedPath();
   }
-
-  checkWatchedPath();
 
   std::lock_guard<std::mutex> lock(mErrorMutex);
   return mError;
@@ -349,19 +370,19 @@ std::string Watcher::getError() {
 std::wstring Watcher::getWatchedPathFromHandle() {
   std::lock_guard<std::mutex> lock(mHandleMutex);
   if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
-    return NULL;
+    return std::wstring();
   }
   DWORD pathLen = GetFinalPathNameByHandleW(mDirectoryHandle, NULL, 0, VOLUME_NAME_NT);
   if (pathLen == 0) {
     setError("Service shutdown: root path changed (renamed or deleted)");
-    return NULL;
+    return std::wstring();
   }
 
   WCHAR* path = new WCHAR[pathLen];
   if (GetFinalPathNameByHandleW(mDirectoryHandle, path, pathLen, VOLUME_NAME_NT) != pathLen - 1) {
     setError("Service shutdown: root path changed (renamed or deleted)");
     delete[] path;
-    return NULL;
+    return std::wstring();
   }
 
   std::wstring res(path);

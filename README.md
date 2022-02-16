@@ -118,3 +118,7 @@ nsfw.actions = {
 ## Installation
 NSFW is a native node module and requires Node-Gyp to be functional before you can install it.
 Make sure you have completed installing all of the dependencies listed for [Node-Gyp](https://github.com/nodejs/node-gyp) on your operating system.
+
+## Breaking changes
+Prior to version 2.3.0 when the service receive an error, the service is shutdown but the watcher is not stopped.
+Now when the service receives an error, the watcher stops releasing all resources, so if you try to stop the service after an error, you will get an exception.

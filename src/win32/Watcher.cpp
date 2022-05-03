@@ -396,3 +396,7 @@ void Watcher::checkWatchedPath() {
     setError("Service shutdown: root path changed (renamed or deleted)");
   }
 }
+
+void Watcher::refreshExcludedPaths(const std::vector<std::wstring> &excludedPaths) {
+  mExcludedPaths = excludedPaths;
+}

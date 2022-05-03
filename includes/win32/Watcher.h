@@ -20,6 +20,7 @@ class Watcher
 
     bool isRunning() const { return mRunning; }
     std::string getError();
+    void refreshExcludedPaths(const std::vector<std::wstring> &excludedPaths);
 
   private:
     void run();
@@ -53,7 +54,7 @@ class Watcher
     std::shared_ptr<EventQueue> mQueue;
     HANDLE mDirectoryHandle;
     bool mPathWasNtPrefixed;
-    const std::vector<std::wstring> mExcludedPaths;
+    std::vector<std::wstring> mExcludedPaths;
 
     std::vector<BYTE> mReadBuffer, mWriteBuffer;
     OVERLAPPED mOverlapped;

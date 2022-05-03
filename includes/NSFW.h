@@ -14,6 +14,7 @@
 class NSFW : public Napi::ObjectWrap<NSFW> {
   private:
     static Napi::FunctionReference constructor;
+    Napi::Value ExcludedPaths();
     static std::size_t instanceCount;
     static bool gcEnabled;
 
@@ -30,6 +31,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::condition_variable mWaitPoolEvents;
     std::mutex mRunningLock;
     std::vector<std::string> mExcludedPaths;
+    void refreshExcludedPaths();
 
     class StartWorker: public Napi::AsyncWorker {
       public:
@@ -91,6 +93,36 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     };
 
     Napi::Value Resume(const Napi::CallbackInfo &info);
+
+    class GetExcludedPathsWorker: public Napi::AsyncWorker {
+      public:
+        GetExcludedPathsWorker(Napi::Env env, NSFW *nsfw);
+        void Execute();
+        void OnOK();
+        Napi::Promise RunJob();
+
+      private:
+        Napi::Promise::Deferred mDeferred;
+        std::atomic<bool> mDidGetExcludedPaths;
+        NSFW *mNSFW;
+    };
+
+    Napi::Value GetExcludedPaths(const Napi::CallbackInfo &info);
+
+    class UpdateExcludedPathsWorker: public Napi::AsyncWorker {
+      public:
+        UpdateExcludedPathsWorker(Napi::Env env, const Napi::CallbackInfo &info, NSFW *nsfw);
+        void Execute();
+        void OnOK();
+        Napi::Promise RunJob();
+
+      private:
+        Napi::Promise::Deferred mDeferred;
+        std::atomic<bool> mDidUpdatetExcludedPaths;
+        NSFW *mNSFW;
+    };
+
+    Napi::Value UpdateExcludedPaths(const Napi::CallbackInfo &info);
 
   public:
     static Napi::Object Init(Napi::Env, Napi::Object exports);

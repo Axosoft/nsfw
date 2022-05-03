@@ -5,7 +5,8 @@
   "main": "js/src/index.js",
   "scripts": {
     "lint": "eslint js/src js/spec",
-    "test": "yarn lint && node js/scripts/test.js"
+    "test": "yarn lint && node js/scripts/test.js",
+    "test2": "node js/scripts/test.js"
   },
   "repository": {
     "type": "git",

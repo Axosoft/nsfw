@@ -5,7 +5,7 @@ NativeInterface::NativeInterface(const std::string &path, const std::vector<std:
 }
 
 NativeInterface::~NativeInterface() {
-  mNativeInterface.reset();
+  mNativeInterface.reset(nullptr);
 }
 
 std::string NativeInterface::getError() {
@@ -18,4 +18,8 @@ bool NativeInterface::hasErrored() {
 
 bool NativeInterface::isWatching() {
   return mNativeInterface->isWatching();
+}
+
+void NativeInterface::refreshExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  mNativeInterface->refreshExcludedPaths(excludedPaths);
 }

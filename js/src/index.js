@@ -110,7 +110,10 @@ function nsfw(watchPath, eventCallback, options) {
   this.stop = () => implementation.stop();
   this.pause = () => implementation.pause();
   this.resume = () => implementation.resume();
+  this.getExcludedPaths = () => implementation.getExcludedPaths();
+  this.updateExcludedPaths = (paths) => implementation.updateExcludedPaths(paths);
 }
+
 
 nsfw.actions = {
   CREATED: 0,

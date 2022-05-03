@@ -1,6 +1,7 @@
 #include "../../includes/linux/InotifyTree.h"
 #include <cstdio>
 #include <sys/stat.h>
+
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */

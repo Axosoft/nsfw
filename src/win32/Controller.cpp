@@ -76,3 +76,17 @@ bool Controller::hasErrored() {
 bool Controller::isWatching() {
   return !hasErrored() && mWatcher->isRunning();
 }
+
+void Controller::refreshExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  std::vector<std::wstring> excludedWidePaths;
+  for (const std::string &path : excludedPaths) {
+    std::wstring widePath = convertMultiByteToWideChar(path);
+    const bool isNt = isNtPath(widePath);
+    if (!isNt) {
+      // We convert to an NT Path to support paths > MAX_PATH
+      widePath = prefixWithNtPath(widePath);
+    }
+    excludedWidePaths.push_back(widePath);
+  }
+  mWatcher->refreshExcludedPaths(excludedWidePaths);
+}

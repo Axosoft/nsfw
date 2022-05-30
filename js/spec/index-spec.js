@@ -828,7 +828,7 @@ describe('Node Sentinel File Watcher', function() {
     });
   });
 
-  describe.only('Excluded paths', function() {
+  describe('Excluded paths', function() {
     it('can ignore events from excluded paths', async function () {
       const inPath = path.join(workDir, 'test4');
       const exludedPath = path.join(inPath, 'excluded');
@@ -892,7 +892,129 @@ describe('Node Sentinel File Watcher', function() {
 
     });
 
-    it.only('can modify excluded paths', async function () {
+    it('can remove an excluded path', async function () {
+      const T1Path = path.join(workDir, 'T1');
+      await fse.mkdir(T1Path);
+      const T2Path = path.join(T1Path, 'T2');
+      await fse.mkdir(T2Path);
+      const T3Path = path.join(T2Path, 'T3');
+      await fse.mkdir(T3Path);
+
+      const newFile = 'newfile.file';
+      const newFilePath = path.join(T2Path, newFile);
+
+      let changeEvents = 0;
+      let createEvents = 0;
+      let deleteEvents = 0;
+
+      function findEvents(element) {
+        if (
+          element.action === nsfw.actions.MODIFIED
+        ) {
+          changeEvents++;
+        } else if (
+          element.action === nsfw.actions.CREATED
+        ) {
+          createEvents++;
+        } else if (
+          element.action === nsfw.actions.DELETED
+        ) {
+          deleteEvents++;
+        }
+      }
+
+      const TIMEOUT = 300;
+
+      await sleep(TIMEOUT);
+      let watch = await nsfw(
+        workDir,
+        events => events.forEach(findEvents),
+        {
+          debounceMS: 100,
+          excludedPaths: [T2Path]
+        }
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT);
+        await fse.writeFile(newFilePath, 'New file.'); // createEvents should not happend
+        await sleep(TIMEOUT);
+        await watch.updateExcludedPaths([]);
+        await sleep(TIMEOUT);
+        await fse.appendFile(newFilePath, 'New file.'); // changeEvents should happend
+        await sleep(TIMEOUT);
+        assert.equal(changeEvents, 1);
+        assert.equal(createEvents, 0);
+        assert.equal(deleteEvents, 0);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('can add an excluded path', async function () {
+      const T1Path = path.join(workDir, 'T1');
+      await fse.mkdir(T1Path);
+      const T2Path = path.join(T1Path, 'T2');
+      await fse.mkdir(T2Path);
+      const T3Path = path.join(T2Path, 'T3');
+      await fse.mkdir(T3Path);
+
+      const newFile = 'newfile.file';
+      const newFilePath = path.join(T2Path, newFile);
+
+      let changeEvents = 0;
+      let createEvents = 0;
+      let deleteEvents = 0;
+
+      function findEvents(element) {
+        if (
+          element.action === nsfw.actions.MODIFIED
+        ) {
+          changeEvents++;
+        } else if (
+          element.action === nsfw.actions.CREATED
+        ) {
+          createEvents++;
+        } else if (
+          element.action === nsfw.actions.DELETED
+        ) {
+          deleteEvents++;
+        }
+      }
+
+      const TIMEOUT = 300;
+
+      await sleep(TIMEOUT);
+      let watch = await nsfw(
+        workDir,
+        events => events.forEach(findEvents),
+        {
+          debounceMS: 100,
+          excludedPaths: []
+        }
+      );
+
+      try {
+        await watch.start();
+        await sleep(TIMEOUT);
+        await fse.writeFile(newFilePath, 'New file.'); // createEvents & changeEvents should happend
+        await sleep(TIMEOUT);
+        await watch.updateExcludedPaths([T2Path]);
+        await sleep(TIMEOUT);
+        await fse.appendFile(newFilePath, 'New file.'); // changeEvents should not happend
+        await sleep(TIMEOUT);
+        assert.equal(changeEvents, 1);
+        assert.equal(createEvents, 1);
+        assert.equal(deleteEvents, 0);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('can modify excluded paths', async function () {
       const inPath = path.join(workDir, 'test4');
       const exludedPath = path.join(inPath, 'excluded');
       await fse.mkdir(exludedPath);

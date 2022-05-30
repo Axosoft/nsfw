@@ -2,16 +2,18 @@
 #include <cstdio>
 #include <sys/stat.h>
 
+#include <algorithm>
+
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
 InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths):
   mError(""),
-  mInotifyInstance(inotifyInstance),
-  mExcludedPaths(excludedPaths) {
+  mInotifyInstance(inotifyInstance) {
   mInotifyNodeByWatchDescriptor = new std::map<int, InotifyNode *>;
   std::string directory;
   std::string watchName;
+  mExcludedPaths = excludedPaths;
   if (path.length() == 1 && path[0] == '/') {
     directory = "";
     watchName = "";
@@ -29,7 +31,6 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
     return;
   }
 
-  addInode(file.st_ino);
   mRoot = new InotifyNode(
     this,
     mInotifyInstance,
@@ -38,6 +39,7 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
     watchName,
     file.st_ino
   );
+  addInode(file.st_ino, mRoot);
 
   if (!mRoot->isAlive()) {
     delete mRoot;
@@ -153,19 +155,97 @@ void InotifyTree::setError(std::string error) {
   mError = error;
 }
 
-bool InotifyTree::addInode(ino_t inodeNumber) {
-  return inodes.insert(inodeNumber).second;
+bool InotifyTree::addInode(ino_t inodeNumber, InotifyNode *node) {
+  return inodes.insert(std::pair<ino_t, InotifyNode *>(inodeNumber,node)).second;
 }
 
 void InotifyTree::removeInode(ino_t inodeNumber) {
   inodes.erase(inodeNumber);
 }
 
+InotifyTree::InotifyNode * InotifyTree::findNodeByInode(ino_t inodeNumber) {
+  auto nodeIterator = inodes.find(inodeNumber);
+  if (nodeIterator == inodes.end()) {
+    return NULL;
+  }
+
+  return nodeIterator->second;
+}
+
+InotifyTree::InotifyNode * InotifyTree::findNodeByPath(const std::string path) {
+  struct stat file;
+  if (stat(path.c_str(), &file) >= 0 && S_ISDIR(file.st_mode)) {
+    return findNodeByInode(file.st_ino);
+  }
+
+  return NULL;
+}
+
+
 InotifyTree::~InotifyTree() {
   if (isRootAlive()) {
     delete mRoot;
   }
   delete mInotifyNodeByWatchDescriptor;
+}
+
+std::string InotifyTree::getParentPath(const std::string &filePath) {
+  std::string directory;
+  uint32_t location = filePath.find_last_of("/");
+  directory = filePath.substr(0, location);
+  return directory;
+
+  // std::vector<std::string> directories;
+  // size_t position=0, currentPosition=0;
+
+  // currentPosition = filePath.find_first_of('/', position);
+  //   directories.push_back(filePath.substr(position, currentPosition - position));
+  //   position = currentPosition + 1;
+  // }
+
+  // directories.pop_back();
+  // std::string result;
+  // for (auto it: directories) {
+  //   result += "/" + it;
+  // }
+}
+
+void InotifyTree::refreshExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  std::vector<std::string> addedExcludedPaths;
+  std::vector<std::string> removedExcludedPaths;
+
+  for (auto excludedPath : excludedPaths) {
+    if (std::find(mExcludedPaths.begin(), mExcludedPaths.end(), excludedPath) == mExcludedPaths.end()) {
+      addedExcludedPaths.push_back(excludedPath);
+    }
+  }
+
+  for (auto excludedPath : mExcludedPaths) {
+    if (std::find(excludedPaths.begin(), excludedPaths.end(), excludedPath) == excludedPaths.end()) {
+      removedExcludedPaths.push_back(excludedPath);
+    }
+  }
+
+  mExcludedPaths = excludedPaths;
+
+  for (auto excludedPath : removedExcludedPaths) {
+    auto path = getParentPath(excludedPath);
+    InotifyNode *node = findNodeByPath(path);
+    if (node) {
+      std::string base_directory = excludedPath.substr(excludedPath.find_last_of("/") + 1);
+      node->addChild(base_directory, NULL);
+    }
+  }
+
+  for (auto excludedPath : addedExcludedPaths) {
+    auto path = getParentPath(excludedPath);
+    InotifyNode *node = findNodeByPath(path);
+    if (node) {
+      std::string base_directory = excludedPath.substr(excludedPath.find_last_of("/") + 1);
+      node->removeChild(base_directory);
+    }
+  }
+
 }
 
 /**
@@ -244,8 +324,7 @@ InotifyTree::InotifyNode::InotifyNode(
 
     if (
       stat(filePath.c_str(), &file) < 0 ||
-      !S_ISDIR(file.st_mode) ||
-      !mTree->addInode(file.st_ino) // Skip this inode if already watching
+      !S_ISDIR(file.st_mode)
     ) {
       continue;
     }
@@ -259,6 +338,11 @@ InotifyTree::InotifyNode::InotifyNode(
       file.st_ino,
       emitCreatedEvent
     );
+
+    if (!mTree->addInode(file.st_ino, child)) { // Skip this inode if already watching
+      delete child;
+      continue;
+    }
 
     if (child->isAlive()) {
       (*mChildren)[fileName] = child;
@@ -292,7 +376,7 @@ InotifyTree::InotifyNode::~InotifyNode() {
 void InotifyTree::InotifyNode::addChild(std::string name, EmitCreatedEvent emitCreatedEvent) {
   struct stat file;
 
-  if (stat(createFullPath(mFullPath, name).c_str(), &file) >= 0 && mTree->addInode(file.st_ino)) {
+  if (stat(createFullPath(mFullPath, name).c_str(), &file) >= 0 && mTree->addInode(file.st_ino, this)) {
     InotifyNode *child = new InotifyNode(
       mTree,
       mInotifyInstance,

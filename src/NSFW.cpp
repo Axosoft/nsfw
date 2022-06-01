@@ -357,7 +357,7 @@ Napi::Promise NSFW::UpdateExcludedPathsWorker::RunJob() {
 
 void NSFW::UpdateExcludedPathsWorker::Execute() {
   mDidUpdatetExcludedPaths = true;
-  mNSFW->refreshExcludedPaths();
+  mNSFW->updateExcludedPaths();
 }
 
 void NSFW::UpdateExcludedPathsWorker::OnOK() {
@@ -372,8 +372,8 @@ Napi::Value NSFW::UpdateExcludedPaths(const Napi::CallbackInfo &info) {
   return (new UpdateExcludedPathsWorker(info.Env(), info, this))->RunJob();
 }
 
-void NSFW::refreshExcludedPaths() {
-  mInterface->refreshExcludedPaths(mExcludedPaths);
+void NSFW::updateExcludedPaths() {
+  mInterface->updateExcludedPaths(mExcludedPaths);
 }
 
 void NSFW::pauseQueue() {

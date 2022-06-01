@@ -32,7 +32,7 @@ public:
   void removeDirectory(int wd);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
   const std::vector<std::string>& getExcludedPaths() const;
-  void refreshExcludedPaths(const std::vector<std::string> &excludedPaths);
+  void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
   ~InotifyTree();
 private:

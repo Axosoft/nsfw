@@ -210,7 +210,7 @@ std::string InotifyTree::getParentPath(const std::string &filePath) {
   // }
 }
 
-void InotifyTree::refreshExcludedPaths(const std::vector<std::string> &excludedPaths) {
+void InotifyTree::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
   std::vector<std::string> addedExcludedPaths;
   std::vector<std::string> removedExcludedPaths;
 

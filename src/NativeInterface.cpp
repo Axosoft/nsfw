@@ -20,6 +20,6 @@ bool NativeInterface::isWatching() {
   return mNativeInterface->isWatching();
 }
 
-void NativeInterface::refreshExcludedPaths(const std::vector<std::string> &excludedPaths) {
-  mNativeInterface->refreshExcludedPaths(excludedPaths);
+void NativeInterface::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  mNativeInterface->updateExcludedPaths(excludedPaths);
 }

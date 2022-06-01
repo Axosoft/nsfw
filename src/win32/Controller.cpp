@@ -77,7 +77,7 @@ bool Controller::isWatching() {
   return !hasErrored() && mWatcher->isRunning();
 }
 
-void Controller::refreshExcludedPaths(const std::vector<std::string> &excludedPaths) {
+void Controller::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
   std::vector<std::wstring> excludedWidePaths;
   for (const std::string &path : excludedPaths) {
     std::wstring widePath = convertMultiByteToWideChar(path);
@@ -88,5 +88,5 @@ void Controller::refreshExcludedPaths(const std::vector<std::string> &excludedPa
     }
     excludedWidePaths.push_back(widePath);
   }
-  mWatcher->refreshExcludedPaths(excludedWidePaths);
+  mWatcher->updateExcludedPaths(excludedWidePaths);
 }

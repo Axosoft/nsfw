@@ -199,3 +199,15 @@ void FSEventsService::splitFilePath(std::string &directory, std::string &name, c
     name = path.substr(location + 1);
   }
 }
+
+void FSEventsService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  mExcludedPaths.clear();
+  for (const std::string &path : excludedPaths) {
+    CFStringRef pathRef = CFStringCreateWithCString(
+      NULL,
+      path.c_str(),
+      kCFStringEncodingUTF8
+    );
+    mExcludedPaths.push_back(pathRef);
+  }
+}

@@ -20,7 +20,7 @@ class Watcher
 
     bool isRunning() const { return mRunning; }
     std::string getError();
-    void refreshExcludedPaths(const std::vector<std::wstring> &excludedPaths);
+    void updateExcludedPaths(const std::vector<std::wstring> &excludedPaths);
 
   private:
     void run();

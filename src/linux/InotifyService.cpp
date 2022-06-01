@@ -119,6 +119,6 @@ void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd,
   dispatchRename(fromWd, fromName, toWd, toName);
 }
 
-void InotifyService::refreshExcludedPaths(const std::vector<std::string> &excludedPaths) {
-  mTree->refreshExcludedPaths(excludedPaths);
+void InotifyService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  mTree->updateExcludedPaths(excludedPaths);
 }

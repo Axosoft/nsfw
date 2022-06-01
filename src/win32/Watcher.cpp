@@ -397,6 +397,6 @@ void Watcher::checkWatchedPath() {
   }
 }
 
-void Watcher::refreshExcludedPaths(const std::vector<std::wstring> &excludedPaths) {
+void Watcher::updateExcludedPaths(const std::vector<std::wstring> &excludedPaths) {
   mExcludedPaths = excludedPaths;
 }

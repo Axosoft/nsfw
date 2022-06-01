@@ -909,7 +909,7 @@ describe('Node Sentinel File Watcher', function() {
 
       function findEvents(element) {
         if (
-          element.action === nsfw.actions.MODIFIED
+          element.action === nsfw.actions.MODIFIED && element.file === newFile
         ) {
           changeEvents++;
         } else if (
@@ -969,18 +969,20 @@ describe('Node Sentinel File Watcher', function() {
       let deleteEvents = 0;
 
       function findEvents(element) {
-        if (
-          element.action === nsfw.actions.MODIFIED
-        ) {
-          changeEvents++;
-        } else if (
-          element.action === nsfw.actions.CREATED
-        ) {
-          createEvents++;
-        } else if (
-          element.action === nsfw.actions.DELETED
-        ) {
-          deleteEvents++;
+        if (element.file === newFile) {
+          if (
+            element.action === nsfw.actions.MODIFIED
+          ) {
+            changeEvents++;
+          } else if (
+            element.action === nsfw.actions.CREATED
+          ) {
+            createEvents++;
+          } else if (
+            element.action === nsfw.actions.DELETED
+          ) {
+            deleteEvents++;
+          }
         }
       }
 
@@ -1005,7 +1007,12 @@ describe('Node Sentinel File Watcher', function() {
         await sleep(TIMEOUT);
         await fse.appendFile(newFilePath, 'New file.'); // changeEvents should not happend
         await sleep(TIMEOUT);
-        assert.equal(changeEvents, 1);
+        if (process.platform === 'darwin') {
+          // In osx writeFile only triggers a create event
+          assert.equal(changeEvents, 0);
+        } else {
+          assert.equal(changeEvents, 1);
+        }
         assert.equal(createEvents, 1);
         assert.equal(deleteEvents, 0);
       } finally {

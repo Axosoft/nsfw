@@ -31,7 +31,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::condition_variable mWaitPoolEvents;
     std::mutex mRunningLock;
     std::vector<std::string> mExcludedPaths;
-    void refreshExcludedPaths();
+    void updateExcludedPaths();
 
     class StartWorker: public Napi::AsyncWorker {
       public:

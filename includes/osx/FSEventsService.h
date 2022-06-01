@@ -37,6 +37,7 @@ public:
   std::string getError();
   bool hasErrored();
   bool isWatching();
+  void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
   ~FSEventsService();
 private:

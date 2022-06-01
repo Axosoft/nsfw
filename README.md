@@ -69,6 +69,9 @@ return nsfw(
   })
   .then(function() {
     // we are now watching dir2 for events!
+
+    // we can update excludedPaths array
+    return watcher2.updateExcludedPaths(['dir2/node_modules', '.git']);
   })
   .then(function() {
     // To stop watching
@@ -82,6 +85,7 @@ return nsfw(
 - errorCallback(errors): the library will call this callback when an error happens.
 At the moment when an error happens the service does not stop, this may change in the near future.
 - excludedPaths: array with the absolute paths we want to exclude watching.
+You can update the excludedPaths array without restarting the service using the `updateExcludedPaths` function
 
 ## Callback Argument
 

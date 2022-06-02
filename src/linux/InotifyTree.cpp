@@ -194,34 +194,24 @@ std::string InotifyTree::getParentPath(const std::string &filePath) {
   uint32_t location = filePath.find_last_of("/");
   directory = filePath.substr(0, location);
   return directory;
-
-  // std::vector<std::string> directories;
-  // size_t position=0, currentPosition=0;
-
-  // currentPosition = filePath.find_first_of('/', position);
-  //   directories.push_back(filePath.substr(position, currentPosition - position));
-  //   position = currentPosition + 1;
-  // }
-
-  // directories.pop_back();
-  // std::string result;
-  // for (auto it: directories) {
-  //   result += "/" + it;
-  // }
 }
 
 void InotifyTree::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
   std::vector<std::string> addedExcludedPaths;
   std::vector<std::string> removedExcludedPaths;
 
+  std::unordered_set<std::string> currentExcludedPaths(mExcludedPaths.begin(), mExcludedPaths.end());
+  std::unordered_set<std::string> newExcludedPaths;
+
   for (auto excludedPath : excludedPaths) {
-    if (std::find(mExcludedPaths.begin(), mExcludedPaths.end(), excludedPath) == mExcludedPaths.end()) {
+    newExcludedPaths.insert(excludedPath);
+    if (currentExcludedPaths.find(excludedPath) == currentExcludedPaths.end()) {
       addedExcludedPaths.push_back(excludedPath);
     }
   }
 
   for (auto excludedPath : mExcludedPaths) {
-    if (std::find(excludedPaths.begin(), excludedPaths.end(), excludedPath) == excludedPaths.end()) {
+    if (newExcludedPaths.find(excludedPath) == newExcludedPaths.end()) {
       removedExcludedPaths.push_back(excludedPath);
     }
   }
@@ -348,6 +338,7 @@ InotifyTree::InotifyNode::InotifyNode(
       (*mChildren)[fileName] = child;
     } else {
       delete child;
+      mTree->removeInode(file.st_ino);
     }
   }
 

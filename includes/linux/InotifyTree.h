@@ -32,6 +32,7 @@ public:
   void removeDirectory(int wd);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
   const std::vector<std::string>& getExcludedPaths() const;
+  void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
   ~InotifyTree();
 private:
@@ -89,16 +90,19 @@ private:
   void setError(std::string error);
   void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
   void removeNodeReferenceByWD(int watchDescriptor);
-  bool addInode(ino_t inodeNumber);
+  bool addInode(ino_t inodeNumber, InotifyNode *node);
   void removeInode(ino_t inodeNumber);
+  InotifyNode * findNodeByInode(ino_t inodeNumber);
+  InotifyNode * findNodeByPath(const std::string path);
+  std::string getParentPath(const std::string &filePath);
   bool existWatchedPath();
 
   std::string mError;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
-  std::unordered_set<ino_t> inodes;
+  std::map<ino_t, InotifyNode *> inodes;
   InotifyNode *mRoot;
-  const std::vector<std::string> &mExcludedPaths;
+  std::vector<std::string> mExcludedPaths;
   std::string mWatchedPath;
 
   friend class InotifyNode;

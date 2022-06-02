@@ -293,6 +293,89 @@ Napi::Value NSFW::Resume(const Napi::CallbackInfo &info) {
   return (new ResumeWorker(info.Env(), this))->RunJob();
 }
 
+NSFW::GetExcludedPathsWorker::GetExcludedPathsWorker(Napi::Env env, NSFW *nsfw):
+  Napi::AsyncWorker(env, "nsfw"),
+  mDeferred(Napi::Promise::Deferred::New(env)),
+  mDidGetExcludedPaths(false),
+  mNSFW(nsfw)
+{}
+
+Napi::Promise NSFW::GetExcludedPathsWorker::RunJob() {
+  this->Queue();
+  return mDeferred.Promise();
+}
+
+void NSFW::GetExcludedPathsWorker::Execute() {
+  mDidGetExcludedPaths = true;
+}
+
+void NSFW::GetExcludedPathsWorker::OnOK() {
+  if (mDidGetExcludedPaths) {
+    mDeferred.Resolve(mNSFW->ExcludedPaths());
+  } else {
+    mDeferred.Reject(Napi::Error::New(Env(), "Excluded Paths cannot be obtained.").Value());
+  }
+}
+
+Napi::Value NSFW::GetExcludedPaths(const Napi::CallbackInfo &info) {
+  return (new GetExcludedPathsWorker(info.Env(), this))->RunJob();
+}
+
+NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const Napi::CallbackInfo &info, NSFW *nsfw):
+  Napi::AsyncWorker(info.Env(), "nsfw"),
+  mDeferred(Napi::Promise::Deferred::New(info.Env())),
+  mDidUpdatetExcludedPaths(false),
+  mNSFW(nsfw)
+{
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    throw Napi::TypeError::New(env, "Must pass an array of string to updateExcludedPaths.");
+  }
+
+  // excludedPaths
+  Napi::Value maybeExcludedPaths = info[0];
+  Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
+  for(uint32_t i = 0; i < paths.Length(); i++) {
+    if (!((Napi::Value)paths[i]).IsString()) {
+      throw Napi::TypeError::New(env, "excludedPaths elements must be strings.");
+    }
+  }
+  mNSFW->mExcludedPaths.clear();
+  for(uint32_t i = 0; i < paths.Length(); i++) {
+    Napi::Value path = paths[i];
+    std::string str = path.ToString().Utf8Value();
+    if (str.back() == '/') {
+      str.pop_back();
+    }
+    mNSFW->mExcludedPaths.push_back(str);
+  }
+}
+
+Napi::Promise NSFW::UpdateExcludedPathsWorker::RunJob() {
+  this->Queue();
+  return mDeferred.Promise();
+}
+
+void NSFW::UpdateExcludedPathsWorker::Execute() {
+  mDidUpdatetExcludedPaths = true;
+  mNSFW->updateExcludedPaths();
+}
+
+void NSFW::UpdateExcludedPathsWorker::OnOK() {
+  if (mDidUpdatetExcludedPaths) {
+    mDeferred.Resolve(mNSFW->ExcludedPaths());
+  } else {
+    mDeferred.Reject(Napi::Error::New(Env(), "Excluded Paths cannot be obtained.").Value());
+  }
+}
+
+Napi::Value NSFW::UpdateExcludedPaths(const Napi::CallbackInfo &info) {
+  return (new UpdateExcludedPathsWorker(info.Env(), info, this))->RunJob();
+}
+
+void NSFW::updateExcludedPaths() {
+  mInterface->updateExcludedPaths(mExcludedPaths);
+}
+
 void NSFW::pauseQueue() {
   mQueue->pause();
 }
@@ -372,6 +455,17 @@ void NSFW::pollForEvents() {
   }
 }
 
+Napi::Value NSFW::ExcludedPaths() {
+  Napi::Array path_array = Napi::Array::New(Env(), mExcludedPaths.size());
+
+  uint32_t i = 0;
+  for (auto&& path : mExcludedPaths) {
+    path_array[i++] = Napi::String::New(Env(), path);
+  }
+
+  return path_array;
+}
+
 Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {
   return Napi::Number::New(info.Env(), instanceCount);
 }
@@ -383,7 +477,9 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("start", &NSFW::Start),
     InstanceMethod("stop", &NSFW::Stop),
     InstanceMethod("pause", &NSFW::Pause),
-    InstanceMethod("resume", &NSFW::Resume)
+    InstanceMethod("resume", &NSFW::Resume),
+    InstanceMethod("getExcludedPaths", &NSFW::GetExcludedPaths),
+    InstanceMethod("updateExcludedPaths", &NSFW::UpdateExcludedPaths)
   });
 
   if (gcEnabled) {

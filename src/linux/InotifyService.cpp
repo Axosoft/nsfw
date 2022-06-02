@@ -15,6 +15,7 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
     delete mTree;
     mTree = NULL;
     mEventLoop = NULL;
+    close(mInotifyInstance);
   } else {
     mEventLoop = new InotifyEventLoop(
       mInotifyInstance,
@@ -116,4 +117,8 @@ void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd,
   mTree->renameDirectory(fromWd, fromName, toWd, toName);
 
   dispatchRename(fromWd, fromName, toWd, toName);
+}
+
+void InotifyService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  mTree->updateExcludedPaths(excludedPaths);
 }

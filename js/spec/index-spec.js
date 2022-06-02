@@ -940,6 +940,7 @@ describe('Node Sentinel File Watcher', function() {
         await sleep(TIMEOUT);
         await fse.writeFile(newFilePath, 'New file.'); // createEvents should not happend
         await sleep(TIMEOUT);
+        await sleep(TIMEOUT);
         await watch.updateExcludedPaths([]);
         await sleep(TIMEOUT);
         await fse.appendFile(newFilePath, 'New file.'); // changeEvents should happend

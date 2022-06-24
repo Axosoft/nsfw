@@ -314,7 +314,8 @@ InotifyTree::InotifyNode::InotifyNode(
 
     if (
       stat(filePath.c_str(), &file) < 0 ||
-      !S_ISDIR(file.st_mode)
+      !S_ISDIR(file.st_mode) ||
+      mTree->inodes.find(file.st_ino) != mTree->inodes.end() // avoid redundancy InotifyNode initialization
     ) {
       continue;
     }

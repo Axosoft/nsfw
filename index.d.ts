@@ -21,6 +21,8 @@ declare module 'nsfw' {
             start: () => Promise<void>;
             /** Returns a Promise that resolves when NSFW object has halted. */
             stop: () => Promise<void>;
+            /** Returns a Promise that resolves when NSFW object has updated the excluded ppaths. */
+            updateExcludedPaths: (excludedPaths: [string]) => Promise<void>;
         }
 
         export const enum ActionType {
@@ -61,7 +63,9 @@ declare module 'nsfw' {
             /** time in milliseconds to debounce the event callback */
             debounceMS?: number;
             /** callback to fire in the case of errors */
-            errorCallback?: (err: any) => void
+            errorCallback?: (err: any) => void;
+            /** paths to be excluded */
+            excludedPaths?: [string];
         }
     }
 

@@ -13,7 +13,6 @@
 
 class NSFW : public Napi::ObjectWrap<NSFW> {
   private:
-    static Napi::FunctionReference constructor;
     Napi::Value ExcludedPaths();
     static std::size_t instanceCount;
     static bool gcEnabled;
@@ -32,6 +31,8 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::mutex mRunningLock;
     std::vector<std::string> mExcludedPaths;
     void updateExcludedPaths();
+
+    static void cleanup(void* arg);
 
     class StartWorker: public Napi::AsyncWorker {
       public:
@@ -131,7 +132,6 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     void resumeQueue();
     void pollForEvents();
 
-    void Finalize(Napi::Env env);
     NSFW(const Napi::CallbackInfo &info);
     ~NSFW();
 };

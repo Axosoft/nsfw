@@ -190,8 +190,8 @@ HANDLE Watcher::openDirectory(const std::wstring &path) {
 }
 
 void Watcher::reopenWathedFolder() {
-  std::lock_guard<std::mutex> lock(mHandleMutex);
   {
+    std::lock_guard<std::mutex> lock(mHandleMutex);
     CancelIo(mDirectoryHandle);
     CloseHandle(mDirectoryHandle);
     mDirectoryHandle = openDirectory(mPath);

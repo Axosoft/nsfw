@@ -9,11 +9,10 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
   mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
   mPath(""),
-  mRunning(false),
-  mFinalizing(false)
+  mRunning(false)
 {
   Napi::Env env = info.Env();
-  env.AddCleanupHook(cleanup, this);
+
   if (info.Length() < 1 || !info[0].IsString()) {
     throw Napi::TypeError::New(env, "Must pass a string path as the first argument to NSFW.");
   }
@@ -98,21 +97,18 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
   }
 }
 
-void NSFW::cleanup(void* arg) {
-  NSFW *nsfw = (NSFW *)arg;
-  if (nsfw->mRunning) {
-    nsfw->mFinalizing = true;
-    {
-      std::lock_guard<std::mutex> lock(nsfw->mRunningLock);
-      nsfw->mRunning = false;
-    }
-    nsfw->Unref();
-    nsfw->mWaitPoolEvents.notify_one();
-    nsfw->mPollThread.join();
-  }
-}
-
 NSFW::~NSFW() {
+  if (mRunning) {
+    mFinalizing = true;
+    {
+      std::lock_guard<std::mutex> lock(mRunningLock);
+      mRunning = false;
+    }
+    mWaitPoolEvents.notify_one();
+  }
+  if (mPollThread.joinable()) {
+    mPollThread.join();
+  }
   if (gcEnabled) {
     instanceCount--;
   }
@@ -448,8 +444,12 @@ void NSFW::pollForEvents() {
     );
   }
 
-  mErrorCallback.Release();
-  mEventCallback.Release();
+  // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point
+  // or we get a segfault
+  if (!mFinalizing) {
+    mErrorCallback.Release();
+    mEventCallback.Release();
+  }
 }
 
 Napi::Value NSFW::ExcludedPaths() {

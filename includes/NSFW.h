@@ -32,8 +32,6 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::vector<std::string> mExcludedPaths;
     void updateExcludedPaths();
 
-    static void cleanup(void* arg);
-
     class StartWorker: public Napi::AsyncWorker {
       public:
         StartWorker(Napi::Env env, NSFW *nsfw);

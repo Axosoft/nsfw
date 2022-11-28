@@ -72,14 +72,14 @@ void InotifyEventLoop::work() {
     renameEvent.isStarted = true;
   };
 
-  auto renameEnd = [&create, &event, &inotifyService, &isDirectoryEvent, &renameEvent]() {
+  auto renameEnd = [&create, &event, &inotifyService, &isDirectoryRemoval, &renameEvent]() {
     if (!renameEvent.isStarted) {
       create();
       return;
     }
 
     if (renameEvent.cookie != event->cookie) {
-      if (renameEvent.isDirectory) {
+      if (isDirectoryRemoval) {
         inotifyService->removeDirectory(renameEvent.wd);
       } else {
         inotifyService->remove(renameEvent.wd, renameEvent.name);

@@ -1128,4 +1128,96 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
   });
+
+  // Worker tests
+  let Worker;
+  try {
+    Worker = require('worker_threads').Worker;
+  } catch (e) { /* do nothing */ }
+
+  if (Worker) {
+    describe('Worker tests', function() {
+      const local = path.join.bind(path, __dirname);
+
+      beforeEach(async function() {
+        try {
+          await fse.remove(workDir);
+        } catch (e) {/* we don't care about this failure */}
+
+        await fse.mkdir(workDir);
+      });
+
+      afterEach(function() {
+        return fse.remove(workDir);
+      });
+
+      it('can kill worker thread while watcher is working', (done) => {
+        const workerPath = local('./worker.js');
+        const inPath = path.resolve(workDir);
+        const worker = new Worker(workerPath, {
+          workerData: {
+            workDir: inPath,
+            test: 1
+          }
+        });
+        worker.on('message', (message) => {
+          switch (message) {
+            case 'init':
+              break;
+            case 'success':
+              setTimeout(() => { worker.terminate(); }, 500);
+              break;
+            case 'failure':
+              assert.fail();
+              break;
+          }
+        });
+        worker.on('error', () => assert.fail());
+        worker.on('exit', (code) => {
+          if (code === 1) {
+            if (nsfw.getAllocatedInstanceCount() > 0) {
+              assert.fail();
+            } else {
+              done();
+            }
+          } else {
+            assert.fail();
+          }
+        });
+      });
+
+      it('can kill worker thread while 2 watcher is working and 1 watcher is stopped and freed', (done) => {
+        const workerPath = local('./worker.js');
+        const inPath = path.resolve(workDir);
+        const worker = new Worker(workerPath, {
+          workerData: {
+            workDir: inPath,
+            test: 2
+          }
+        });
+        worker.on('message', (message) => {
+          switch (message) {
+            case 'init':
+              break;
+            case 'success':
+              setTimeout(() => {
+                worker.terminate();
+              }, 500);
+              break;
+            case 'failure':
+              assert.fail();
+              break;
+          }
+        });
+        worker.on('error', () => assert.fail());
+        worker.on('exit', (code) => {
+          if (code === 1) {
+            done();
+          } else {
+            assert.fail();
+          }
+        });
+      });
+    });
+  }
 });

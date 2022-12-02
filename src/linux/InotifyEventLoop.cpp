@@ -38,9 +38,9 @@ void InotifyEventLoop::work() {
     }
 
     if (isDirectoryEvent) {
-      inotifyService->createDirectory(event->wd, event->name);
+      inotifyService->createDirectory(event->wd, event->len > 0 ? event->name : "");
     } else {
-      inotifyService->create(event->wd, event->name);
+      inotifyService->create(event->wd, event->len > 0 ? event->name : "");
     }
   };
 
@@ -49,7 +49,7 @@ void InotifyEventLoop::work() {
       return;
     }
 
-    inotifyService->modify(event->wd, event->name);
+    inotifyService->modify(event->wd, event->len > 0 ? event->name : "");
   };
 
   auto remove = [&event, &isDirectoryRemoval, &inotifyService]() {
@@ -60,14 +60,14 @@ void InotifyEventLoop::work() {
     if (isDirectoryRemoval) {
       inotifyService->removeDirectory(event->wd);
     } else {
-      inotifyService->remove(event->wd, event->name);
+      inotifyService->remove(event->wd, event->len > 0 ? event->name : "");
     }
   };
 
   auto renameStart = [&event, &isDirectoryEvent, &renameEvent]() {
     renameEvent.cookie = event->cookie;
     renameEvent.isDirectory = isDirectoryEvent;
-    renameEvent.name = event->name;
+    renameEvent.name = event->len > 0 ? event->name : "";
     renameEvent.wd = event->wd;
     renameEvent.isStarted = true;
   };
@@ -87,9 +87,9 @@ void InotifyEventLoop::work() {
       create();
     } else {
       if (renameEvent.isDirectory) {
-        inotifyService->renameDirectory(renameEvent.wd, renameEvent.name, event->wd, event->name);
+        inotifyService->renameDirectory(renameEvent.wd, renameEvent.name, event->wd, event->len > 0 ? event->name : "");
       } else {
-        inotifyService->rename(renameEvent.wd, renameEvent.name, event->wd, event->name);
+        inotifyService->rename(renameEvent.wd, renameEvent.name, event->wd, event->len > 0 ? event->name : "");
       }
     }
     renameEvent.isStarted = false;

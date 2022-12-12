@@ -397,6 +397,9 @@ void NSFW::pollForEvents() {
          std::lock_guard<std::mutex> lock(mRunningLock);
           mRunning = false;
         }
+        mInterface.reset(nullptr);
+        mPollThread.detach();
+        Unref();
         break;
       }
 

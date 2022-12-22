@@ -61,7 +61,7 @@
                     }
                 }
             }],
-            ["OS=='linux' or OS=='freebsd'", {
+            ["OS=='linux' or OS=='freebsd' or OS=='openbsd'", {
                 "defines": [
                     "NSFW_TEST_SLOW_<!(node -p process.env.NSFW_TEST_SLOW)"
                 ],
@@ -92,7 +92,7 @@
                     }]
                 ]
             }],
-            ["OS=='mac' or OS=='linux' or OS=='freebsd'", {
+            ["OS=='mac' or OS=='linux' or OS=='freebsd' or OS=='openbsd'", {
                 "defines": [
                     "HAVE_STDDEF_H=1",
                     "HAVE_STDLIB_H=1",
@@ -105,6 +105,15 @@
                 ],
                 "libraries": [
                     "-L/usr/local/lib",
+                    "-linotify"
+                ]
+            }],
+	    ["OS=='openbsd'", {
+                "include_dirs": [
+                    "/usr/local/include/inotify"
+                ],
+                "libraries": [
+                    "-L/usr/local/lib/inotify",
                     "-linotify"
                 ]
             }],

@@ -22,9 +22,13 @@ if (UNIX)
     else (APPLE)
         message (STATUS "compiling linux specific file system service")
         set (NSFW_LIBRARY_SOURCES ${NSFW_LIBRARY_SOURCES}
+            linux/FanotifyEventLoop.cpp
+            linux/FanotifyService.cpp
+            linux/FanotifyTree.cpp
             linux/InotifyEventLoop.cpp
             linux/InotifyService.cpp
             linux/InotifyTree.cpp
+            linux/NotifyService.cpp
         )
     endif(APPLE)
 endif (UNIX)

@@ -18,7 +18,6 @@ FanotifyService::FanotifyService(std::shared_ptr<EventQueue> queue, std::string 
           this
         );
         mTree = new FanotifyTree(mFanotifyInstance, path, excludedPaths);
-        return;
       }
     }
   #endif

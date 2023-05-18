@@ -5,10 +5,6 @@
 #include "FanotifyService.h"
 #include "../Queue.h"
 #include <queue>
-#include <map>
-
-class InotifyService;
-class FanotifyService;
 
 class NotifyService {
 public:
@@ -23,9 +19,6 @@ public:
 private:
   InotifyService *mInotifyService;
   FanotifyService *mFanotifyService;
-
-  friend class InotifyService;
-  friend class FanotifyService;
 };
 
 #endif

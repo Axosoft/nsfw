@@ -1,10 +1,13 @@
 #include "../../includes/linux/NotifyService.h"
 
-NotifyService::NotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths) {
+NotifyService::NotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
+  mInotifyService(NULL),
+  mFanotifyService(NULL) {
   mFanotifyService = new FanotifyService(queue, path, excludedPaths);
 
   if (!mFanotifyService->isWatching()) {
     delete mFanotifyService;
+    mFanotifyService = NULL;
     mInotifyService = new InotifyService(queue, path, excludedPaths);
   }
 }

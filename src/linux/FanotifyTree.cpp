@@ -9,8 +9,6 @@
  */
 FanotifyTree::FanotifyTree(int fanotifyInstance, std::string path, const std::vector<std::string> &excludedPaths):
   mFanotifyInstance(fanotifyInstance) {
-  std::string directory;
-  std::string watchName;
   mExcludedPaths = excludedPaths;
   if (path.back() == '/') {
     mPath = path.substr(0, path.length() - 2);
@@ -21,6 +19,10 @@ FanotifyTree::FanotifyTree(int fanotifyInstance, std::string path, const std::ve
 
 bool FanotifyTree::getPath(std::string &out, int wd) {
   std::string fdPath = "/proc/self/fd/" + std::to_string(wd);
+
+  #ifdef NSFW_TEST_SLOW_1
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  #endif
   
   char path[PATH_MAX];
   ssize_t len = readlink(fdPath.c_str(), path, sizeof(path) - 1);
@@ -51,4 +53,7 @@ const std::vector<std::string>& FanotifyTree::getExcludedPaths() const {
 
 void FanotifyTree::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
   mExcludedPaths = excludedPaths;
+}
+
+FanotifyTree::~FanotifyTree() {
 }

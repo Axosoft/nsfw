@@ -1,24 +1,24 @@
-#ifndef INOTIFY_EVENT_HANDLER_H
-#define INOTIFY_EVENT_HANDLER_H
+#ifndef FANOTIFY_EVENT_HANDLER_H
+#define FANOTIFY_EVENT_HANDLER_H
 
-#include "InotifyEventLoop.h"
-#include "InotifyTree.h"
+#include "FanotifyEventLoop.h"
+#include "FanotifyTree.h"
 #include "../Queue.h"
 #include <queue>
 
-class InotifyEventLoop;
-class InotifyTree;
+class FanotifyEventLoop;
+class FanotifyTree;
 
-class InotifyService {
+class FanotifyService {
 public:
-  InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths);
+  FanotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths);
 
   std::string getError();
   bool hasErrored();
   bool isWatching();
   void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
-  ~InotifyService();
+  ~FanotifyService();
 private:
   void create(int wd, std::string name);
   void createDirectory(int wd, std::string name);
@@ -27,16 +27,14 @@ private:
   void dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName);
   void modify(int wd, std::string name);
   void remove(int wd, std::string name);
-  void removeDirectory(int wd);
   void rename(int fromWd, std::string fromName, int toWd, std::string toName);
-  void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
 
-  InotifyEventLoop *mEventLoop;
+  FanotifyEventLoop *mEventLoop;
   std::shared_ptr<EventQueue> mQueue;
-  InotifyTree *mTree;
-  int mInotifyInstance;
+  FanotifyTree *mTree;
+  int mFanotifyInstance;
 
-  friend class InotifyEventLoop;
+  friend class FanotifyEventLoop;
 };
 
 #endif

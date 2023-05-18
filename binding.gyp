@@ -66,9 +66,13 @@
                     "NSFW_TEST_SLOW_<!(node -p process.env.NSFW_TEST_SLOW)"
                 ],
                 "sources": [
+                    "src/linux/FanotifyEventLoop.cpp",
+                    "src/linux/FanotifyTree.cpp",
+                    "src/linux/FanotifyService.cpp",
                     "src/linux/InotifyEventLoop.cpp",
                     "src/linux/InotifyTree.cpp",
-                    "src/linux/InotifyService.cpp"
+                    "src/linux/InotifyService.cpp",
+                    "src/linux/NotifyService.cpp"
                 ],
                 "cflags": [
                     "-Wno-unknown-pragmas",

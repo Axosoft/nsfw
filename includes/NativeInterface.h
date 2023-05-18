@@ -8,8 +8,8 @@ using NativeImplementation = Controller;
 #include "../includes/osx/FSEventsService.h"
 using NativeImplementation = FSEventsService;
 #elif defined(__linux__) || defined(__FreeBSD__)
-#include "../includes/linux/InotifyService.h"
-using NativeImplementation = InotifyService;
+#include "../includes/linux/NotifyService.h"
+using NativeImplementation = NotifyService;
 #endif
 
 #include "Queue.h"

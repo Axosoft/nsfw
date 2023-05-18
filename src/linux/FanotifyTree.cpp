@@ -57,3 +57,19 @@ void FanotifyTree::updateExcludedPaths(const std::vector<std::string> &excludedP
 
 FanotifyTree::~FanotifyTree() {
 }
+
+bool FanotifyTree::existWatchedPath() {
+  struct stat file;
+  return stat(mPath.c_str(), &file) >= 0;
+}
+
+std::string FanotifyTree::getError() {
+  return mError;
+}
+
+bool FanotifyTree::hasErrored() {
+  if (mError.empty() && !existWatchedPath()) {
+    mError = "Service shutdown: root path changed (renamed or deleted)";
+  }
+  return !mError.empty();
+}

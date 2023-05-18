@@ -71,6 +71,10 @@ void FanotifyService::dispatchRename(int fromWd, std::string fromName, int toWd,
 }
 
 std::string FanotifyService::getError() {
+  if (mTree != NULL && mTree->hasErrored()) {
+    return mTree->getError();
+  }
+
   if (!isWatching()) {
     return "Service shutdown unexpectedly";
   }
@@ -79,7 +83,7 @@ std::string FanotifyService::getError() {
 }
 
 bool FanotifyService::hasErrored() {
-  return !isWatching();
+  return !isWatching() || (mTree == NULL ? false : mTree->hasErrored());
 }
 
 bool FanotifyService::isWatching() {

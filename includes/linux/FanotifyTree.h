@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <chrono>
+#include <thread>
 
 class FanotifyTree {
 public:
@@ -23,7 +25,7 @@ public:
   ~FanotifyTree();
 private:
   bool existWatchedPath();
-  
+
   const int mFanotifyInstance;
   std::vector<std::string> mExcludedPaths;
   std::string mPath;

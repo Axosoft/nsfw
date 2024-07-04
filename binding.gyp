@@ -29,10 +29,10 @@
                 ],
                 "msvs_settings": {
                     "VCCLCompilerTool": {
-                        "DisableSpecificWarnings": [ "4506", "4538", "4793" ]
+                        "DisableSpecificWarnings": [ ]
                     },
                     "VCLinkerTool": {
-                        "AdditionalOptions": [ "/ignore:4248" ]
+                        "AdditionalOptions": [ ]
                     }
                 }
             }],

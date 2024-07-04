@@ -37,10 +37,10 @@ class Watcher
     void resizeBuffers(std::size_t size);
 
     std::string getUTF8Directory(std::wstring path) ;
-    bool Watcher::isExcluded(const std::wstring &fileName);
+    bool isExcluded(const std::wstring &fileName);
 
-    std::wstring Watcher::getWatchedPathFromHandle();
-    void Watcher::checkWatchedPath();
+    std::wstring getWatchedPathFromHandle();
+    void checkWatchedPath();
 
     std::atomic<bool> mRunning;
     SingleshotSemaphore mHasStartedSemaphore;

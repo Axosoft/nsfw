@@ -13,16 +13,18 @@ jobs:
     name: "Linux Tests"
     strategy:
         matrix:
-          container: ["centos:7", "ubuntu:18.04"]
-          node: [12, 14]
+          container: ["ubuntu:20.04", "ubuntu:22.04", "ubuntu:24.04"]
+          node: [18, 20, 22]
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.container }}
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
@@ -47,13 +49,13 @@ jobs:
     name: "MacOS Tests"
     strategy:
         matrix:
-          node: [12, 14]
+          node: [18, 20, 22]
     runs-on: macOS-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
@@ -67,20 +69,18 @@ jobs:
     name: "Windows Tests"
     strategy:
         matrix:
-          node: [12, 14]
+          node: [18, 20, 22]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
 
       - run: |
           npm install --global yarn
-          npm install --global node-gyp@9.0.0
-          npm prefix -g | % {npm config set node_gyp "$_\node_modules\node-gyp\bin\node-gyp.js"}
           yarn
           yarn test

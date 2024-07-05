@@ -31,6 +31,12 @@ lib
 # extraneous operating system items
 .DS_Store
 
+# Visual Studio Code
+.vscode/
+
+# IntelliJ WebStorm
+.idea/
+
 # ignore test folders
 nsfw-stress-test
 mockfs

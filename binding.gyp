@@ -1,7 +1,9 @@
 {
     "targets": [{
         "target_name": "nsfw",
-
+        "defines": [
+            "NODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS"
+        ],
         "sources": [
             "src/NSFW.cpp",
             "src/Queue.cpp",

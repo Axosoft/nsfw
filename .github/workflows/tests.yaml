@@ -14,7 +14,7 @@ jobs:
     strategy:
         matrix:
           container: ["ubuntu:20.04", "ubuntu:22.04", "ubuntu:24.04"]
-          node: [18, 20, 22]
+          node: [20, 22]
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.container }}
@@ -49,7 +49,7 @@ jobs:
     name: "MacOS Tests"
     strategy:
         matrix:
-          node: [18, 20, 22]
+          node: [20, 22]
     runs-on: macOS-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,7 +69,7 @@ jobs:
     name: "Windows Tests"
     strategy:
         matrix:
-          node: [18, 20, 22]
+          node: [20, 22]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

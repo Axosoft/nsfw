@@ -1,6 +1,6 @@
 {
   "name": "nsfw",
-  "version": "2.2.5",
+  "version": "2.3.0",
   "description": "A simple file watcher for Node",
   "main": "js/src/index.js",
   "scripts": {
@@ -38,6 +38,9 @@
     "fs-extra": "^11.2.0",
     "globals": "^15.8.0",
     "mocha": "^10.6.0"
+  },
+  "resolutions": {
+    "serialize-javascript": "^7.0.3"
   },
   "keywords": [
     "FileWatcher",

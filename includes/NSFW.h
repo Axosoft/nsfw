@@ -26,7 +26,6 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::string mPath;
     std::thread mPollThread;
     std::atomic<bool> mRunning;
-    std::atomic<bool> mFinalizing;
     std::condition_variable mWaitPoolEvents;
     std::mutex mRunningLock;
     std::vector<std::string> mExcludedPaths;

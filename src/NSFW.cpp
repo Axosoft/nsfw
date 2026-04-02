@@ -56,37 +56,47 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 
     // errorCallback
     Napi::Value maybeErrorCallback = options["errorCallback"];
-    if (options.Has("errorCallback") && !maybeErrorCallback.IsFunction()) {
+    if (options.Has("errorCallback") && !maybeErrorCallback.IsFunction() && !maybeErrorCallback.IsNull() && !maybeErrorCallback.IsUndefined()) {
       throw Napi::TypeError::New(env, "options.errorCallback must be a function.");
     }
 
-    mErrorCallback = Napi::ThreadSafeFunction::New(
-      env,
-      maybeErrorCallback.IsFunction()
-        ? maybeErrorCallback.As<Napi::Function>()
-        : Napi::Function::New(env, [](const Napi::CallbackInfo &info) {}),
-      "nsfw",
-      0,
-      1
-    );
+    if (maybeErrorCallback.IsFunction()) {
+      mErrorCallback = Napi::ThreadSafeFunction::New(
+        env,
+        maybeErrorCallback.As<Napi::Function>(),
+        "nsfw",
+        0,
+        1
+      );
+    } else {
+      mErrorCallback = Napi::ThreadSafeFunction::New(
+        env,
+        Napi::Function::New(env, [](const Napi::CallbackInfo &info) {}),
+        "nsfw",
+        0,
+        1
+      );
+    }
 
     // excludedPaths
     Napi::Value maybeExcludedPaths = options["excludedPaths"];
     if (options.Has("excludedPaths") && !maybeExcludedPaths.IsArray()) {
       throw Napi::TypeError::New(env, "options.excludedPaths must be an array.");
     }
-    Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
-    for(uint32_t i = 0; i < paths.Length(); i++) {
-      Napi::Value path = paths[i];
-      if (path.IsString())
-      {
-        std::string str = path.ToString().Utf8Value();
-        if (str.back() == '/') {
-          str.pop_back();
+    if (maybeExcludedPaths.IsArray()) {
+      Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
+      for(uint32_t i = 0; i < paths.Length(); i++) {
+        Napi::Value path = paths[i];
+        if (path.IsString())
+        {
+          std::string str = path.ToString().Utf8Value();
+          if (!str.empty() && (str.back() == '/' || str.back() == '\\')) {
+            str.pop_back();
+          }
+          mExcludedPaths.push_back(str);
+        } else {
+          throw Napi::TypeError::New(env, "options.excludedPaths elements must be strings.");
         }
-        mExcludedPaths.push_back(str);
-      } else {
-        throw Napi::TypeError::New(env, "options.excludedPaths elements must be strings.");
       }
     }
 
@@ -99,15 +109,14 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 
 NSFW::~NSFW() {
   if (mRunning) {
-    mFinalizing = true;
     {
       std::lock_guard<std::mutex> lock(mRunningLock);
       mRunning = false;
     }
     mWaitPoolEvents.notify_one();
-  }
-  if (mPollThread.joinable()) {
-    mPollThread.join();
+    if (mPollThread.joinable()) {
+      mPollThread.join();
+    }
   }
   if (gcEnabled) {
     instanceCount--;
@@ -160,12 +169,12 @@ void NSFW::StartWorker::OnOK() {
   switch (mStatus) {
     case ALREADY_RUNNING:
       mNSFW->Unref();
-      mDeferred.Reject(Napi::Error::New(env, "This NSFW cannot be started, because it is already running.").Value());
+      mDeferred.Reject(Napi::Error::New(env, "NSFW watcher cannot be started: already running.").Value());
       break;
 
     case COULD_NOT_START:
       mNSFW->Unref();
-      mDeferred.Reject(Napi::Error::New(env, "NSFW was unable to start watching that directory.").Value());
+      mDeferred.Reject(Napi::Error::New(env, "NSFW failed to start: unable to watch directory.").Value());
       break;
 
     case STARTED:
@@ -213,6 +222,10 @@ void NSFW::StopWorker::Execute() {
   mNSFW->mWaitPoolEvents.notify_one();
   mNSFW->mPollThread.join();
 
+  // Release ThreadSafeFunction callbacks to prevent keeping event loop alive
+  mNSFW->mErrorCallback.Release();
+  mNSFW->mEventCallback.Release();
+
   std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
   mNSFW->mInterface.reset(nullptr);
   mNSFW->mQueue->clear();
@@ -224,7 +237,7 @@ void NSFW::StopWorker::OnOK() {
     mNSFW->Unref();
     mDeferred.Resolve(Env().Undefined());
   } else {
-    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW cannot be stopped, because it is not running.").Value());
+    mDeferred.Reject(Napi::Error::New(Env(), "NSFW watcher cannot be stopped: not currently running.").Value());
   }
 }
 
@@ -253,7 +266,7 @@ void NSFW::PauseWorker::OnOK() {
   if (mDidPauseEvents) {
     mDeferred.Resolve(Env().Undefined());
   } else {
-    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW could not be paused.").Value());
+    mDeferred.Reject(Napi::Error::New(Env(), "NSFW watcher could not be paused.").Value());
   }
 }
 
@@ -282,7 +295,7 @@ void NSFW::ResumeWorker::OnOK() {
   if (mDidResumeEvents) {
     mDeferred.Resolve(Env().Undefined());
   } else {
-    mDeferred.Reject(Napi::Error::New(Env(), "This NSFW could not be resumed.").Value());
+    mDeferred.Reject(Napi::Error::New(Env(), "NSFW watcher could not be resumed.").Value());
   }
 }
 
@@ -340,7 +353,7 @@ NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const 
   for(uint32_t i = 0; i < paths.Length(); i++) {
     Napi::Value path = paths[i];
     std::string str = path.ToString().Utf8Value();
-    if (str.back() == '/') {
+    if (!str.empty() && (str.back() == '/' || str.back() == '\\')) {
       str.pop_back();
     }
     mNSFW->mExcludedPaths.push_back(str);
@@ -370,15 +383,21 @@ Napi::Value NSFW::UpdateExcludedPaths(const Napi::CallbackInfo &info) {
 }
 
 void NSFW::updateExcludedPaths() {
-  mInterface->updateExcludedPaths(mExcludedPaths);
+  if (mInterface) {
+    mInterface->updateExcludedPaths(mExcludedPaths);
+  }
 }
 
 void NSFW::pauseQueue() {
-  mQueue->pause();
+  if (mQueue) {
+    mQueue->pause();
+  }
 }
 
 void NSFW::resumeQueue() {
-  mQueue->resume();
+  if (mQueue) {
+    mQueue->resume();
+  }
 }
 
 void NSFW::pollForEvents() {
@@ -442,13 +461,6 @@ void NSFW::pollForEvents() {
         return !mRunning || std::chrono::steady_clock::now() >= waitUntil;
       }
     );
-  }
-
-  // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point
-  // or we get a segfault
-  if (!mFinalizing) {
-    mErrorCallback.Release();
-    mEventCallback.Release();
   }
 }
 

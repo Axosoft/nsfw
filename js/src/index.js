@@ -18,8 +18,8 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
         fileStatus = status;
         eventCallback([{ action: CREATED, directory, file }]);
       } else if (
-        status.mtime - fileStatus.mtime !== 0 ||
-        status.ctime - fileStatus.ctime !== 0
+        status.mtime.getTime() !== fileStatus.mtime.getTime() ||
+        status.ctime.getTime() !== fileStatus.ctime.getTime()
       ) {
         fileStatus = status;
         eventCallback([{ action: MODIFIED, directory, file }]);
@@ -50,18 +50,24 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
   this.resume = () => this.start();
 }
 
-
-const buildNSFW = async (watchPath, eventCallback,
-  { debounceMS = 500, errorCallback: _errorCallback, excludedPaths = [] } = {}) => {
+const buildNSFW = async (
+  watchPath,
+  eventCallback,
+  { debounceMS = 500, errorCallback: _errorCallback, excludedPaths = [] } = {}
+) => {
   if (Number.isInteger(debounceMS)) {
-    if (debounceMS < 1) {
-      throw new Error('Minimum debounce is 1ms.');
+    if (debounceMS < 1 || debounceMS > 60000) {
+      throw new Error('debounceMS must be >= 1 and <= 60000.');
     }
   } else {
     throw new Error('debounceMS must be an integer.');
   }
 
-  const errorCallback = _errorCallback || ((nsfwError) => { throw nsfwError; });
+  const errorCallback =
+    _errorCallback ||
+    ((nsfwError) => {
+      throw nsfwError;
+    });
 
   if (!path.isAbsolute(watchPath)) {
     throw new Error('Path to watch must be an absolute path.');
@@ -75,23 +81,37 @@ const buildNSFW = async (watchPath, eventCallback,
   }
 
   if (excludedPaths) {
+    const normalizedWatchPath = watchPath.replace(/[\\/]+$/, '');
     for (let i = 0; i < excludedPaths.length; i++) {
-      const excludedPath = excludedPaths[i];
+      const normalizedExcludedPath = excludedPaths[i].replace(/[\\/]+$/, '');
       if (process.platform === 'win32') {
-        if (!excludedPath.substring(0, watchPath.length - 1).
-          localeCompare(watchPath, undefined, { sensitivity: 'accent' })) {
-          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
+        if (
+          normalizedExcludedPath
+            .substring(0, normalizedWatchPath.length)
+            .localeCompare(normalizedWatchPath, undefined, {
+              sensitivity: 'accent',
+            }) !== 0
+        ) {
+          throw new Error(
+            'Excluded path must be a valid subdirectory of the watching path.'
+          );
         }
       } else {
-        if (!excludedPath.startsWith(watchPath)) {
-          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
+        if (!normalizedExcludedPath.startsWith(normalizedWatchPath)) {
+          throw new Error(
+            'Excluded path must be a valid subdirectory of the watching path.'
+          );
         }
       }
     }
   }
 
   if (stats.isDirectory()) {
-    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, excludedPaths });
+    return new NSFW(watchPath, eventCallback, {
+      debounceMS,
+      errorCallback,
+      excludedPaths,
+    });
   } else if (stats.isFile()) {
     return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
   } else {
@@ -101,7 +121,9 @@ const buildNSFW = async (watchPath, eventCallback,
 
 function nsfw(watchPath, eventCallback, options) {
   if (!(this instanceof nsfw)) {
-    return buildNSFW(watchPath, eventCallback, options).then(implementation => new nsfw(implementation));
+    return buildNSFW(watchPath, eventCallback, options).then(
+      (implementation) => new nsfw(implementation)
+    );
   }
 
   const implementation = watchPath;
@@ -110,16 +132,21 @@ function nsfw(watchPath, eventCallback, options) {
   this.stop = () => implementation.stop();
   this.pause = () => implementation.pause();
   this.resume = () => implementation.resume();
-  this.getExcludedPaths = () => implementation.getExcludedPaths();
-  this.updateExcludedPaths = (paths) => implementation.updateExcludedPaths(paths);
+  this.getExcludedPaths = () =>
+    implementation.getExcludedPaths
+      ? implementation.getExcludedPaths()
+      : Promise.resolve([]);
+  this.updateExcludedPaths = (paths) =>
+    implementation.updateExcludedPaths
+      ? implementation.updateExcludedPaths(paths)
+      : Promise.resolve();
 }
-
 
 nsfw.actions = {
   CREATED: 0,
   DELETED: 1,
   MODIFIED: 2,
-  RENAMED: 3
+  RENAMED: 3,
 };
 
 nsfw._native = NSFW;

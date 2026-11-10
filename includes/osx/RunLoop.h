@@ -38,6 +38,7 @@ private:
   CFRunLoopRef mRunLoop;
   std::thread mRunLoopThread;
   SingleshotSemaphore mReadyForCleanup;
+  SingleshotSemaphore mStreamStarted;
   bool mStarted;
 };
 

@@ -8,6 +8,11 @@ RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
   mStarted(false) {
   mRunLoopThread = std::thread([] (RunLoop *rl) { rl->work(); }, this);
   mStarted = mRunLoopThread.joinable();
+  // The stream starts at kFSEventStreamEventIdSinceNow, so without this wait start() can resolve
+  // before FSEventStreamStart and lose the caller's first changes.
+  if (mStarted) {
+    mStreamStarted.wait();
+  }
 }
 
 bool RunLoop::isLooping() {
@@ -61,6 +66,7 @@ void RunLoop::work() {
 
   FSEventStreamScheduleWithRunLoop(mEventStream, mRunLoop, kCFRunLoopDefaultMode);
   FSEventStreamStart(mEventStream);
+  mStreamStarted.signal();
   CFRelease(pathsToWatch);
   CFRelease(fileWatchPath);
 

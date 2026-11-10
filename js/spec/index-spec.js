@@ -398,6 +398,35 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('reports a change made as soon as start() resolves', async function() {
+      // No settle time after start(): a watcher that resolves before it is armed loses these.
+      // Started concurrently because contention for the watcher threads widens that window.
+      const file = 'right_after_start.file';
+      const dirs = Array.from({ length: 10 }, (_, i) => path.resolve(workDir, 'test' + i));
+      const seen = new Set();
+      let watches = await Promise.all(dirs.map(dir => nsfw(
+        dir,
+        events => events.forEach(element => {
+          if (element.action === nsfw.actions.CREATED && element.file === file) {
+            seen.add(dir);
+          }
+        }),
+        { debounceMS: DEBOUNCE }
+      )));
+
+      try {
+        await Promise.all(watches.map((watch, i) => watch.start().then(() =>
+          fse.writeFile(path.join(dirs[i], file), 'Not a moment too soon.')
+        )));
+        await sleep(TIMEOUT_PER_STEP);
+
+        assert.deepEqual(dirs.filter(dir => !seen.has(dir)), []);
+      } finally {
+        await Promise.all(watches.map(watch => watch.stop()));
+        watches = null;
+      }
+    });
+
     it('will properly track the movement of watched directories across watched directories', async function() {
       const performRenameProcedure = async (number) => {
         await fse.mkdir(path.join(workDir, `test${number}`, 'sneaky-folder'));

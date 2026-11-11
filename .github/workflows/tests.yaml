@@ -80,6 +80,13 @@ jobs:
           node-version: ${{ matrix.node }}
           check-latest: true
 
+      # The node-gyp bundled with npm predates Visual Studio 2026 (18.x), which windows-latest
+      # now ships; 12.1.0 is the first release that finds it.
+      - name: Use a node-gyp that supports Visual Studio 2026
+        run: |
+          npm install --global node-gyp@12
+          "npm_config_node_gyp=$(npm prefix -g)\node_modules\node-gyp\bin\node-gyp.js" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - run: |
           npm install --global yarn
           yarn

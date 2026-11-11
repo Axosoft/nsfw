@@ -122,6 +122,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     };
 
     Napi::Value UpdateExcludedPaths(const Napi::CallbackInfo &info);
+    Napi::Value Close(const Napi::CallbackInfo &info);
 
   public:
     static Napi::Object Init(Napi::Env, Napi::Object exports);

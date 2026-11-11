@@ -145,7 +145,9 @@ void NSFW::StartWorker::Execute() {
       std::lock_guard<std::mutex> lock(mNSFW->mRunningLock);
       mNSFW->mRunning = true;
     }
-    mNSFW->mErrorCallback.Acquire();
+    if (mNSFW->mErrorCallback) {
+      mNSFW->mErrorCallback.Acquire();
+    }
     mNSFW->mEventCallback.Acquire();
     mNSFW->mPollThread = std::thread([] (NSFW *nsfw) { nsfw->pollForEvents(); }, mNSFW);
   } else {
@@ -388,14 +390,16 @@ void NSFW::pollForEvents() {
       std::lock_guard<std::mutex> lock(mInterfaceLock);
 
       if (mInterface->hasErrored()) {
-        const std::string &error = mInterface->getError();
-        mErrorCallback.NonBlockingCall([error](Napi::Env env, Napi::Function jsCallback) {
-          Napi::Value jsError = Napi::Error::New(env, error).Value();
-          jsCallback.Call({ jsError });
-        });
-        {
-         std::lock_guard<std::mutex> lock(mRunningLock);
-          mRunning = false;
+        if (mErrorCallback) {
+          const std::string &error = mInterface->getError();
+          mErrorCallback.NonBlockingCall([error](Napi::Env env, Napi::Function jsCallback) {
+            Napi::Value jsError = Napi::Error::New(env, error).Value();
+            jsCallback.Call({ jsError });
+          });
+          {
+          std::lock_guard<std::mutex> lock(mRunningLock);
+            mRunning = false;
+          }
         }
         break;
       }
@@ -447,7 +451,9 @@ void NSFW::pollForEvents() {
   // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point
   // or we get a segfault
   if (!mFinalizing) {
-    mErrorCallback.Release();
+    if (mErrorCallback) {
+      mErrorCallback.Release();
+    }
     mEventCallback.Release();
   }
 }
@@ -463,6 +469,14 @@ Napi::Value NSFW::ExcludedPaths() {
   return path_array;
 }
 
+Napi::Value NSFW::Close(const Napi::CallbackInfo &info) {
+  mEventCallback.Release();
+  if (mErrorCallback) {
+    mErrorCallback.Release();
+  }
+  return Napi::Value();
+}
+
 Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {
   return Napi::Number::New(info.Env(), instanceCount);
 }
@@ -476,8 +490,10 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("pause", &NSFW::Pause),
     InstanceMethod("resume", &NSFW::Resume),
     InstanceMethod("getExcludedPaths", &NSFW::GetExcludedPaths),
-    InstanceMethod("updateExcludedPaths", &NSFW::UpdateExcludedPaths)
+    InstanceMethod("updateExcludedPaths", &NSFW::UpdateExcludedPaths),
+    InstanceMethod("close", &NSFW::Close)
   });
+
 
   if (gcEnabled) {
     nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Function(

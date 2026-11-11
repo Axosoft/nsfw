@@ -48,6 +48,7 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
 
   this.pause = () => this.stop();
   this.resume = () => this.start();
+  this.close = () => this.close();
 }
 
 
@@ -112,6 +113,7 @@ function nsfw(watchPath, eventCallback, options) {
   this.resume = () => implementation.resume();
   this.getExcludedPaths = () => implementation.getExcludedPaths();
   this.updateExcludedPaths = (paths) => implementation.updateExcludedPaths(paths);
+  this.close = () => implementation.close();
 }
 
 

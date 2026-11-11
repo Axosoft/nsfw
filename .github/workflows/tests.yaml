@@ -12,8 +12,9 @@ jobs:
   linux-tests:
     name: "Linux Tests"
     strategy:
+        fail-fast: false
         matrix:
-          container: ["ubuntu:20.04", "ubuntu:22.04", "ubuntu:24.04"]
+          container: ["ubuntu:latest", "ubuntu:24.04"]
           node: [20, 22]
     runs-on: ubuntu-latest
     container:
@@ -31,8 +32,10 @@ jobs:
 
       - name: Install Ubuntu dependencies
         if: ${{ startsWith(matrix.container, 'ubuntu') }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          apt update && apt install -y software-properties-common && apt install -y git build-essential
+          apt-get update && apt-get install -y git build-essential python3
 
       - name: Install CentOS dependencies
         if: ${{ startsWith(matrix.container, 'centos') }}

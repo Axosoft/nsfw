@@ -1206,6 +1206,10 @@ describe('Node Sentinel File Watcher', function() {
         { code: 0, signal: null }
       );
     });
+
+    it('can update excluded paths before start()', async function() {
+      assert.deepEqual(await runChild('update-before-start', path.join(workDir, 'test6')), { code: 0, signal: null });
+    });
   });
 
   // Worker tests

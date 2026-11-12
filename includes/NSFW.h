@@ -33,96 +33,95 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::vector<std::string> mExcludedPaths;
     bool stopRun();
 
-    class StartWorker: public Napi::AsyncWorker {
+    // Base of every async job. It keeps the watcher alive until the job is destroyed, whichever way it ends (OnOK,
+    // OnError or cancellation), and rejects the job's promise if Execute throws a std::exception.
+    class Job: public Napi::AsyncWorker {
+      public:
+        Napi::Promise RunJob();
+
+      protected:
+        Job(Napi::Env env, NSFW *nsfw);
+        void OnError(const Napi::Error &error) override;
+
+        Napi::Promise::Deferred mDeferred;
+        NSFW *mNSFW;
+
+      private:
+        Napi::ObjectReference mWatcher;
+    };
+
+    class StartWorker: public Job {
       public:
         StartWorker(Napi::Env env, NSFW *nsfw);
         ~StartWorker();
         void Execute();
         void OnOK();
-        Napi::Promise RunJob();
 
       private:
         enum JobStatus { STARTED, ALREADY_RUNNING, COULD_NOT_START, JOB_NOT_EXECUTED_YET };
-        Napi::Promise::Deferred mDeferred;
         Napi::ThreadSafeFunction mErrorCallback;
         Napi::ThreadSafeFunction mEventCallback;
-        NSFW *mNSFW;
         JobStatus mStatus;
     };
 
     Napi::Value Start(const Napi::CallbackInfo &info);
 
-    class StopWorker: public Napi::AsyncWorker {
+    class StopWorker: public Job {
       public:
         StopWorker(Napi::Env env, NSFW *nsfw);
         void Execute();
         void OnOK();
-        Napi::Promise RunJob();
 
       private:
-        Napi::Promise::Deferred mDeferred;
         bool mDidStopWatching;
-        NSFW *mNSFW;
     };
 
     Napi::Value Stop(const Napi::CallbackInfo &info);
 
-    class PauseWorker: public Napi::AsyncWorker {
+    class PauseWorker: public Job {
       public:
         PauseWorker(Napi::Env env, NSFW *nsfw);
         void Execute();
         void OnOK();
-        Napi::Promise RunJob();
 
       private:
-        Napi::Promise::Deferred mDeferred;
         std::atomic<bool> mDidPauseEvents;
-        NSFW *mNSFW;
     };
 
     Napi::Value Pause(const Napi::CallbackInfo &info);
 
-    class ResumeWorker: public Napi::AsyncWorker {
+    class ResumeWorker: public Job {
       public:
         ResumeWorker(Napi::Env env, NSFW *nsfw);
         void Execute();
         void OnOK();
-        Napi::Promise RunJob();
 
       private:
-        Napi::Promise::Deferred mDeferred;
         std::atomic<bool> mDidResumeEvents;
-        NSFW *mNSFW;
     };
 
     Napi::Value Resume(const Napi::CallbackInfo &info);
 
-    class GetExcludedPathsWorker: public Napi::AsyncWorker {
+    class GetExcludedPathsWorker: public Job {
       public:
         GetExcludedPathsWorker(Napi::Env env, NSFW *nsfw);
         void Execute();
         void OnOK();
-        Napi::Promise RunJob();
 
       private:
-        Napi::Promise::Deferred mDeferred;
         std::atomic<bool> mDidGetExcludedPaths;
-        NSFW *mNSFW;
     };
 
     Napi::Value GetExcludedPaths(const Napi::CallbackInfo &info);
 
-    class UpdateExcludedPathsWorker: public Napi::AsyncWorker {
+    class UpdateExcludedPathsWorker: public Job {
       public:
         UpdateExcludedPathsWorker(Napi::Env env, const Napi::CallbackInfo &info, NSFW *nsfw);
         void Execute();
         void OnOK();
-        Napi::Promise RunJob();
 
       private:
-        Napi::Promise::Deferred mDeferred;
         std::atomic<bool> mDidUpdatetExcludedPaths;
-        NSFW *mNSFW;
     };
 
     Napi::Value UpdateExcludedPaths(const Napi::CallbackInfo &info);

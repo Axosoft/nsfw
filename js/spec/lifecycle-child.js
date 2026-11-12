@@ -36,14 +36,7 @@ async function errorWithoutStop() {
   const watch = await nsfw(watchDir, () => {}, { errorCallback: resolveError });
   await watch.start();
   await fse.remove(watchDir);
-  // A pending promise does not keep the process alive, so without this timer a missing error callback would let the
-  // child exit with 0. The rejection exits with 1 instead, and from a worker it reaches the parent as an error.
-  let timer;
-  const timedOut = new Promise((resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('errorCallback was not called')), 10000);
-  });
-  await Promise.race([errored, timedOut]);
-  clearTimeout(timer);
+  await errored;
 }
 
 // Needs --expose-gc. Watchers that were never started, or were stopped, must not keep their callbacks alive, also
@@ -71,6 +64,18 @@ async function collectCallbacks() {
   if (collected !== 10) {
     throw new Error(`only ${collected} of 10 watcher callbacks were collected`);
   }
+}
+
+async function updateExcludedPathsBeforeStart() {
+  const excluded = [path.join(watchDir, 'excluded')];
+  const watch = await nsfw(watchDir, () => {});
+  await watch.updateExcludedPaths(excluded);
+  const stored = await watch.getExcludedPaths();
+  if (JSON.stringify(stored) !== JSON.stringify(excluded)) {
+    throw new Error(`excluded paths not kept: ${JSON.stringify(stored)}`);
+  }
+  await watch.start();
+  await watch.stop();
 }
 
 // Many busy watchers in a worker that is terminated while they run: the poll threads must be gone before the
@@ -101,26 +106,29 @@ async function startBusyWatchers() {
   parentPort.postMessage('started');
 }
 
-switch (mode) {
-  case 'stop':
-    stopAndRestart();
-    break;
-  case 'concurrent-stop':
-    concurrentStops();
-    break;
-  case 'error':
-    errorWithoutStop();
-    break;
-  case 'collect-callbacks':
-    collectCallbacks();
-    break;
-  case 'worker-terminate-busy':
-    terminateBusyWorkers();
-    break;
-  case 'busy-watchers':
-    startBusyWatchers();
-    break;
-  case 'worker-error':
-    new Worker(__filename, { workerData: ['error', watchDir] });
-    break;
+function errorInWorker() {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(__filename, { workerData: ['error', watchDir] });
+    worker.on('error', reject);
+    worker.on('exit', code => (code === 0 ? resolve() : reject(new Error(`worker exited with ${code}`))));
+  });
 }
+
+const scenarios = {
+  'stop': stopAndRestart,
+  'concurrent-stop': concurrentStops,
+  'error': errorWithoutStop,
+  'collect-callbacks': collectCallbacks,
+  'update-before-start': updateExcludedPathsBeforeStart,
+  'worker-terminate-busy': terminateBusyWorkers,
+  'busy-watchers': startBusyWatchers,
+  'worker-error': errorInWorker
+};
+
+// A pending promise does not keep the process alive, so a scenario that never settles would let the child exit with 0.
+// The watchdog keeps it alive and fails it instead; it is cleared once the scenario settles, so anything the watcher
+// leaves behind still keeps the child from exiting. A rejection exits with 1, and from a worker it reaches the parent.
+const watchdog = setTimeout(() => {
+  throw new Error(`scenario '${mode}' did not settle`);
+}, mode === 'worker-terminate-busy' ? 55000 : 15000);
+scenarios[mode]().then(() => clearTimeout(watchdog));

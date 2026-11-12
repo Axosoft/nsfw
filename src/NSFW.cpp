@@ -179,18 +179,20 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
     if (options.Has("excludedPaths") && !maybeExcludedPaths.IsArray()) {
       throw Napi::TypeError::New(env, "options.excludedPaths must be an array.");
     }
-    Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
-    for(uint32_t i = 0; i < paths.Length(); i++) {
-      Napi::Value path = paths[i];
-      if (path.IsString())
-      {
-        std::string str = path.ToString().Utf8Value();
-        if (str.back() == '/') {
-          str.pop_back();
+    if (maybeExcludedPaths.IsArray()) {
+      Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
+      for(uint32_t i = 0; i < paths.Length(); i++) {
+        Napi::Value path = paths[i];
+        if (path.IsString())
+        {
+          std::string str = path.ToString().Utf8Value();
+          if (!str.empty() && str.back() == '/') {
+            str.pop_back();
+          }
+          mExcludedPaths.push_back(str);
+        } else {
+          throw Napi::TypeError::New(env, "options.excludedPaths elements must be strings.");
         }
-        mExcludedPaths.push_back(str);
-      } else {
-        throw Napi::TypeError::New(env, "options.excludedPaths elements must be strings.");
       }
     }
 
@@ -239,10 +241,24 @@ NSFW::~NSFW() {
   }
 }
 
-NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
+NSFW::Job::Job(Napi::Env env, NSFW *nsfw):
   Napi::AsyncWorker(env, "nsfw"),
   mDeferred(Napi::Promise::Deferred::New(env)),
   mNSFW(nsfw),
+  mWatcher(Napi::Persistent(nsfw->Value()))
+{}
+
+Napi::Promise NSFW::Job::RunJob() {
+  this->Queue();
+  return mDeferred.Promise();
+}
+
+void NSFW::Job::OnError(const Napi::Error &error) {
+  mDeferred.Reject(error.Value());
+}
+
+NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
+  Job(env, nsfw),
   mStatus(JOB_NOT_EXECUTED_YET)
 {
   // One pair per run, created here because it needs the main thread. They keep the event loop alive until the
@@ -255,6 +271,11 @@ NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
     mEventCallback.Release();
     throw;
   }
+
+  // The reference a running watcher holds so it is never collected, taken here on the main thread before the job is
+  // queued: a stop() can end the run before this job's OnOK, and its Unref must find it. A successful stop() drops it;
+  // ~StartWorker drops it if the watcher does not start.
+  mNSFW->Ref();
 }
 
 NSFW::StartWorker::~StartWorker() {
@@ -262,14 +283,8 @@ NSFW::StartWorker::~StartWorker() {
   if (mStatus != STARTED) {
     mErrorCallback.Release();
     mEventCallback.Release();
+    mNSFW->Unref();
   }
-}
-
-Napi::Promise NSFW::StartWorker::RunJob() {
-  mNSFW->Ref();
-  this->Queue();
-
-  return mDeferred.Promise();
 }
 
 void NSFW::StartWorker::Execute() {
@@ -286,16 +301,16 @@ void NSFW::StartWorker::Execute() {
     excludedPaths = mNSFW->mExcludedPaths;
   }
 
-  mNSFW->mQueue->clear();
-  std::unique_ptr<NativeInterface> nativeInterface(
-    new NativeInterface(mNSFW->mPath, excludedPaths, mNSFW->mQueue)
-  );
-  if (!nativeInterface->isWatching()) {
-    mStatus = COULD_NOT_START;
-    return;
-  }
-
   try {
+    mNSFW->mQueue->clear();
+    std::unique_ptr<NativeInterface> nativeInterface(
+      new NativeInterface(mNSFW->mPath, excludedPaths, mNSFW->mQueue)
+    );
+    if (!nativeInterface->isWatching()) {
+      mStatus = COULD_NOT_START;
+      return;
+    }
+
     mNSFW->mRun.reset(new Run(
       std::move(nativeInterface),
       mNSFW->mQueue,
@@ -315,12 +330,10 @@ void NSFW::StartWorker::OnOK() {
   auto env = Env();
   switch (mStatus) {
     case ALREADY_RUNNING:
-      mNSFW->Unref();
       mDeferred.Reject(Napi::Error::New(env, "This NSFW cannot be started, because it is already running.").Value());
       break;
 
     case COULD_NOT_START:
-      mNSFW->Unref();
       mDeferred.Reject(Napi::Error::New(env, "NSFW was unable to start watching that directory.").Value());
       break;
 
@@ -329,7 +342,6 @@ void NSFW::StartWorker::OnOK() {
       break;
 
     default:
-      mNSFW->Unref();
       mDeferred.Reject(Napi::Error::New(
         env,
         "Execute did not run, but OnOK fired. This should never have happened."
@@ -342,16 +354,9 @@ Napi::Value NSFW::Start(const Napi::CallbackInfo &info) {
 }
 
 NSFW::StopWorker::StopWorker(Napi::Env env, NSFW *nsfw):
-  Napi::AsyncWorker(env, "nsfw"),
-  mDeferred(Napi::Promise::Deferred::New(env)),
-  mDidStopWatching(false),
-  mNSFW(nsfw)
+  Job(env, nsfw),
+  mDidStopWatching(false)
 {}
-
-Napi::Promise NSFW::StopWorker::RunJob() {
-  this->Queue();
-  return mDeferred.Promise();
-}
 
 void NSFW::StopWorker::Execute() {
   // Of several concurrent stop() calls only the one that takes the run stops the watcher; the others reject.
@@ -360,6 +365,7 @@ void NSFW::StopWorker::Execute() {
 
 void NSFW::StopWorker::OnOK() {
   if (mDidStopWatching) {
+    // Drops the reference StartWorker took for the run; it stays until this point even after a watcher error.
     mNSFW->Unref();
     mDeferred.Resolve(Env().Undefined());
   } else {
@@ -372,16 +378,9 @@ Napi::Value NSFW::Stop(const Napi::CallbackInfo &info) {
 }
 
 NSFW::PauseWorker::PauseWorker(Napi::Env env, NSFW *nsfw):
-  Napi::AsyncWorker(env, "nsfw"),
-  mDeferred(Napi::Promise::Deferred::New(env)),
-  mDidPauseEvents(false),
-  mNSFW(nsfw)
+  Job(env, nsfw),
+  mDidPauseEvents(false)
 {}
-
-Napi::Promise NSFW::PauseWorker::RunJob() {
-  this->Queue();
-  return mDeferred.Promise();
-}
 
 void NSFW::PauseWorker::Execute() {
   mDidPauseEvents = true;
@@ -401,16 +400,9 @@ Napi::Value NSFW::Pause(const Napi::CallbackInfo &info) {
 }
 
 NSFW::ResumeWorker::ResumeWorker(Napi::Env env, NSFW *nsfw):
-  Napi::AsyncWorker(env, "nsfw"),
-  mDeferred(Napi::Promise::Deferred::New(env)),
-  mDidResumeEvents(false),
-  mNSFW(nsfw)
+  Job(env, nsfw),
+  mDidResumeEvents(false)
 {}
-
-Napi::Promise NSFW::ResumeWorker::RunJob() {
-  this->Queue();
-  return mDeferred.Promise();
-}
 
 void NSFW::ResumeWorker::Execute() {
   mDidResumeEvents = true;
@@ -430,16 +422,9 @@ Napi::Value NSFW::Resume(const Napi::CallbackInfo &info) {
 }
 
 NSFW::GetExcludedPathsWorker::GetExcludedPathsWorker(Napi::Env env, NSFW *nsfw):
-  Napi::AsyncWorker(env, "nsfw"),
-  mDeferred(Napi::Promise::Deferred::New(env)),
-  mDidGetExcludedPaths(false),
-  mNSFW(nsfw)
+  Job(env, nsfw),
+  mDidGetExcludedPaths(false)
 {}
-
-Napi::Promise NSFW::GetExcludedPathsWorker::RunJob() {
-  this->Queue();
-  return mDeferred.Promise();
-}
 
 void NSFW::GetExcludedPathsWorker::Execute() {
   mDidGetExcludedPaths = true;
@@ -458,10 +443,8 @@ Napi::Value NSFW::GetExcludedPaths(const Napi::CallbackInfo &info) {
 }
 
 NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const Napi::CallbackInfo &info, NSFW *nsfw):
-  Napi::AsyncWorker(info.Env(), "nsfw"),
-  mDeferred(Napi::Promise::Deferred::New(info.Env())),
-  mDidUpdatetExcludedPaths(false),
-  mNSFW(nsfw)
+  Job(info.Env(), nsfw),
+  mDidUpdatetExcludedPaths(false)
 {
   if (info.Length() < 1 || !info[0].IsArray()) {
     throw Napi::TypeError::New(env, "Must pass an array of string to updateExcludedPaths.");
@@ -479,7 +462,7 @@ NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const 
   for(uint32_t i = 0; i < paths.Length(); i++) {
     Napi::Value path = paths[i];
     std::string str = path.ToString().Utf8Value();
-    if (str.back() == '/') {
+    if (!str.empty() && str.back() == '/') {
       str.pop_back();
     }
     excludedPaths.push_back(str);
@@ -489,19 +472,17 @@ NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const 
   mNSFW->mExcludedPaths = excludedPaths;
 }
 
-Napi::Promise NSFW::UpdateExcludedPathsWorker::RunJob() {
-  this->Queue();
-  return mDeferred.Promise();
-}
-
 void NSFW::UpdateExcludedPathsWorker::Execute() {
   std::lock_guard<std::mutex> lock(mNSFW->mRunLock);
-  std::vector<std::string> excludedPaths;
-  {
-    std::lock_guard<std::mutex> excludedPathsLock(mNSFW->mExcludedPathsLock);
-    excludedPaths = mNSFW->mExcludedPaths;
+  // A stopped watcher only keeps them for its next start().
+  if (mNSFW->mRun) {
+    std::vector<std::string> excludedPaths;
+    {
+      std::lock_guard<std::mutex> excludedPathsLock(mNSFW->mExcludedPathsLock);
+      excludedPaths = mNSFW->mExcludedPaths;
+    }
+    mNSFW->mRun->updateExcludedPaths(excludedPaths);
   }
-  mNSFW->mRun->updateExcludedPaths(excludedPaths);
   mDidUpdatetExcludedPaths = true;
 }
 

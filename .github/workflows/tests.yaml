@@ -7,75 +7,90 @@ on:
 
 name: Run Tests
 
+permissions:
+  contents: read
+
+# A new push to a PR supersedes the previous run; master/release runs always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
 
   linux-tests:
-    name: "Linux Tests"
+    name: "Linux Tests (${{ matrix.container }}, ${{ matrix.arch }}, Node ${{ matrix.node }})"
     strategy:
-        matrix:
-          container: ["ubuntu:20.04", "ubuntu:22.04", "ubuntu:24.04"]
-          node: [20, 22]
-    runs-on: ubuntu-latest
+      fail-fast: false
+      matrix:
+        container: ["ubuntu:latest", "ubuntu:24.04"]
+        arch: [x64, arm64]
+        node: [22, 24, 26]
+        exclude:
+          - container: "ubuntu:24.04"
+            arch: arm64
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 30
     container:
       image: ${{ matrix.container }}
-    env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      # Runs before setup-node: the Node 26+ binaries link libatomic, which the bare
+      # Ubuntu image doesn't ship.
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update && apt-get install -y git build-essential python3 libatomic1
 
       - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
-
-      - name: Install Ubuntu dependencies
-        if: ${{ startsWith(matrix.container, 'ubuntu') }}
-        run: |
-          apt update && apt install -y software-properties-common && apt install -y git build-essential
-
-      - name: Install CentOS dependencies
-        if: ${{ startsWith(matrix.container, 'centos') }}
-        run: |
-          yum install -y git gcc gcc-c++ make
 
       - name: Run tests
         run: |
           npm install --global yarn
-          yarn
+          yarn install --frozen-lockfile
           yarn test
 
   macos-tests:
-    name: "MacOS Tests"
+    name: "MacOS Tests (Node ${{ matrix.node }})"
     strategy:
-        matrix:
-          node: [20, 22]
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
     runs-on: macOS-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
 
-      - run: |
+      - name: Run tests
+        run: |
           npm install --global yarn
-          yarn
+          yarn install --frozen-lockfile
           yarn test
 
   windows-tests:
-    name: "Windows Tests"
+    name: "Windows Tests (Node ${{ matrix.node }})"
     strategy:
-        matrix:
-          node: [20, 22]
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Use Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
@@ -87,7 +102,24 @@ jobs:
           npm install --global node-gyp@12
           "npm_config_node_gyp=$(npm prefix -g)\node_modules\node-gyp\bin\node-gyp.js" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - run: |
+      - name: Run tests
+        run: |
           npm install --global yarn
-          yarn
+          yarn install --frozen-lockfile
           yarn test
+
+  # Single stable check for branch protection, so matrix changes don't require
+  # editing the required status checks.
+  tests-passed:
+    name: "Tests passed"
+    if: ${{ always() }}
+    needs: [linux-tests, macos-tests, windows-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check matrix results
+        run: |
+          echo 'linux=${{ needs.linux-tests.result }} macos=${{ needs.macos-tests.result }} windows=${{ needs.windows-tests.result }}'
+          test '${{ needs.linux-tests.result }}' = success
+          test '${{ needs.macos-tests.result }}' = success
+          test '${{ needs.windows-tests.result }}' = success

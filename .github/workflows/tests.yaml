@@ -94,3 +94,18 @@ jobs:
           npm install --global yarn
           yarn
           yarn test
+
+  # Single stable check for branch protection, so matrix changes don't require
+  # editing the required status checks.
+  tests-passed:
+    name: "Tests passed"
+    if: ${{ always() }}
+    needs: [linux-tests, macos-tests, windows-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check matrix results
+        run: |
+          echo 'linux=${{ needs.linux-tests.result }} macos=${{ needs.macos-tests.result }} windows=${{ needs.windows-tests.result }}'
+          test '${{ needs.linux-tests.result }}' = success
+          test '${{ needs.macos-tests.result }}' = success
+          test '${{ needs.windows-tests.result }}' = success

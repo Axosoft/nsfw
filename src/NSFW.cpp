@@ -1,15 +1,131 @@
 #include "../includes/NSFW.h"
 
+#include <chrono>
+#include <condition_variable>
+#include <exception>
+#include <thread>
+
+// One run of the watcher, from a successful start() until stop() or teardown. It owns the native interface, the
+// poll thread and the thread-safe functions that thread calls, so a run is created and destroyed as one unit. The
+// poll thread releases the thread-safe functions when it ends, whether stopped or after a watcher error, and only
+// then do they stop keeping the event loop alive.
+class NSFW::Run {
+  public:
+    Run(
+      std::unique_ptr<NativeInterface> nativeInterface,
+      std::shared_ptr<EventQueue> queue,
+      uint32_t debounceMS,
+      Napi::ThreadSafeFunction eventCallback,
+      Napi::ThreadSafeFunction errorCallback
+    ):
+      mInterface(std::move(nativeInterface)),
+      mQueue(queue),
+      mDebounceMS(debounceMS),
+      mEventCallback(eventCallback),
+      mErrorCallback(errorCallback),
+      mStopping(false)
+    {
+      // Last, so that a failure leaves the thread-safe functions unreleased for the caller to release.
+      mThread = std::thread(&Run::poll, this);
+    }
+
+    ~Run() {
+      {
+        std::lock_guard<std::mutex> lock(mLock);
+        mStopping = true;
+      }
+      mWake.notify_one();
+      mThread.join();
+    }
+
+    void updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+      std::lock_guard<std::mutex> lock(mLock);
+      mInterface->updateExcludedPaths(excludedPaths);
+    }
+
+  private:
+    void poll();
+
+    std::unique_ptr<NativeInterface> mInterface;
+    std::shared_ptr<EventQueue> mQueue;
+    uint32_t mDebounceMS;
+    Napi::ThreadSafeFunction mEventCallback;
+    Napi::ThreadSafeFunction mErrorCallback;
+    // Guards mInterface and mStopping.
+    std::mutex mLock;
+    std::condition_variable mWake;
+    bool mStopping;
+    std::thread mThread;
+};
+
+void NSFW::Run::poll() {
+  std::unique_lock<std::mutex> lock(mLock);
+  while (!mStopping) {
+    uint32_t sleepDuration = 50;
+
+    if (mInterface->hasErrored()) {
+      const std::string &error = mInterface->getError();
+      mErrorCallback.NonBlockingCall([error](Napi::Env env, Napi::Function jsCallback) {
+        Napi::Value jsError = Napi::Error::New(env, error).Value();
+        jsCallback.Call({ jsError });
+      });
+      break;
+    }
+
+    if (mQueue->count() != 0) {
+      auto events = mQueue->dequeueAll();
+      if (events != nullptr) {
+        sleepDuration = mDebounceMS;
+        auto callback = [](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
+          std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(eventsRaw);
+          eventsRaw = nullptr;
+
+          int numEvents = events->size();
+          Napi::Array eventArray = Napi::Array::New(env, numEvents);
+
+          for (int i = 0; i < numEvents; ++i) {
+            auto event = Napi::Object::New(env);
+            event["action"] = Napi::Number::New(env, (*events)[i]->type);
+            event["directory"] = Napi::String::New(env, (*events)[i]->fromDirectory);
+
+            if ((*events)[i]->type == RENAMED) {
+              event["oldFile"] = Napi::String::New(env, (*events)[i]->fromFile);
+              event["newDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
+              event["newFile"] = Napi::String::New(env, (*events)[i]->toFile);
+            } else {
+              event["file"] = Napi::String::New(env, (*events)[i]->fromFile);
+            }
+
+            eventArray[(uint32_t)i] = event;
+          }
+
+          jsCallback.Call({ eventArray });
+        };
+
+        mEventCallback.NonBlockingCall(events.release(), callback);
+      }
+    }
+
+    mWake.wait_for(lock, std::chrono::milliseconds(sleepDuration), [this]() { return mStopping; });
+  }
+  lock.unlock();
+
+  // Once released, and their queued calls delivered, the callbacks stop keeping the event loop alive.
+  mErrorCallback.Release();
+  mEventCallback.Release();
+}
+
+const char *const NSFW::EVENT_CALLBACK_KEY = "__nsfwEventCallback";
+const char *const NSFW::ERROR_CALLBACK_KEY = "__nsfwErrorCallback";
+
 std::size_t NSFW::instanceCount = 0;
 bool NSFW::gcEnabled = false;
 
 NSFW::NSFW(const Napi::CallbackInfo &info):
   Napi::ObjectWrap<NSFW>(info),
   mDebounceMS(0),
-  mInterface(nullptr),
   mQueue(std::make_shared<EventQueue>()),
-  mPath(""),
-  mRunning(false)
+  mPath("")
 {
   Napi::Env env = info.Env();
 
@@ -23,13 +139,7 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
     throw Napi::TypeError::New(env, "Must pass an event callback as the second parameter to NSFW.");
   }
 
-  mEventCallback = Napi::ThreadSafeFunction::New(
-    env,
-    info[1].As<Napi::Function>(),
-    "nsfw",
-    0,
-    1
-  );
+  Napi::Function errorCallback = Napi::Function::New(env, [](const Napi::CallbackInfo &info) {});
 
   if (info.Length() >= 3) {
     if (!info[2].IsObject()) {
@@ -60,15 +170,9 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       throw Napi::TypeError::New(env, "options.errorCallback must be a function.");
     }
 
-    mErrorCallback = Napi::ThreadSafeFunction::New(
-      env,
-      maybeErrorCallback.IsFunction()
-        ? maybeErrorCallback.As<Napi::Function>()
-        : Napi::Function::New(env, [](const Napi::CallbackInfo &info) {}),
-      "nsfw",
-      0,
-      1
-    );
+    if (maybeErrorCallback.IsFunction()) {
+      errorCallback = maybeErrorCallback.As<Napi::Function>();
+    }
 
     // excludedPaths
     Napi::Value maybeExcludedPaths = options["excludedPaths"];
@@ -92,23 +196,44 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 
   }
 
+  // Between runs the callbacks are plain, non-enumerable properties of this object; each start() wraps them in
+  // thread-safe functions owned by that run. Native references would root a callback that captures its own watcher
+  // and keep the watcher alive forever; as properties they form a JS cycle the garbage collector reclaims.
+  info.This().As<Napi::Object>().DefineProperties({
+    Napi::PropertyDescriptor::Value(EVENT_CALLBACK_KEY, info[1], napi_default),
+    Napi::PropertyDescriptor::Value(ERROR_CALLBACK_KEY, errorCallback, napi_default)
+  });
+
+  napi_add_env_cleanup_hook(env, NSFW::onEnvCleanup, this);
+
   if (gcEnabled) {
     instanceCount++;
   }
 }
 
+// On environment teardown (worker.terminate(), process exit) the thread-safe functions' own cleanup hooks only close
+// their handles; Node frees them in the close callbacks, after every cleanup hook has run. Ending the run here, in the
+// same pass, means its poll thread never touches a freed one. This object is only finalized after that.
+void NSFW::onEnvCleanup(void *data) {
+  static_cast<NSFW *>(data)->stopRun();
+}
+
+// Ends the run under mRunLock, so a start() cannot begin while the old run's interface may still queue events. Of
+// several concurrent callers only the first finds a run to end.
+bool NSFW::stopRun() {
+  std::lock_guard<std::mutex> lock(mRunLock);
+  if (!mRun) {
+    return false;
+  }
+  mRun.reset();
+  mQueue->clear();
+  return true;
+}
+
 NSFW::~NSFW() {
-  if (mRunning) {
-    mFinalizing = true;
-    {
-      std::lock_guard<std::mutex> lock(mRunningLock);
-      mRunning = false;
-    }
-    mWaitPoolEvents.notify_one();
-  }
-  if (mPollThread.joinable()) {
-    mPollThread.join();
-  }
+  // A hook left behind would run on a destroyed object when the environment exits.
+  napi_remove_env_cleanup_hook(Env(), NSFW::onEnvCleanup, this);
+  stopRun();
   if (gcEnabled) {
     instanceCount--;
   }
@@ -119,7 +244,26 @@ NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
   mDeferred(Napi::Promise::Deferred::New(env)),
   mNSFW(nsfw),
   mStatus(JOB_NOT_EXECUTED_YET)
-{}
+{
+  // One pair per run, created here because it needs the main thread. They keep the event loop alive until the
+  // poll thread releases them when the run ends.
+  Napi::Object self = nsfw->Value();
+  mEventCallback = Napi::ThreadSafeFunction::New(env, self.Get(EVENT_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1);
+  try {
+    mErrorCallback = Napi::ThreadSafeFunction::New(env, self.Get(ERROR_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1);
+  } catch (...) {
+    mEventCallback.Release();
+    throw;
+  }
+}
+
+NSFW::StartWorker::~StartWorker() {
+  // Not handed to a run: the watcher did not start.
+  if (mStatus != STARTED) {
+    mErrorCallback.Release();
+    mEventCallback.Release();
+  }
+}
 
 Napi::Promise NSFW::StartWorker::RunJob() {
   mNSFW->Ref();
@@ -129,33 +273,45 @@ Napi::Promise NSFW::StartWorker::RunJob() {
 }
 
 void NSFW::StartWorker::Execute() {
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
+  std::lock_guard<std::mutex> lock(mNSFW->mRunLock);
 
-  if (mNSFW->mInterface) {
+  if (mNSFW->mRun) {
     mStatus = ALREADY_RUNNING;
     return;
   }
 
-  mNSFW->mQueue->clear();
-  mNSFW->mInterface.reset(new NativeInterface(mNSFW->mPath, mNSFW->mExcludedPaths, mNSFW->mQueue));
-
-  if (mNSFW->mInterface->isWatching()) {
-    mStatus = STARTED;
-    {
-      std::lock_guard<std::mutex> lock(mNSFW->mRunningLock);
-      mNSFW->mRunning = true;
-    }
-    mNSFW->mErrorCallback.Acquire();
-    mNSFW->mEventCallback.Acquire();
-    mNSFW->mPollThread = std::thread([] (NSFW *nsfw) { nsfw->pollForEvents(); }, mNSFW);
-  } else {
-    mStatus = COULD_NOT_START;
-    mNSFW->mInterface.reset(nullptr);
+  std::vector<std::string> excludedPaths;
+  {
+    std::lock_guard<std::mutex> excludedPathsLock(mNSFW->mExcludedPathsLock);
+    excludedPaths = mNSFW->mExcludedPaths;
   }
+
+  mNSFW->mQueue->clear();
+  std::unique_ptr<NativeInterface> nativeInterface(
+    new NativeInterface(mNSFW->mPath, excludedPaths, mNSFW->mQueue)
+  );
+  if (!nativeInterface->isWatching()) {
+    mStatus = COULD_NOT_START;
+    return;
+  }
+
+  try {
+    mNSFW->mRun.reset(new Run(
+      std::move(nativeInterface),
+      mNSFW->mQueue,
+      mNSFW->mDebounceMS,
+      mEventCallback,
+      mErrorCallback
+    ));
+  } catch (const std::exception &) {
+    mStatus = COULD_NOT_START;
+    return;
+  }
+  // Only now does the run own this start()'s callbacks; until here ~StartWorker releases them.
+  mStatus = STARTED;
 }
 
 void NSFW::StartWorker::OnOK() {
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
   auto env = Env();
   switch (mStatus) {
     case ALREADY_RUNNING:
@@ -198,28 +354,11 @@ Napi::Promise NSFW::StopWorker::RunJob() {
 }
 
 void NSFW::StopWorker::Execute() {
-  {
-    std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
-    if (!mNSFW->mInterface) {
-      return;
-    }
-  }
-
-  mDidStopWatching = true;
-  {
-    std::lock_guard<std::mutex> lock(mNSFW->mRunningLock);
-    mNSFW->mRunning = false;
-  }
-  mNSFW->mWaitPoolEvents.notify_one();
-  mNSFW->mPollThread.join();
-
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
-  mNSFW->mInterface.reset(nullptr);
-  mNSFW->mQueue->clear();
+  // Of several concurrent stop() calls only the one that takes the run stops the watcher; the others reject.
+  mDidStopWatching = mNSFW->stopRun();
 }
 
 void NSFW::StopWorker::OnOK() {
-  std::lock_guard<std::mutex> lock(mNSFW->mInterfaceLock);
   if (mDidStopWatching) {
     mNSFW->Unref();
     mDeferred.Resolve(Env().Undefined());
@@ -336,15 +475,18 @@ NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const 
       throw Napi::TypeError::New(env, "excludedPaths elements must be strings.");
     }
   }
-  mNSFW->mExcludedPaths.clear();
+  std::vector<std::string> excludedPaths;
   for(uint32_t i = 0; i < paths.Length(); i++) {
     Napi::Value path = paths[i];
     std::string str = path.ToString().Utf8Value();
     if (str.back() == '/') {
       str.pop_back();
     }
-    mNSFW->mExcludedPaths.push_back(str);
+    excludedPaths.push_back(str);
   }
+  // Stored here, on the main thread, so updates apply in call order; Execute only forwards them to a running watcher.
+  std::lock_guard<std::mutex> lock(mNSFW->mExcludedPathsLock);
+  mNSFW->mExcludedPaths = excludedPaths;
 }
 
 Napi::Promise NSFW::UpdateExcludedPathsWorker::RunJob() {
@@ -353,8 +495,14 @@ Napi::Promise NSFW::UpdateExcludedPathsWorker::RunJob() {
 }
 
 void NSFW::UpdateExcludedPathsWorker::Execute() {
+  std::lock_guard<std::mutex> lock(mNSFW->mRunLock);
+  std::vector<std::string> excludedPaths;
+  {
+    std::lock_guard<std::mutex> excludedPathsLock(mNSFW->mExcludedPathsLock);
+    excludedPaths = mNSFW->mExcludedPaths;
+  }
+  mNSFW->mRun->updateExcludedPaths(excludedPaths);
   mDidUpdatetExcludedPaths = true;
-  mNSFW->updateExcludedPaths();
 }
 
 void NSFW::UpdateExcludedPathsWorker::OnOK() {
@@ -369,10 +517,6 @@ Napi::Value NSFW::UpdateExcludedPaths(const Napi::CallbackInfo &info) {
   return (new UpdateExcludedPathsWorker(info.Env(), info, this))->RunJob();
 }
 
-void NSFW::updateExcludedPaths() {
-  mInterface->updateExcludedPaths(mExcludedPaths);
-}
-
 void NSFW::pauseQueue() {
   mQueue->pause();
 }
@@ -381,78 +525,8 @@ void NSFW::resumeQueue() {
   mQueue->resume();
 }
 
-void NSFW::pollForEvents() {
-  while (mRunning) {
-    uint32_t sleepDuration = 50;
-    {
-      std::lock_guard<std::mutex> lock(mInterfaceLock);
-
-      if (mInterface->hasErrored()) {
-        const std::string &error = mInterface->getError();
-        mErrorCallback.NonBlockingCall([error](Napi::Env env, Napi::Function jsCallback) {
-          Napi::Value jsError = Napi::Error::New(env, error).Value();
-          jsCallback.Call({ jsError });
-        });
-        {
-         std::lock_guard<std::mutex> lock(mRunningLock);
-          mRunning = false;
-        }
-        break;
-      }
-
-      if (mQueue->count() != 0) {
-        auto events = mQueue->dequeueAll();
-        if (events != nullptr) {
-          sleepDuration = mDebounceMS;
-          auto callback = [](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
-            std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(eventsRaw);
-            eventsRaw = nullptr;
-
-            int numEvents = events->size();
-            Napi::Array eventArray = Napi::Array::New(env, numEvents);
-
-            for (int i = 0; i < numEvents; ++i) {
-              auto event = Napi::Object::New(env);
-              event["action"] = Napi::Number::New(env, (*events)[i]->type);
-              event["directory"] = Napi::String::New(env, (*events)[i]->fromDirectory);
-
-              if ((*events)[i]->type == RENAMED) {
-                event["oldFile"] = Napi::String::New(env, (*events)[i]->fromFile);
-                event["newDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
-                event["newFile"] = Napi::String::New(env, (*events)[i]->toFile);
-              } else {
-                event["file"] = Napi::String::New(env, (*events)[i]->fromFile);
-              }
-
-              eventArray[(uint32_t)i] = event;
-            }
-
-            jsCallback.Call({ eventArray });
-          };
-
-          mEventCallback.NonBlockingCall(events.release(), callback);
-        }
-      }
-    }
-
-    std::unique_lock<std::mutex> lck(mRunningLock);
-    const auto waitUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(sleepDuration);
-    mWaitPoolEvents.wait_until(lck, waitUntil,
-      [this, waitUntil](){
-        return !mRunning || std::chrono::steady_clock::now() >= waitUntil;
-      }
-    );
-  }
-
-  // If we are destroying NFSW object (destructor) we cannot release the thread safe functions at this point
-  // or we get a segfault
-  if (!mFinalizing) {
-    mErrorCallback.Release();
-    mEventCallback.Release();
-  }
-}
-
 Napi::Value NSFW::ExcludedPaths() {
+  std::lock_guard<std::mutex> lock(mExcludedPathsLock);
   Napi::Array path_array = Napi::Array::New(Env(), mExcludedPaths.size());
 
   uint32_t i = 0;

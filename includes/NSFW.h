@@ -2,10 +2,9 @@
 #define NSFW_H
 
 #include <atomic>
-#include <chrono>
 #include <memory>
+#include <mutex>
 #include <napi.h>
-#include <thread>
 #include <vector>
 
 #include "./Queue.h"
@@ -17,24 +16,27 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     static std::size_t instanceCount;
     static bool gcEnabled;
 
+    // Everything that exists only while the watcher runs, see NSFW.cpp.
+    class Run;
+
+    static const char *const EVENT_CALLBACK_KEY;
+    static const char *const ERROR_CALLBACK_KEY;
+
     uint32_t mDebounceMS;
-    Napi::ThreadSafeFunction mErrorCallback;
-    Napi::ThreadSafeFunction mEventCallback;
-    std::unique_ptr<NativeInterface> mInterface;
-    std::mutex mInterfaceLock;
     std::shared_ptr<EventQueue> mQueue;
     std::string mPath;
-    std::thread mPollThread;
-    std::atomic<bool> mRunning;
-    std::atomic<bool> mFinalizing;
-    std::condition_variable mWaitPoolEvents;
-    std::mutex mRunningLock;
+    // Guards mRun, including while a run is being created or destroyed.
+    std::mutex mRunLock;
+    std::unique_ptr<Run> mRun;
+    // Only ever held briefly, so the main thread can take it.
+    std::mutex mExcludedPathsLock;
     std::vector<std::string> mExcludedPaths;
-    void updateExcludedPaths();
+    bool stopRun();
 
     class StartWorker: public Napi::AsyncWorker {
       public:
         StartWorker(Napi::Env env, NSFW *nsfw);
+        ~StartWorker();
         void Execute();
         void OnOK();
         Napi::Promise RunJob();
@@ -42,6 +44,8 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
       private:
         enum JobStatus { STARTED, ALREADY_RUNNING, COULD_NOT_START, JOB_NOT_EXECUTED_YET };
         Napi::Promise::Deferred mDeferred;
+        Napi::ThreadSafeFunction mErrorCallback;
+        Napi::ThreadSafeFunction mEventCallback;
         NSFW *mNSFW;
         JobStatus mStatus;
     };
@@ -126,9 +130,9 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
   public:
     static Napi::Object Init(Napi::Env, Napi::Object exports);
     static Napi::Value InstanceCount(const Napi::CallbackInfo &info);
+    static void onEnvCleanup(void *data);
     void pauseQueue();
     void resumeQueue();
-    void pollForEvents();
 
     NSFW(const Napi::CallbackInfo &info);
     ~NSFW();

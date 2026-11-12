@@ -1,4 +1,5 @@
 const assert = require('assert');
+const cp = require('child_process');
 const exec = require('executive');
 const fse = require('fs-extra');
 const path = require('path');
@@ -1155,6 +1156,55 @@ describe('Node Sentinel File Watcher', function() {
         global.gc();
         await sleep(0);
       }
+    });
+  });
+
+  describe('Process lifecycle', function() {
+    const childScript = path.join(__dirname, 'lifecycle-child.js');
+
+    function runChild(mode, watchDir, nodeArgs = [], timeoutMS = 20000) {
+      return new Promise((resolve, reject) => {
+        const child = cp.spawn(process.execPath, [...nodeArgs, childScript, mode, watchDir], { stdio: 'inherit' });
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new Error(`child process (${mode}) did not exit on its own`));
+        }, timeoutMS);
+        child.on('exit', (code, signal) => {
+          clearTimeout(timer);
+          resolve({ code, signal });
+        });
+      });
+    }
+
+    it('lets the process exit after stop(), also after a restart', async function() {
+      assert.deepEqual(await runChild('stop', path.join(workDir, 'test0')), { code: 0, signal: null });
+    });
+
+    it('stops once when stop() is called concurrently, and can start again', async function() {
+      assert.deepEqual(await runChild('concurrent-stop', path.join(workDir, 'test3')), { code: 0, signal: null });
+    });
+
+    it('lets the process exit when the watcher errors and stop() is never called', async function() {
+      assert.deepEqual(await runChild('error', path.join(workDir, 'test1')), { code: 0, signal: null });
+    });
+
+    it('tears down a worker whose watcher errored without stop()', async function() {
+      assert.deepEqual(await runChild('worker-error', path.join(workDir, 'test2')), { code: 0, signal: null });
+    });
+
+    it('tears down workers terminated while many watchers are busy', async function() {
+      // 15 workers that each start 40 watchers: give slow CI runners more time.
+      assert.deepEqual(
+        await runChild('worker-terminate-busy', path.join(workDir, 'test4'), [], 60000),
+        { code: 0, signal: null }
+      );
+    });
+
+    it('releases the callbacks of watchers that are collected', async function() {
+      assert.deepEqual(
+        await runChild('collect-callbacks', path.join(workDir, 'test5'), ['--expose-gc']),
+        { code: 0, signal: null }
+      );
     });
   });
 

@@ -35,17 +35,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Runs before setup-node: the Node 26+ binaries link libatomic, which the bare
+      # Ubuntu image doesn't ship.
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update && apt-get install -y git build-essential python3 libatomic1
+
       - name: Use Node.js ${{ matrix.node }}
         uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
-
-      - name: Install build dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update && apt-get install -y git build-essential python3
 
       - name: Run tests
         run: |

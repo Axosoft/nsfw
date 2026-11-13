@@ -5,7 +5,7 @@
 #include <exception>
 #include <thread>
 
-// One run of the watcher, from a successful start() until stop() or teardown. It owns the native interface, the
+// One run of the watcher, from a successful start() until stop(), a watcher error or teardown. It owns the native interface, the
 // poll thread and the thread-safe functions that thread calls, so a run is created and destroyed as one unit. The
 // poll thread releases the thread-safe functions when it ends, whether stopped or after a watcher error, and only
 // then do they stop keeping the event loop alive.
@@ -16,14 +16,18 @@ class NSFW::Run {
       std::shared_ptr<EventQueue> queue,
       uint32_t debounceMS,
       Napi::ThreadSafeFunction eventCallback,
-      Napi::ThreadSafeFunction errorCallback
+      Napi::ThreadSafeFunction errorCallback,
+      NSFW *watcher,
+      uint64_t runId
     ):
       mInterface(std::move(nativeInterface)),
       mQueue(queue),
       mDebounceMS(debounceMS),
       mEventCallback(eventCallback),
       mErrorCallback(errorCallback),
-      mStopping(false)
+      mStopping(false),
+      mWatcher(watcher),
+      mRunId(runId)
     {
       // Last, so that a failure leaves the thread-safe functions unreleased for the caller to release.
       mThread = std::thread(&Run::poll, this);
@@ -56,6 +60,8 @@ class NSFW::Run {
     std::condition_variable mWake;
     bool mStopping;
     std::thread mThread;
+    NSFW *mWatcher;
+    uint64_t mRunId;
 };
 
 void NSFW::Run::poll() {
@@ -65,7 +71,10 @@ void NSFW::Run::poll() {
 
     if (mInterface->hasErrored()) {
       const std::string &error = mInterface->getError();
-      mErrorCallback.NonBlockingCall([error](Napi::Env env, Napi::Function jsCallback) {
+      NSFW *watcher = mWatcher;
+      uint64_t runId = mRunId;
+      mErrorCallback.NonBlockingCall([error, watcher, runId](Napi::Env env, Napi::Function jsCallback) {
+        watcher->stopRun(runId);
         Napi::Value jsError = Napi::Error::New(env, error).Value();
         jsCallback.Call({ jsError });
       });
@@ -217,14 +226,21 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 // their handles; Node frees them in the close callbacks, after every cleanup hook has run. Ending the run here, in the
 // same pass, means its poll thread never touches a freed one. This object is only finalized after that.
 void NSFW::onEnvCleanup(void *data) {
-  static_cast<NSFW *>(data)->stopRun();
+  NSFW *watcher = static_cast<NSFW *>(data);
+  watcher->mClosing = true;
+  while (watcher->mJobs.size() > 1) {
+    Job *job = watcher->mJobs.back();
+    watcher->mJobs.pop_back();
+    delete job;
+  }
+  watcher->stopRun();
 }
 
 // Ends the run under mRunLock, so a start() cannot begin while the old run's interface may still queue events. Of
 // several concurrent callers only the first finds a run to end.
-bool NSFW::stopRun() {
+bool NSFW::stopRun(uint64_t runId) {
   std::lock_guard<std::mutex> lock(mRunLock);
-  if (!mRun) {
+  if (!mRun || (runId != 0 && runId != mRunId)) {
     return false;
   }
   mRun.reset();
@@ -249,8 +265,20 @@ NSFW::Job::Job(Napi::Env env, NSFW *nsfw):
 {}
 
 Napi::Promise NSFW::Job::RunJob() {
-  this->Queue();
+  mNSFW->mJobs.push_back(this);
+  if (mNSFW->mJobs.size() == 1) {
+    this->Queue();
+  }
   return mDeferred.Promise();
+}
+
+void NSFW::Job::OnWorkComplete(Napi::Env env, napi_status status) {
+  // Queue only the next job, so call order never depends on thread-pool scheduling.
+  mNSFW->mJobs.pop_front();
+  if (!mNSFW->mClosing && !mNSFW->mJobs.empty()) {
+    mNSFW->mJobs.front()->Queue();
+  }
+  Napi::AsyncWorker::OnWorkComplete(env, status);
 }
 
 void NSFW::Job::OnError(const Napi::Error &error) {
@@ -259,22 +287,28 @@ void NSFW::Job::OnError(const Napi::Error &error) {
 
 NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
   Job(env, nsfw),
-  mStatus(JOB_NOT_EXECUTED_YET)
+  mStatus(JOB_NOT_EXECUTED_YET),
+  mRunId(++nsfw->mNextRunId)
 {
   // One pair per run, created here because it needs the main thread. They keep the event loop alive until the
   // poll thread releases them when the run ends.
   Napi::Object self = nsfw->Value();
   mEventCallback = Napi::ThreadSafeFunction::New(env, self.Get(EVENT_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1);
   try {
-    mErrorCallback = Napi::ThreadSafeFunction::New(env, self.Get(ERROR_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1);
+    uint64_t runId = mRunId;
+    mErrorCallback = Napi::ThreadSafeFunction::New(
+      env, self.Get(ERROR_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1,
+      [nsfw, runId](Napi::Env) {
+        nsfw->stopRun(runId);
+        nsfw->Unref();
+      }
+    );
   } catch (...) {
     mEventCallback.Release();
     throw;
   }
 
-  // The reference a running watcher holds so it is never collected, taken here on the main thread before the job is
-  // queued: a stop() can end the run before this job's OnOK, and its Unref must find it. A successful stop() drops it;
-  // ~StartWorker drops it if the watcher does not start.
+  // Queued error delivery and its finalizer can outlive stop(). Keep the watcher alive until both have finished.
   mNSFW->Ref();
 }
 
@@ -283,7 +317,6 @@ NSFW::StartWorker::~StartWorker() {
   if (mStatus != STARTED) {
     mErrorCallback.Release();
     mEventCallback.Release();
-    mNSFW->Unref();
   }
 }
 
@@ -316,8 +349,11 @@ void NSFW::StartWorker::Execute() {
       mNSFW->mQueue,
       mNSFW->mDebounceMS,
       mEventCallback,
-      mErrorCallback
+      mErrorCallback,
+      mNSFW,
+      mRunId
     ));
+    mNSFW->mRunId = mRunId;
   } catch (const std::exception &) {
     mStatus = COULD_NOT_START;
     return;
@@ -365,8 +401,6 @@ void NSFW::StopWorker::Execute() {
 
 void NSFW::StopWorker::OnOK() {
   if (mDidStopWatching) {
-    // Drops the reference StartWorker took for the run; it stays until this point even after a watcher error.
-    mNSFW->Unref();
     mDeferred.Resolve(Env().Undefined());
   } else {
     mDeferred.Reject(Napi::Error::New(Env(), "This NSFW cannot be stopped, because it is not running.").Value());

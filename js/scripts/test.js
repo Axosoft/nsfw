@@ -6,7 +6,7 @@ if (process.platform !== 'win32' && process.platform !== 'darwin') {
   exec('mocha --exit --v8-expose-gc js/spec/index-slow-spec.js');
   exec('node-gyp rebuild');
 }
-exec('mocha --exit --v8-expose-gc js/spec/index-spec.js');
+exec('mocha --exit --v8-expose-gc js/spec/index-spec.js js/spec/lifecycle-spec.js');
 
 /**
  * @param {string} commandline ...

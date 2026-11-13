@@ -2,6 +2,7 @@
 #define NSFW_H
 
 #include <atomic>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <napi.h>
@@ -31,13 +32,21 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     // Only ever held briefly, so the main thread can take it.
     std::mutex mExcludedPathsLock;
     std::vector<std::string> mExcludedPaths;
-    bool stopRun();
+    uint64_t mNextRunId = 0;
+    uint64_t mRunId = 0;
+    bool stopRun(uint64_t runId = 0);
+
+    class Job;
+    // Main-thread only; at most the front job is submitted to the thread pool.
+    std::deque<Job *> mJobs;
+    bool mClosing = false;
 
     // Base of every async job. It keeps the watcher alive until the job is destroyed, whichever way it ends (OnOK,
     // OnError or cancellation), and rejects the job's promise if Execute throws a std::exception.
     class Job: public Napi::AsyncWorker {
       public:
         Napi::Promise RunJob();
+        void OnWorkComplete(Napi::Env env, napi_status status) override;
 
       protected:
         Job(Napi::Env env, NSFW *nsfw);
@@ -62,6 +71,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
         Napi::ThreadSafeFunction mErrorCallback;
         Napi::ThreadSafeFunction mEventCallback;
         JobStatus mStatus;
+        uint64_t mRunId;
     };
 
     Napi::Value Start(const Napi::CallbackInfo &info);

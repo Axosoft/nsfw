@@ -30,6 +30,101 @@ async function concurrentStops() {
   await watch.stop();
 }
 
+async function orderedJobs() {
+  const watch = await nsfw(watchDir, () => {});
+  for (let i = 0; i < 100; i++) {
+    await Promise.all([watch.start(), watch.stop(), watch.start(), watch.pause(), watch.resume(), watch.stop()]);
+  }
+  const results = await Promise.allSettled([watch.stop(), watch.start(), watch.start(), watch.stop()]);
+  const statuses = results.map(result => result.status);
+  if (JSON.stringify(statuses) !== JSON.stringify(['rejected', 'fulfilled', 'rejected', 'fulfilled'])) {
+    throw new Error(`unexpected lifecycle results: ${statuses}`);
+  }
+}
+
+async function restartAfterError() {
+  let onError;
+  let onEvent;
+  const watch = await nsfw(watchDir, events => onEvent && onEvent(events), {
+    debounceMS: 1,
+    errorCallback: error => onError(error)
+  });
+  await watch.start();
+  for (let i = 0; i < 5; i++) {
+    const restarted = new Promise((resolve, reject) => {
+      onError = () => {
+        fse.mkdirSync(watchDir);
+        watch.start().then(resolve, reject);
+      };
+    });
+    await fse.remove(watchDir);
+    await restarted;
+    const file = `after-error-${i}`;
+    const received = new Promise(resolve => {
+      onEvent = events => {
+        if (events.some(event => event.file === file)) resolve();
+      };
+    });
+    await fse.writeFile(path.join(watchDir, file), 'restarted');
+    await received;
+  }
+  await watch.stop();
+}
+
+async function collectErroredWatchers() {
+  let collected = 0;
+  const registry = new FinalizationRegistry(() => { collected++; });
+  const baseline = nsfw.getAllocatedInstanceCount();
+  const createWatcher = async i => {
+    let resolveError;
+    const errored = new Promise(resolve => { resolveError = resolve; });
+    const directory = path.join(watchDir, String(i));
+    await fse.mkdir(directory);
+    const eventCallback = () => watch;
+    const errorCallback = () => {
+      resolveError();
+      return watch;
+    };
+    const watch = await nsfw(directory, eventCallback, { errorCallback });
+    registry.register(watch);
+    registry.register(eventCallback);
+    registry.register(errorCallback);
+    await watch.start();
+    await fse.remove(directory);
+    await errored;
+  };
+  for (let i = 0; i < 10; i++) await createWatcher(i);
+  for (let i = 0; i < 100 && (collected < 30 || nsfw.getAllocatedInstanceCount() !== baseline); i++) {
+    global.gc();
+    await sleep(20);
+  }
+  if (collected !== 30 || nsfw.getAllocatedInstanceCount() !== baseline) {
+    throw new Error(`errored watchers retained: ${collected}/30 collected, ${nsfw.getAllocatedInstanceCount()} native`);
+  }
+}
+
+async function terminateQueuedWorkers() {
+  for (let i = 0; i < 10; i++) {
+    const worker = new Worker(__filename, { workerData: ['queued-jobs', watchDir] });
+    await new Promise((resolve, reject) => {
+      worker.once('message', resolve);
+      worker.once('error', reject);
+    });
+    await worker.terminate();
+  }
+}
+
+async function queueJobs() {
+  const watches = await Promise.all(Array.from({ length: 40 }, () => nsfw(watchDir, () => {})));
+  for (const watch of watches) {
+    for (let i = 0; i < 10; i++) {
+      watch.start().catch(() => {});
+      watch.stop().catch(() => {});
+    }
+  }
+  parentPort.postMessage('queued');
+}
+
 async function errorWithoutStop() {
   let resolveError;
   const errored = new Promise(resolve => { resolveError = resolve; });
@@ -116,6 +211,11 @@ function errorInWorker() {
 
 const scenarios = {
   'stop': stopAndRestart,
+  'ordered-jobs': orderedJobs,
+  'terminate-queued': terminateQueuedWorkers,
+  'queued-jobs': queueJobs,
+  'restart-after-error': restartAfterError,
+  'collect-errored': collectErroredWatchers,
   'concurrent-stop': concurrentStops,
   'error': errorWithoutStop,
   'collect-callbacks': collectCallbacks,

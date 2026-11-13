@@ -574,9 +574,13 @@ describe('Node Sentinel File Watcher', function() {
     it('can gracefully recover when the watch folder is deleted', async function() {
       const inPath = path.join(workDir, 'test4');
       let erroredOut = false;
+      let resolveEvent;
+      const received = new Promise(resolve => { resolveEvent = resolve; });
       let watch = await nsfw(
         inPath,
-        () => {},
+        events => {
+          if (events.some(event => event.file === 'after-recovery')) resolveEvent();
+        },
         { debounceMS: DEBOUNCE, errorCallback() { erroredOut = true; } }
       );
 
@@ -587,6 +591,11 @@ describe('Node Sentinel File Watcher', function() {
         await sleep(TIMEOUT_PER_STEP);
 
         assert.ok(erroredOut);
+        await assert.rejects(watch.stop(), /not running/);
+        await fse.mkdir(inPath);
+        await watch.start();
+        await fse.writeFile(path.join(inPath, 'after-recovery'), 'watching again');
+        await received;
       } finally {
         await watch.stop();
         watch = null;
@@ -756,10 +765,7 @@ describe('Node Sentinel File Watcher', function() {
         () => { count++; },
         {
           errorCallback() {
-            errorRestart = errorRestart.then(async () => {
-              await watch.stop();
-              await watch.start();
-            });
+            errorRestart = errorRestart.then(() => watch.start());
           }
         }
       );
@@ -781,10 +787,7 @@ describe('Node Sentinel File Watcher', function() {
           () => { count++; },
           {
             errorCallback() {
-              errorRestart = errorRestart.then(async () => {
-                await watch.stop();
-                await watch.start();
-              });
+              errorRestart = errorRestart.then(() => watch.start());
             }
           }
         );

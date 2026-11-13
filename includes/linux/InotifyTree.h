@@ -11,6 +11,7 @@
 #include <map>
 #include <unordered_set>
 #include <functional>
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <mutex>
@@ -108,7 +109,8 @@ private:
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   std::map<ino_t, InotifyNode *> inodes;
-  InotifyNode *mRoot;
+  // Read by the poll thread through isRootAlive() while the event loop thread clears it in removeDirectory().
+  std::atomic<InotifyNode *> mRoot;
   std::vector<std::string> mExcludedPaths;
   std::string mWatchedPath;
 

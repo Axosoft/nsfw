@@ -11,7 +11,8 @@ static const char *const ROOT_CHANGED_ERROR = "Service shutdown: root path chang
  */
 InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths):
   mError(""),
-  mInotifyInstance(inotifyInstance) {
+  mInotifyInstance(inotifyInstance),
+  mRoot(NULL) {
   mInotifyNodeByWatchDescriptor = new std::map<int, InotifyNode *>;
   std::string directory;
   std::string watchName;
@@ -29,11 +30,10 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
 
   struct stat file;
   if (stat(mWatchedPath.c_str(), &file) < 0) {
-    mRoot = NULL;
     return;
   }
 
-  mRoot = new InotifyNode(
+  InotifyNode *root = new InotifyNode(
     this,
     mInotifyInstance,
     NULL,
@@ -41,13 +41,13 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
     watchName,
     file.st_ino
   );
-  addInode(file.st_ino, mRoot);
+  addInode(file.st_ino, root);
 
-  if (!mRoot->isAlive()) {
-    delete mRoot;
-    mRoot = NULL;
+  if (!root->isAlive()) {
+    delete root;
     return;
   }
+  mRoot = root;
 }
 
 bool InotifyTree::existWatchedPath() {
@@ -133,9 +133,9 @@ void InotifyTree::removeDirectory(int wd) {
   InotifyNode *node = nodeIterator->second;
   InotifyNode *parent = node->getParent();
   if (parent == NULL) {
-    delete mRoot;
-    mRoot = NULL;
+    // The error goes first, so the poll thread never finds the root gone without it and reports a generic one.
     setError(ROOT_CHANGED_ERROR);
+    delete mRoot.exchange(NULL);
     return;
   }
 
@@ -212,9 +212,7 @@ InotifyTree::InotifyNode * InotifyTree::findNodeByPath(const std::string path) {
 
 
 InotifyTree::~InotifyTree() {
-  if (isRootAlive()) {
-    delete mRoot;
-  }
+  delete mRoot.load();
   delete mInotifyNodeByWatchDescriptor;
 }
 

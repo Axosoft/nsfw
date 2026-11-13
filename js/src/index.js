@@ -3,6 +3,8 @@ const path = require('path');
 
 const NSFW = require('../../build/Release/nsfw.node');
 
+const isWin32 = process.platform === 'win32';
+
 // Throws unless excludedPaths is an array of absolute paths.
 function validateExcludedPaths(excludedPaths) {
   if (!Array.isArray(excludedPaths)) {
@@ -34,13 +36,30 @@ function effectiveExcludedPaths(watchPath, excludedPaths) {
   return excludedPaths.filter(excludedPath => isInsideWatchPath(watchPath, excludedPath));
 }
 
-function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
+// Mirrors normalizeExcludedPath in src/NSFW.cpp: drops trailing separators, but a root keeps its own.
+function normalizeExcludedPath(excludedPath) {
+  let normalized = excludedPath;
+  while (normalized.length > 1) {
+    const last = normalized[normalized.length - 1];
+    const isSeparator = last === '/' || (isWin32 && last === '\\');
+    const isDriveRoot = isWin32 && normalized[normalized.length - 2] === ':';
+    if (!isSeparator || isDriveRoot) {
+      break;
+    }
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths) {
   const { CREATED, DELETED, MODIFIED } = nsfw.actions;
   const directory = path.dirname(watchPath);
   const file = path.basename(watchPath);
 
   let fileStatus;
   let filePollerInterval;
+  // Nothing inside a single file can be excluded, so the list is only kept to be returned, like the native watcher's.
+  let currentExcludedPaths = excludedPaths.map(normalizeExcludedPath);
 
   const getStatus = async () => {
     try {
@@ -79,6 +98,12 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
 
   this.pause = () => this.stop();
   this.resume = () => this.start();
+
+  this.getExcludedPaths = async () => [...currentExcludedPaths];
+  this.updateExcludedPaths = async (paths) => {
+    currentExcludedPaths = paths.map(normalizeExcludedPath);
+    return [...currentExcludedPaths];
+  };
 }
 
 const buildNSFW = async (watchPath, eventCallback,
@@ -109,7 +134,7 @@ const buildNSFW = async (watchPath, eventCallback,
   if (stats.isDirectory()) {
     return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, excludedPaths: effectivePaths });
   } else if (stats.isFile()) {
-    return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
+    return new NSFWFilePoller(watchPath, eventCallback, debounceMS, effectivePaths);
   } else {
     throw new Error('Path must be a valid path to a file or a directory');
   }

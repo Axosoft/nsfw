@@ -79,7 +79,7 @@ bool InotifyService::isWatching() {
     return false;
   }
 
-  return mTree->isRootAlive() && mEventLoop->isLooping();
+  return mTree->isRootAlive() && mEventLoop->isStarted();
 }
 
 void InotifyService::modify(int wd, std::string name) {
@@ -117,6 +117,10 @@ void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd,
   mTree->renameDirectory(fromWd, fromName, toWd, toName);
 
   dispatchRename(fromWd, fromName, toWd, toName);
+}
+
+void InotifyService::setError(const std::string &error) {
+  mTree->setError(error);
 }
 
 void InotifyService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {

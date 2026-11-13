@@ -31,6 +31,7 @@ private:
   void removeDirectory(int wd);
   void rename(int fromWd, std::string fromName, int toWd, std::string toName);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
+  void setError(const std::string &error);
 
   InotifyEventLoop *mEventLoop;
   std::shared_ptr<EventQueue> mQueue;

@@ -4,6 +4,8 @@
 
 #include <algorithm>
 
+static const char *const ROOT_CHANGED_ERROR = "Service shutdown: root path changed (renamed or deleted)";
+
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
@@ -53,6 +55,11 @@ bool InotifyTree::existWatchedPath() {
   return stat(mWatchedPath.c_str(), &file) >= 0;
 }
 
+bool InotifyTree::isWatchedPathGone() {
+  struct stat file;
+  return stat(mWatchedPath.c_str(), &file) != 0 && (errno == ENOENT || errno == ENOTDIR);
+}
+
 void InotifyTree::addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent) {
   auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
   if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {
@@ -68,6 +75,13 @@ void InotifyTree::addNodeReferenceByWD(int wd, InotifyNode *node) {
 }
 
 std::string InotifyTree::getError() {
+  // A watched path that is gone explains the failure better than what was recorded first: restarting won't help, and
+  // an overflow may have dropped the root's own deletion events. Only when it's really gone, though: a stat() that
+  // fails for another reason (permissions, a network filesystem hiccup) mustn't hide the recorded cause.
+  if (isWatchedPathGone()) {
+    return ROOT_CHANGED_ERROR;
+  }
+
   std::lock_guard<std::mutex> lock(mErrorMutex);
   return mError;
 }
@@ -92,12 +106,13 @@ bool InotifyTree::hasErrored() {
     if (!mError.empty()) return true;
   }
 
-  bool pathExists = existWatchedPath();
-  std::lock_guard<std::mutex> lock(mErrorMutex);
-  if (mError.empty() && !pathExists) {
-    mError = "Service shutdown: root path changed (renamed or deleted)";
+  // stat() outside the lock, so a slow filesystem doesn't hold up the other threads' error checks.
+  if (existWatchedPath()) {
+    return false;
   }
-  return !mError.empty();
+
+  setError(ROOT_CHANGED_ERROR);
+  return true;
 }
 
 bool InotifyTree::isRootAlive() {
@@ -120,7 +135,7 @@ void InotifyTree::removeDirectory(int wd) {
   if (parent == NULL) {
     delete mRoot;
     mRoot = NULL;
-    setError("Service shutdown: root path changed (renamed or deleted)");
+    setError(ROOT_CHANGED_ERROR);
     return;
   }
 
@@ -159,9 +174,14 @@ void InotifyTree::renameDirectory(int fromWd, std::string fromName, int toWd, st
   toNodeIterator->second->takeChildAsName(pulledChild, toName);
 }
 
-void InotifyTree::setError(std::string error) {
+void InotifyTree::setError(const std::string &error) {
   std::lock_guard<std::mutex> lock(mErrorMutex);
-  mError = error;
+  // Errors are terminal and the poll thread reports only one, so the first is kept: it's the cause, and the ones after
+  // it tend to come from the same failure (say, the queue overflowing in the mkdir flood that hit the watch limit).
+  // getError() still reports a watched path that is gone over it.
+  if (mError.empty()) {
+    mError = error;
+  }
 }
 
 bool InotifyTree::addInode(ino_t inodeNumber, InotifyNode *node) {

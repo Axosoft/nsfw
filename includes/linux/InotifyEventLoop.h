@@ -12,6 +12,7 @@
 #include <sys/select.h>
 #include <string>
 #include <mutex>
+#include <system_error>
 
 class InotifyService;
 class Lock;
@@ -23,7 +24,9 @@ public:
     InotifyService *inotifyService
   );
 
-  bool isLooping();
+  // Whether the thread was created. It stays true after the loop stops on its own, since that always records a tree
+  // error, which is how the poll thread finds out (also when the loop stops before start() checks isWatching()).
+  bool isStarted();
 
   // Holds off event handling while the returned lock lives, so another thread can change the tree the handlers use.
   std::unique_lock<std::mutex> lockEventHandling();
@@ -47,6 +50,7 @@ private:
   pthread_t mEventLoop;
   std::mutex mMutex;
   SingleshotSemaphore mLoopingSemaphore;
+  // Only the constructor writes it. The destructor joins the thread whenever it was created.
   bool mStarted;
 };
 

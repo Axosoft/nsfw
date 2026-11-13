@@ -8,6 +8,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <map>
+#include <mutex>
 #include <vector>
 #include <string>
 
@@ -49,10 +50,14 @@ private:
   void rename(std::vector<std::string> &paths);
   void splitFilePath(std::string &directory, std::string &name, const std::string &path);
   bool isExcluded(std::string filePath);
+  static std::vector<CFStringRef> createExcludedPaths(const std::vector<std::string> &excludedPaths);
+  static void releaseExcludedPaths(const std::vector<CFStringRef> &excludedPaths);
 
   std::string mPath;
   RunLoop *mRunLoop;
   std::shared_ptr<EventQueue> mQueue;
+  // Read on the FSEvents run loop thread, replaced from a worker thread by updateExcludedPaths.
+  std::mutex mExcludedPathsLock;
   std::vector<CFStringRef> mExcludedPaths;
   bool mRootChanged;
   bool mCaseSensitive;

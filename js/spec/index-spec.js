@@ -1010,6 +1010,151 @@ describe('Node Sentinel File Watcher', function() {
         await actual.observe(includedFile, nsfw.actions.DELETED, () => fse.remove(includedFile));
       });
     });
+
+    it('does not exclude a sibling whose name starts with the excluded name', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'foo');
+      const siblingPath = path.join(inPath, 'foobar');
+      await Promise.all([fse.mkdir(excludedPath), fse.mkdir(siblingPath)]);
+
+      await withWatchers(inPath, [excludedPath], async ({ actual, excluded }) => {
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+        const siblingFile = path.join(siblingPath, 'sibling.file');
+        await actual.observe(siblingFile, nsfw.actions.CREATED, () => fse.writeFile(siblingFile, 'Sibling.'));
+      });
+    });
+
+    it('strips trailing separators from excluded paths', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'excluded');
+      await fse.mkdir(excludedPath);
+
+      await withWatchers(inPath, [excludedPath + path.sep + path.sep], async ({ watch, actual, excluded }) => {
+        assert.deepStrictEqual(await watch.getExcludedPaths(), [excludedPath]);
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+        const includedFile = path.join(inPath, 'included.file');
+        await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included.'));
+
+        assert.deepStrictEqual(await watch.updateExcludedPaths([excludedPath + '/' + path.sep]), [excludedPath]);
+        assert.deepStrictEqual(await watch.getExcludedPaths(), [excludedPath]);
+      });
+    });
+
+    it('rejects relative excluded paths and ignores the ones outside the watched directory', async function () {
+      const inPath = path.join(workDir, 'test4');
+      const validPath = path.join(inPath, 'excluded');
+      const relativePaths = ['excluded', path.join('test4', 'excluded')];
+      const outsidePaths = [
+        path.join(workDir, 'test4bar'),
+        path.join(workDir, 'test5'),
+        // Raw, since path.join would collapse it.
+        `${inPath}${path.sep}..${path.sep}test5`,
+        workDir
+      ];
+      if (process.platform === 'win32') {
+        outsidePaths.push(`${inPath[0].toUpperCase() === 'Z' ? 'Y' : 'Z'}:\\test4\\excluded`);
+      }
+
+      for (const relativePath of relativePaths) {
+        await assert.rejects(
+          () => nsfw(inPath, () => {}, { excludedPaths: [validPath, relativePath] }),
+          /^Error: Excluded path must be an absolute path\.$/,
+          `accepted ${relativePath} at construction`
+        );
+      }
+      await assert.rejects(() => nsfw(inPath, () => {}, { excludedPaths: validPath }), TypeError);
+      await assert.rejects(() => nsfw(inPath, () => {}, { excludedPaths: [validPath, 1] }), TypeError);
+
+      const watch = await nsfw(inPath, () => {}, { excludedPaths: [...outsidePaths, validPath] });
+      assert.deepEqual(await watch.getExcludedPaths(), [validPath]);
+      for (const relativePath of relativePaths) {
+        await assert.rejects(
+          () => watch.updateExcludedPaths([relativePath]),
+          /^Error: Excluded path must be an absolute path\.$/,
+          `accepted ${relativePath} on update`
+        );
+      }
+      await assert.rejects(() => watch.updateExcludedPaths(validPath), TypeError);
+      await assert.rejects(() => watch.updateExcludedPaths([validPath, 1]), TypeError);
+      assert.deepEqual(await watch.getExcludedPaths(), [validPath]);
+
+      assert.deepEqual(await watch.updateExcludedPaths(outsidePaths), []);
+      assert.deepEqual(await watch.getExcludedPaths(), []);
+
+      const validPaths = [inPath, validPath, path.join(inPath, '..excluded')];
+      if (process.platform === 'win32') {
+        // The native watcher adds this prefix to every path, so either form counts as inside.
+        validPaths.push(path.toNamespacedPath(validPath));
+      }
+      const mixedPaths = [outsidePaths[0], ...validPaths, outsidePaths[1]];
+      assert.deepEqual(await watch.updateExcludedPaths(mixedPaths), validPaths);
+      assert.deepEqual(await watch.getExcludedPaths(), validPaths);
+      const constructed = await nsfw(inPath, () => {}, { excludedPaths: mixedPaths });
+      assert.deepEqual(await constructed.getExcludedPaths(), validPaths);
+    });
+
+    it('keeps reporting events when the excluded paths are outside the watched directory', async function() {
+      const inPath = path.join(workDir, 'proj');
+      await fse.mkdir(inPath);
+      const outsidePaths = [
+        // A linked worktree's git directory, under its main repository next to the watched one.
+        path.join(workDir, 'proj-main', '.git', 'worktrees', 'proj', 'lfs', 'tmp'),
+        // An ancestor would match every event in the native watchers.
+        workDir,
+        // Shares the watched path as a prefix.
+        `${inPath}-sibling`
+      ];
+
+      await withWatchers(inPath, outsidePaths, async ({ watch, actual }) => {
+        assert.deepStrictEqual(await watch.getExcludedPaths(), []);
+        const createdFile = path.join(inPath, 'created.file');
+        await actual.observe(createdFile, nsfw.actions.CREATED, () => fse.writeFile(createdFile, 'Created.'));
+
+        assert.deepStrictEqual(await watch.updateExcludedPaths(outsidePaths), []);
+        const updatedFile = path.join(inPath, 'updated.file');
+        await actual.observe(updatedFile, nsfw.actions.CREATED, () => fse.writeFile(updatedFile, 'Updated.'));
+      });
+    });
+
+    it('resolves each updateExcludedPaths() call with the paths it set', async function () {
+      const inPath = path.join(workDir, 'test4');
+      const first = [path.join(inPath, 'first')];
+      const second = [path.join(inPath, 'second'), path.join(inPath, 'third')];
+
+      const watch = await nsfw(inPath, () => {});
+      await watch.start();
+      try {
+        const results = await Promise.all([watch.updateExcludedPaths(first), watch.updateExcludedPaths(second)]);
+        assert.deepEqual(results, [first, second]);
+        assert.deepEqual(await watch.getExcludedPaths(), second);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('keeps excluded paths when watching a single file', async function () {
+      const filePath = path.join(workDir, 'test0', 'testing0.file');
+
+      const watch = await nsfw(filePath, () => {}, { excludedPaths: [filePath] });
+      assert.deepEqual(await watch.getExcludedPaths(), [filePath]);
+
+      const returned = await watch.getExcludedPaths();
+      returned.push(filePath);
+      assert.deepEqual(await watch.getExcludedPaths(), [filePath]);
+
+      const results = await Promise.all([
+        watch.updateExcludedPaths([]),
+        watch.updateExcludedPaths([filePath + path.sep])
+      ]);
+      assert.deepEqual(results, [[], [filePath]]);
+      assert.deepEqual(await watch.getExcludedPaths(), [filePath]);
+
+      await assert.rejects(() => watch.updateExcludedPaths(['testing0.file']), /^Error: Excluded path must be/);
+      assert.deepEqual(await watch.getExcludedPaths(), [filePath]);
+      assert.deepEqual(await watch.updateExcludedPaths([path.join(workDir, 'test1'), filePath]), [filePath]);
+      assert.deepEqual(await watch.updateExcludedPaths([path.join(workDir, 'test1')]), []);
+      assert.deepEqual(await watch.getExcludedPaths(), []);
+    });
   });
 
   describe('Garbage collection', function() {
@@ -1081,6 +1226,14 @@ describe('Node Sentinel File Watcher', function() {
 
     it('can update excluded paths before start()', async function() {
       assert.deepEqual(await runChild('update-before-start', path.join(workDir, 'test6')), { code: 0, signal: null });
+    });
+
+    it('updates the excluded paths of many busy watchers without crashing', async function() {
+      // 40 watchers whose excluded paths change while events flow: give slow CI runners more time.
+      assert.deepEqual(
+        await runChild('update-excluded-under-load', path.join(workDir, 'test7'), [], 60000),
+        { code: 0, signal: null }
+      );
     });
   });
 

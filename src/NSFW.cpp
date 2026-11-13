@@ -124,6 +124,40 @@ void NSFW::Run::poll() {
   mEventCallback.Release();
 }
 
+// The platform watchers match excluded paths as prefixes of event paths, which carry no trailing separator, so a
+// trailing one would keep files directly inside an excluded directory from matching. A backslash is only a separator
+// on Windows (on POSIX it is a filename character), and a root keeps its separator: "C:" alone is drive-relative.
+static std::string normalizeExcludedPath(std::string path) {
+  while (path.size() > 1) {
+    char last = path.back();
+#ifdef _WIN32
+    bool isSeparator = last == '/' || last == '\\';
+    bool isDriveRoot = path[path.size() - 2] == ':';
+    if (!isSeparator || isDriveRoot) {
+      break;
+    }
+#else
+    if (last != '/') {
+      break;
+    }
+#endif
+    path.pop_back();
+  }
+  return path;
+}
+
+static std::vector<std::string> toExcludedPaths(Napi::Env env, Napi::Array paths, const char *notStringError) {
+  std::vector<std::string> excludedPaths;
+  for (uint32_t i = 0; i < paths.Length(); i++) {
+    Napi::Value path = paths[i];
+    if (!path.IsString()) {
+      throw Napi::TypeError::New(env, notStringError);
+    }
+    excludedPaths.push_back(normalizeExcludedPath(path.ToString().Utf8Value()));
+  }
+  return excludedPaths;
+}
+
 const char *const NSFW::EVENT_CALLBACK_KEY = "__nsfwEventCallback";
 const char *const NSFW::ERROR_CALLBACK_KEY = "__nsfwErrorCallback";
 
@@ -189,22 +223,12 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       throw Napi::TypeError::New(env, "options.excludedPaths must be an array.");
     }
     if (maybeExcludedPaths.IsArray()) {
-      Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
-      for(uint32_t i = 0; i < paths.Length(); i++) {
-        Napi::Value path = paths[i];
-        if (path.IsString())
-        {
-          std::string str = path.ToString().Utf8Value();
-          if (!str.empty() && str.back() == '/') {
-            str.pop_back();
-          }
-          mExcludedPaths.push_back(str);
-        } else {
-          throw Napi::TypeError::New(env, "options.excludedPaths elements must be strings.");
-        }
-      }
+      mExcludedPaths = toExcludedPaths(
+        env,
+        maybeExcludedPaths.As<Napi::Array>(),
+        "options.excludedPaths elements must be strings."
+      );
     }
-
   }
 
   // Between runs the callbacks are plain, non-enumerable properties of this object; each start() wraps them in
@@ -484,23 +508,8 @@ NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const 
     throw Napi::TypeError::New(env, "Must pass an array of string to updateExcludedPaths.");
   }
 
-  // excludedPaths
-  Napi::Value maybeExcludedPaths = info[0];
-  Napi::Array paths = maybeExcludedPaths.As<Napi::Array>();
-  for(uint32_t i = 0; i < paths.Length(); i++) {
-    if (!((Napi::Value)paths[i]).IsString()) {
-      throw Napi::TypeError::New(env, "excludedPaths elements must be strings.");
-    }
-  }
-  std::vector<std::string> excludedPaths;
-  for(uint32_t i = 0; i < paths.Length(); i++) {
-    Napi::Value path = paths[i];
-    std::string str = path.ToString().Utf8Value();
-    if (!str.empty() && str.back() == '/') {
-      str.pop_back();
-    }
-    excludedPaths.push_back(str);
-  }
+  std::vector<std::string> excludedPaths =
+    toExcludedPaths(env, info[0].As<Napi::Array>(), "excludedPaths elements must be strings.");
   // Stored here, on the main thread, so updates apply in call order; Execute only forwards them to a running watcher.
   std::lock_guard<std::mutex> lock(mNSFW->mExcludedPathsLock);
   mNSFW->mExcludedPaths = excludedPaths;

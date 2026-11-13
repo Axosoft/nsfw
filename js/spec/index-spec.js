@@ -357,16 +357,19 @@ describe('Node Sentinel File Watcher', function() {
       const fileA = 'testing1.file';
       const dirB = path.resolve(workDir, 'test1');
       const fileB = 'testing0.file';
-      let events = 0;
+      // FSEvents can report the same creation more than once under load, so check that each
+      // watcher saw its file instead of counting events.
+      let createdA = false;
+      let createdB = false;
 
       function findEvent(element) {
         if (
           element.action === nsfw.actions.CREATED
         ) {
           if (element.directory === dirA && element.file === fileA) {
-            events++;
+            createdA = true;
           } else if (element.directory === dirB && element.file === fileB) {
-            events++;
+            createdB = true;
           }
         }
       }
@@ -391,7 +394,8 @@ describe('Node Sentinel File Watcher', function() {
         ]);
         await sleep(TIMEOUT_PER_STEP);
 
-        assert.equal(events, 2);
+        assert.ok(createdA, 'watcher A did not report the created file');
+        assert.ok(createdB, 'watcher B did not report the created file');
       } finally {
         await Promise.all([watchA.stop(), watchB.stop()]);
         watchA = null;

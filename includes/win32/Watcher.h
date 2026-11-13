@@ -7,6 +7,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <vector>
 
 #include "../SingleshotSemaphore.h"
 #include "../Queue.h"
@@ -54,6 +55,8 @@ class Watcher
     std::shared_ptr<EventQueue> mQueue;
     HANDLE mDirectoryHandle;
     bool mPathWasNtPrefixed;
+    // Read on the watcher thread, replaced from a worker thread by updateExcludedPaths.
+    std::mutex mExcludedPathsMutex;
     std::vector<std::wstring> mExcludedPaths;
 
     std::vector<BYTE> mReadBuffer, mWriteBuffer;

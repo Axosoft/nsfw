@@ -11,10 +11,12 @@ static std::wstring prefixWithNtPath(const std::wstring &path) {
   }
 
   std::wstring ntPathString;
-  ntPathString.resize(widePathLength - 1);
-  if (GetFullPathNameW(path.c_str(), widePathLength, &(ntPathString[0]), nullptr) != widePathLength - 1) {
+  ntPathString.resize(widePathLength);
+  const ULONG resolvedLength = GetFullPathNameW(path.c_str(), widePathLength, &(ntPathString[0]), nullptr);
+  if (resolvedLength == 0 || resolvedLength >= widePathLength) {
     return path;
   }
+  ntPathString.resize(resolvedLength);
 
   return ntPathString.rfind(L"\\\\", 0) == 0
     ? ntPathString.replace(0, 2, L"\\\\?\\UNC\\")

@@ -966,6 +966,37 @@ describe('Node Sentinel File Watcher', function() {
       });
     });
 
+    if (process.platform === 'win32') {
+      const watchPaths = [
+        ['a trailing backslash', inPath => inPath + '\\'],
+        ['a trailing slash', inPath => inPath + '/'],
+        ['repeated trailing separators', inPath => inPath + '\\\\'],
+        ['a namespaced trailing separator', inPath => path.toNamespacedPath(inPath) + '\\'],
+        ['a drive root', inPath => path.parse(inPath).root]
+      ];
+      for (const [description, watchPath] of watchPaths) {
+        it(`excludes subdirectories and reports nested directories when watching ${description}`, async function() {
+          const inPath = path.join(workDir, 'test4');
+          const watchedPath = watchPath(inPath);
+          const reportedPath = watchedPath.startsWith('\\\\?\\') ? path.toNamespacedPath(inPath) : inPath;
+          const excludedPath = path.join(reportedPath, 'excluded');
+          const includedPath = path.join(reportedPath, 'included');
+          await Promise.all([fse.mkdir(excludedPath), fse.mkdir(includedPath)]);
+
+          await withWatchers(watchedPath, [excludedPath], async ({ watch, actual, excluded }) => {
+            await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+            const includedFile = path.join(includedPath, 'included.file');
+            await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included'));
+            await watch.updateExcludedPaths([]);
+            const reincludedFile = path.join(excludedPath, 'reincluded.file');
+            await actual.observe(reincludedFile, nsfw.actions.CREATED, () => fse.writeFile(reincludedFile, 'Included'));
+            await watch.updateExcludedPaths([excludedPath]);
+            await exerciseExcludedFile(path.join(excludedPath, 'updated.file'), excluded);
+          }, includedPath);
+        });
+      }
+    }
+
     it('can remove an excluded path', async function() {
       const excludedPath = path.join(workDir, 'T1', 'T2');
       await fse.ensureDir(path.join(excludedPath, 'T3'));

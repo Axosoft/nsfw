@@ -83,7 +83,14 @@ return nsfw(
 
 - debounceMS: delays notifications emitted by the library. Default 500 ms.
 - errorCallback(errors): the library will call this callback when an error happens.
-At the moment when an error happens the service does not stop, this may change in the near future.
+A directory watcher retires the failed run and releases that run's native resources before calling `errorCallback`.
+Errors queued by a run that has already been explicitly stopped or replaced are discarded.
+After fixing the cause (for example, recreating a deleted directory), call `start()` to watch again;
+calling `stop()` first is unnecessary. A previously queued `start()` may already have restarted the watcher,
+in which case another `start()` rejects as already running. `stop()` on an already stopped watcher rejects.
+For directory watchers, `start()`, `stop()`, `pause()` and `resume()` run in call order.
+Thus `stop(); start()` restarts the watcher even when `stop()` is not awaited.
+Each operation still returns a promise that should be handled for errors.
 - excludedPaths: array with the absolute paths we want to exclude watching.
 You can update the excludedPaths array without restarting the service using the `updateExcludedPaths` function
 

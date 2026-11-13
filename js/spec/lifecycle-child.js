@@ -1,7 +1,9 @@
-/* global FinalizationRegistry */
+/* global FinalizationRegistry, SharedArrayBuffer, Atomics */
 // Runs in a child process (and, for 'worker-error', in a worker thread inside it) so that a watcher that keeps the
 // event loop alive, or aborts during teardown, cannot hang or crash the mocha process.
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+const { createHook } = require('async_hooks');
+const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
 
@@ -28,6 +30,153 @@ async function concurrentStops() {
   }
   await watch.start();
   await watch.stop();
+}
+
+async function orderedJobs() {
+  const watch = await nsfw(watchDir, () => {});
+  for (let i = 0; i < 100; i++) {
+    await Promise.all([watch.start(), watch.stop(), watch.start(), watch.pause(), watch.resume(), watch.stop()]);
+  }
+  const results = await Promise.allSettled([watch.stop(), watch.start(), watch.start(), watch.stop()]);
+  const statuses = results.map(result => result.status);
+  if (JSON.stringify(statuses) !== JSON.stringify(['rejected', 'fulfilled', 'rejected', 'fulfilled'])) {
+    throw new Error(`unexpected lifecycle results: ${statuses}`);
+  }
+}
+
+async function restartAfterError() {
+  let onError;
+  let onEvent;
+  const watch = await nsfw(watchDir, events => onEvent && onEvent(events), {
+    debounceMS: 1,
+    errorCallback: error => onError(error)
+  });
+  await watch.start();
+  for (let i = 0; i < 5; i++) {
+    const restarted = new Promise((resolve, reject) => {
+      onError = () => {
+        fse.mkdirSync(watchDir);
+        watch.start().then(resolve, reject);
+      };
+    });
+    await fse.remove(watchDir);
+    await restarted;
+    const file = `after-error-${i}`;
+    const received = new Promise(resolve => {
+      onEvent = events => {
+        if (events.some(event => event.file === file)) resolve();
+      };
+    });
+    await fse.writeFile(path.join(watchDir, file), 'restarted');
+    await received;
+  }
+  await watch.stop();
+}
+
+async function discardStoppedRunError() {
+  let errors = 0;
+  let stopped;
+  let markerCreated;
+  let resolveDrained;
+  const drained = new Promise(resolve => { resolveDrained = resolve; });
+  const marker = path.join(watchDir, 'stop-completed');
+  const directory = path.join(watchDir, 'watched');
+  await fse.mkdir(directory);
+  const watch = await nsfw(directory, () => {}, { errorCallback: () => { errors++; } });
+  const resources = [];
+  let capturing = true;
+  const hook = createHook({
+    init(id, type) {
+      if (capturing && type === 'nsfw') resources.push(id);
+    },
+    before(id) {
+      if (id !== errorResource || stopped) return;
+      stopped = watch.stop();
+      // With one pool thread, mkdir runs after the native stop. Its on-disk marker lets us wait without
+      // yielding to JS error delivery, which is already queued and about to enter the native callback.
+      markerCreated = new Promise((resolve, reject) => {
+        fs.mkdir(marker, error => error ? reject(error) : resolve());
+      });
+      const deadline = Date.now() + 5000;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      while (!fs.existsSync(marker)) {
+        if (Date.now() > deadline) throw new Error('native stop barrier did not complete');
+        Atomics.wait(wait, 0, 0, 1);
+      }
+    },
+    destroy(id) {
+      if (id === errorResource) {
+        hook.disable();
+        resolveDrained();
+      }
+    }
+  }).enable();
+  // start() creates its job, event TSFN and error TSFN synchronously, in that order.
+  const started = watch.start();
+  capturing = false;
+  if (resources.length !== 3) throw new Error(`unexpected start resources: ${resources.length}`);
+  const errorResource = resources[2];
+  await started;
+  fse.removeSync(directory);
+  await drained;
+  await stopped;
+  await markerCreated;
+  if (!stopped) throw new Error('queued error was not intercepted');
+  if (errors !== 0) throw new Error(`stopped run delivered ${errors} stale errors`);
+}
+
+async function collectErroredWatchers() {
+  let collected = 0;
+  const registry = new FinalizationRegistry(() => { collected++; });
+  const baseline = nsfw.getAllocatedInstanceCount();
+  const createWatcher = async i => {
+    let resolveError;
+    const errored = new Promise(resolve => { resolveError = resolve; });
+    const directory = path.join(watchDir, String(i));
+    await fse.mkdir(directory);
+    const eventCallback = () => watch;
+    const errorCallback = () => {
+      resolveError();
+      return watch;
+    };
+    const watch = await nsfw(directory, eventCallback, { errorCallback });
+    registry.register(watch);
+    registry.register(eventCallback);
+    registry.register(errorCallback);
+    await watch.start();
+    await fse.remove(directory);
+    await errored;
+  };
+  for (let i = 0; i < 10; i++) await createWatcher(i);
+  for (let i = 0; i < 100 && (collected < 30 || nsfw.getAllocatedInstanceCount() !== baseline); i++) {
+    global.gc();
+    await sleep(20);
+  }
+  if (collected !== 30 || nsfw.getAllocatedInstanceCount() !== baseline) {
+    throw new Error(`errored watchers retained: ${collected}/30 collected, ${nsfw.getAllocatedInstanceCount()} native`);
+  }
+}
+
+async function terminateQueuedWorkers() {
+  for (let i = 0; i < 10; i++) {
+    const worker = new Worker(__filename, { workerData: ['queued-jobs', watchDir] });
+    await new Promise((resolve, reject) => {
+      worker.once('message', resolve);
+      worker.once('error', reject);
+    });
+    await worker.terminate();
+  }
+}
+
+async function queueJobs() {
+  const watches = await Promise.all(Array.from({ length: 40 }, () => nsfw(watchDir, () => {})));
+  for (const watch of watches) {
+    for (let i = 0; i < 10; i++) {
+      watch.start().catch(() => {});
+      watch.stop().catch(() => {});
+    }
+  }
+  parentPort.postMessage('queued');
 }
 
 async function errorWithoutStop() {
@@ -116,6 +265,12 @@ function errorInWorker() {
 
 const scenarios = {
   'stop': stopAndRestart,
+  'ordered-jobs': orderedJobs,
+  'terminate-queued': terminateQueuedWorkers,
+  'queued-jobs': queueJobs,
+  'restart-after-error': restartAfterError,
+  'discard-stopped-error': discardStoppedRunError,
+  'collect-errored': collectErroredWatchers,
   'concurrent-stop': concurrentStops,
   'error': errorWithoutStop,
   'collect-callbacks': collectCallbacks,

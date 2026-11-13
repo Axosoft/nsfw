@@ -132,6 +132,8 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
 
       private:
         std::atomic<bool> mDidUpdatetExcludedPaths;
+        // The normalized list this call set, which its promise resolves with.
+        std::vector<std::string> mExcludedPaths;
     };
 
     Napi::Value UpdateExcludedPaths(const Napi::CallbackInfo &info);

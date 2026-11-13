@@ -74,7 +74,7 @@ void NSFW::Run::poll() {
       NSFW *watcher = mWatcher;
       uint64_t runId = mRunId;
       mErrorCallback.NonBlockingCall([error, watcher, runId](Napi::Env env, Napi::Function jsCallback) {
-        watcher->stopRun(runId);
+        if (!watcher->stopRun(runId)) return;
         Napi::Value jsError = Napi::Error::New(env, error).Value();
         jsCallback.Call({ jsError });
       });

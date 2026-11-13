@@ -1,7 +1,9 @@
-/* global FinalizationRegistry */
+/* global FinalizationRegistry, SharedArrayBuffer, Atomics */
 // Runs in a child process (and, for 'worker-error', in a worker thread inside it) so that a watcher that keeps the
 // event loop alive, or aborts during teardown, cannot hang or crash the mocha process.
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+const { createHook } = require('async_hooks');
+const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
 
@@ -69,6 +71,58 @@ async function restartAfterError() {
     await received;
   }
   await watch.stop();
+}
+
+async function discardStoppedRunError() {
+  let errors = 0;
+  let stopped;
+  let markerCreated;
+  let resolveDrained;
+  const drained = new Promise(resolve => { resolveDrained = resolve; });
+  const marker = path.join(watchDir, 'stop-completed');
+  const directory = path.join(watchDir, 'watched');
+  await fse.mkdir(directory);
+  const watch = await nsfw(directory, () => {}, { errorCallback: () => { errors++; } });
+  const resources = [];
+  let capturing = true;
+  const hook = createHook({
+    init(id, type) {
+      if (capturing && type === 'nsfw') resources.push(id);
+    },
+    before(id) {
+      if (id !== errorResource || stopped) return;
+      stopped = watch.stop();
+      // With one pool thread, mkdir runs after the native stop. Its on-disk marker lets us wait without
+      // yielding to JS error delivery, which is already queued and about to enter the native callback.
+      markerCreated = new Promise((resolve, reject) => {
+        fs.mkdir(marker, error => error ? reject(error) : resolve());
+      });
+      const deadline = Date.now() + 5000;
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      while (!fs.existsSync(marker)) {
+        if (Date.now() > deadline) throw new Error('native stop barrier did not complete');
+        Atomics.wait(wait, 0, 0, 1);
+      }
+    },
+    destroy(id) {
+      if (id === errorResource) {
+        hook.disable();
+        resolveDrained();
+      }
+    }
+  }).enable();
+  // start() creates its job, event TSFN and error TSFN synchronously, in that order.
+  const started = watch.start();
+  capturing = false;
+  if (resources.length !== 3) throw new Error(`unexpected start resources: ${resources.length}`);
+  const errorResource = resources[2];
+  await started;
+  fse.removeSync(directory);
+  await drained;
+  await stopped;
+  await markerCreated;
+  if (!stopped) throw new Error('queued error was not intercepted');
+  if (errors !== 0) throw new Error(`stopped run delivered ${errors} stale errors`);
 }
 
 async function collectErroredWatchers() {
@@ -215,6 +269,7 @@ const scenarios = {
   'terminate-queued': terminateQueuedWorkers,
   'queued-jobs': queueJobs,
   'restart-after-error': restartAfterError,
+  'discard-stopped-error': discardStoppedRunError,
   'collect-errored': collectErroredWatchers,
   'concurrent-stop': concurrentStops,
   'error': errorWithoutStop,

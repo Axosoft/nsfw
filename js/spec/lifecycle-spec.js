@@ -16,11 +16,11 @@ describe('Directory watcher lifecycle recovery', function() {
     await fse.remove(directory);
   });
 
-  function runChild(mode) {
+  function runChild(mode, env = {}) {
     return new Promise((resolve, reject) => {
       const child = cp.spawn(process.execPath, [
         '--expose-gc', path.join(__dirname, 'lifecycle-child.js'), mode, directory
-      ], { stdio: 'inherit' });
+      ], { stdio: 'inherit', env: { ...process.env, ...env } });
       const timer = setTimeout(() => {
         child.kill();
         reject(new Error(`child process (${mode}) did not exit on its own`));
@@ -42,6 +42,10 @@ describe('Directory watcher lifecycle recovery', function() {
 
   it('can restart directly inside the error callback and receive events on the new run', async function() {
     assert.deepEqual(await runChild('restart-after-error'), { code: 0, signal: null });
+  });
+
+  it('discards an error queued by a run that was explicitly stopped before delivery', async function() {
+    assert.deepEqual(await runChild('discard-stopped-error', { UV_THREADPOOL_SIZE: '1' }), { code: 0, signal: null });
   });
 
   it('tears down workers with pending lifecycle jobs', async function() {

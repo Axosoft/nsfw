@@ -1,6 +1,19 @@
 #ifndef NSFW_H
 #define NSFW_H
 
+// node-addon-api 8 needs C++17. binding.gyp pins gnu++17 on macOS; Linux and
+// Windows take the standard of the Node or Electron headers, so fail here with a
+// clear message instead of deep inside napi.h if those ever set an older one.
+// MSVC only reports the real value in __cplusplus with /Zc:__cplusplus, so read
+// _MSVC_LANG there.
+#if defined(_MSVC_LANG)
+#if _MSVC_LANG < 201703L
+#error "nsfw requires C++17 or newer"
+#endif
+#elif __cplusplus < 201703L
+#error "nsfw requires C++17 or newer"
+#endif
+
 #include <atomic>
 #include <deque>
 #include <memory>

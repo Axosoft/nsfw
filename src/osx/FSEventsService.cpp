@@ -1,9 +1,24 @@
 #include "../../includes/osx/FSEventsService.h"
 #include <iostream>
+#include <limits.h>
+#include <stdlib.h>
 
 FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
   mPath(path), mQueue(queue), mRootChanged(false) {
   mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
+  // FSEvents reports event paths with symlinks resolved (/private/tmp/w/... when watching /tmp/w), so keep both forms
+  // of the watched path when they differ, for toEventPath.
+  char realPath[PATH_MAX];
+  if (realpath(path.c_str(), realPath) != NULL) {
+    std::string watchedPath = path;
+    while (watchedPath.size() > 1 && watchedPath.back() == '/') {
+      watchedPath.pop_back();
+    }
+    if (watchedPath != realPath) {
+      mWatchedPath = watchedPath;
+      mRealPath = realPath;
+    }
+  }
   mExcludedPaths = createExcludedPaths(excludedPaths);
 
   mRunLoop = new RunLoop(this, path);
@@ -23,10 +38,24 @@ FSEventsService::~FSEventsService() {
   releaseExcludedPaths(mExcludedPaths);
 }
 
-std::vector<CFStringRef> FSEventsService::createExcludedPaths(const std::vector<std::string> &excludedPaths) {
+// Moves an excluded path under the watched path as it was given to its real path, the form isExcluded compares event
+// paths against. Anything else, including a path already under the real path, is kept as is.
+std::string FSEventsService::toEventPath(const std::string &excludedPath) const {
+  if (mRealPath.empty()) {
+    return excludedPath;
+  }
+  std::string::size_type length = mWatchedPath.size();
+  bool isUnderWatchedPath =
+    excludedPath.compare(0, length, mWatchedPath) == 0 &&
+    (excludedPath.size() == length || excludedPath[length] == '/');
+  return isUnderWatchedPath ? mRealPath + excludedPath.substr(length) : excludedPath;
+}
+
+std::vector<CFStringRef> FSEventsService::createExcludedPaths(const std::vector<std::string> &excludedPaths) const {
   std::vector<CFStringRef> excludedPathRefs;
   for (const std::string &excludedPath : excludedPaths) {
-    CFStringRef excludedPathRef = CFStringCreateWithCString(NULL, excludedPath.c_str(), kCFStringEncodingUTF8);
+    std::string eventPath = toEventPath(excludedPath);
+    CFStringRef excludedPathRef = CFStringCreateWithCString(NULL, eventPath.c_str(), kCFStringEncodingUTF8);
     if (excludedPathRef != NULL) {
       excludedPathRefs.push_back(excludedPathRef);
     }

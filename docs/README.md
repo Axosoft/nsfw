@@ -40,7 +40,11 @@ const nsfw = require('nsfw');
     **updateExcludedPaths()** reject.
   - Paths outside the watched path are ignored: they are left out of the list the watcher uses and of what
     **getExcludedPaths()** and **updateExcludedPaths()** resolve with. The check is case-insensitive on Windows only,
-    and there the `\\?\` form of a path counts as the same path.
+    and there the `\\?\` form of a path counts as the same path; Windows does not normalize that form, so give it
+    without `.`, `..` or `/`.
+  - Give excluded paths under the watched path as it was passed, also when it goes through a symlink: the check is
+    lexical, so a path under the real path is ignored, and on macOS the watcher moves them onto the watched path's
+    real path, where FSEvents reports events. Symlinks inside the excluded part of a path are not resolved.
   - The watched path itself is accepted, but what it does differs: on macOS and Windows it drops every event, on Linux
     it drops none.
   - Trailing separators are dropped: `/home/me/project/build/` is stored as `/home/me/project/build`.

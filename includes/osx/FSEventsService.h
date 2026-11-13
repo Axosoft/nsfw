@@ -50,10 +50,15 @@ private:
   void rename(std::vector<std::string> &paths);
   void splitFilePath(std::string &directory, std::string &name, const std::string &path);
   bool isExcluded(std::string filePath);
-  static std::vector<CFStringRef> createExcludedPaths(const std::vector<std::string> &excludedPaths);
+  std::string toEventPath(const std::string &excludedPath) const;
+  std::vector<CFStringRef> createExcludedPaths(const std::vector<std::string> &excludedPaths) const;
   static void releaseExcludedPaths(const std::vector<CFStringRef> &excludedPaths);
 
   std::string mPath;
+  // mPath without trailing separators, and its real path with symlinks resolved; both empty if those are the same or
+  // mPath could not be resolved.
+  std::string mWatchedPath;
+  std::string mRealPath;
   RunLoop *mRunLoop;
   std::shared_ptr<EventQueue> mQueue;
   // Read on the FSEvents run loop thread, replaced from a worker thread by updateExcludedPaths.

@@ -15,9 +15,11 @@ paths that used to be forwarded to the watcher are now ignored.
     (`/a/foo-bar` when watching `/a/foo`) or `/a/foo/../bar`, while `nsfw()` on Windows and `updateExcludedPaths()`
     forwarded them all. A forwarded ancestor of the watched path excluded every event on macOS and Windows; it is
     now ignored too.
-  - Whether a path is inside is decided lexically, and on Linux and macOS case-sensitively: a differently cased path
-    is ignored, also on update, where it used to be forwarded and took effect on macOS. On Windows the check is
-    case-insensitive and the `\\?\` form of a path counts as the same path as its plain form.
+  - Whether a path is inside is decided lexically, and on Linux and macOS case-sensitively: a differently cased path,
+    or one under the real path of a watched path that goes through a symlink (`/private/tmp/w/build` when watching
+    `/tmp/w`), is ignored, also on update, where it used to be forwarded and took effect on macOS. On Windows the check
+    is case-insensitive and the `\\?\` form of a path counts as the same path as its plain form (it must already be
+    normalized).
 - Non-array `excludedPaths`, or non-string elements, reject with a `TypeError`; `updateExcludedPaths()` now rejects
   instead of throwing synchronously.
 - `updateExcludedPaths()` resolves with the paths that call set, without the ignored ones and trailing separators;
@@ -32,6 +34,8 @@ paths that used to be forwarded to the watcher are now ignored.
 - `updateExcludedPaths()` no longer races with the watcher threads that read the excluded paths on macOS, Windows and
   Linux, where it also changed the inotify watch tree while events were being handled.
 - macOS no longer leaks the excluded path strings on every update and every event.
+- On macOS, excluded paths work when the watched path goes through a symlink, such as `/tmp` or `os.tmpdir()`.
+  FSEvents reports events under the real path, which the excluded paths, given under the watched path, never matched.
 - `getExcludedPaths()` and `updateExcludedPaths()` work when watching a single file instead of throwing a `TypeError`.
 - Typings: `excludedPaths` is `string[]`, `getExcludedPaths()` is declared and `updateExcludedPaths()` resolves with
   `string[]`.

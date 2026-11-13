@@ -909,7 +909,8 @@ describe('Node Sentinel File Watcher', function() {
       return event.directory === path.dirname(filePath) && event.file === path.basename(filePath);
     }
 
-    async function withWatchers(inPath, excludedPaths, test) {
+    // reportedPath is where the watcher reports inPath's events, when that differs (macOS resolves symlinks).
+    async function withWatchers(inPath, excludedPaths, test, reportedPath = inPath) {
       const actual = recordEvents();
       const control = recordEvents();
       const watch = await nsfw(inPath, actual.callback, { debounceMS, excludedPaths });
@@ -917,7 +918,7 @@ describe('Node Sentinel File Watcher', function() {
       let marker = 0;
 
       async function barrier() {
-        const markerPath = path.join(inPath, `barrier-${marker++}.file`);
+        const markerPath = path.join(reportedPath, `barrier-${marker++}.file`);
         await actual.observe(markerPath, nsfw.actions.CREATED, () => fse.writeFile(markerPath, 'Barrier'));
       }
 
@@ -1038,6 +1039,34 @@ describe('Node Sentinel File Watcher', function() {
         assert.deepStrictEqual(await watch.updateExcludedPaths([excludedPath + '/' + path.sep]), [excludedPath]);
         assert.deepStrictEqual(await watch.getExcludedPaths(), [excludedPath]);
       });
+    });
+
+    it('excludes paths under a watched path that goes through a symlink', async function() {
+      if (process.platform === 'win32') {
+        // Creating a symlink needs extra privileges on Windows.
+        this.skip();
+      }
+      const linkPath = path.join(workDir, 'test4link');
+      await fse.symlink(path.join(workDir, 'test4'), linkPath, 'dir');
+      const excludedPath = path.join(linkPath, 'excluded');
+      const otherPath = path.join(linkPath, 'other');
+      await Promise.all([fse.mkdir(excludedPath), fse.mkdir(otherPath)]);
+      // macOS reports the events under the real path, here without the link; Linux under the watched path.
+      const reportedPath = process.platform === 'darwin' ? await fse.realpath(linkPath) : linkPath;
+      const reported = (directory, file) => path.join(reportedPath, path.relative(linkPath, directory), file);
+
+      await withWatchers(linkPath, [excludedPath], async ({ watch, actual, excluded }) => {
+        await exerciseExcludedFile(reported(excludedPath, 'excluded.file'), excluded);
+        const includedFile = reported(linkPath, 'included.file');
+        await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included.'));
+        assert.deepStrictEqual(await watch.getExcludedPaths(), [excludedPath]);
+
+        // Also when they change while watching.
+        assert.deepStrictEqual(await watch.updateExcludedPaths([otherPath]), [otherPath]);
+        await exerciseExcludedFile(reported(otherPath, 'other.file'), excluded);
+        const reincludedFile = reported(excludedPath, 'reincluded.file');
+        await actual.observe(reincludedFile, nsfw.actions.CREATED, () => fse.writeFile(reincludedFile, 'Included.'));
+      }, reportedPath);
     });
 
     it('rejects relative excluded paths and ignores the ones outside the watched directory', async function () {

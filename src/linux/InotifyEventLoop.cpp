@@ -19,7 +19,7 @@ InotifyEventLoop::InotifyEventLoop(
     if (mStarted) { mLoopingSemaphore.wait(); }
 }
 
-bool InotifyEventLoop::isLooping() {
+bool InotifyEventLoop::isStarted() {
   return mStarted;
 }
 
@@ -27,10 +27,16 @@ std::unique_lock<std::mutex> InotifyEventLoop::lockEventHandling() {
   return std::unique_lock<std::mutex>(mMutex);
 }
 
+static std::string readErrorMessage(ssize_t bytesRead, int errorNumber) {
+  if (bytesRead == 0) {
+    return "Inotify read failed: unexpected end of file";
+  }
+  return "Inotify read failed: " + std::generic_category().message(errorNumber);
+}
+
 void InotifyEventLoop::work() {
   char buffer[BUFFER_SIZE];
   inotify_event *event = NULL;
-  unsigned int bytesRead, position = 0;
   bool isDirectoryEvent = false, isDirectoryRemoval = false;
   InotifyService *inotifyService = mInotifyService;
   InotifyRenameEvent renameEvent;
@@ -100,10 +106,34 @@ void InotifyEventLoop::work() {
   };
 
   mLoopingSemaphore.signal();
-  while((bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE)) > 0) {
+  std::string error;
+  for (;;) {
+    // The cancellation point the destructor relies on, so it must stay outside mMutex.
+    ssize_t bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE);
+    if (bytesRead == -1 && errno == EINTR) {
+      continue;
+    }
+    if (bytesRead <= 0) {
+      error = readErrorMessage(bytesRead, errno);
+      break;
+    }
+
     std::lock_guard<std::mutex> syncWithDestructor(mMutex);
+    ssize_t position = 0;
     do {
       event = (struct inotify_event *)(buffer + position);
+
+      // The kernel queues this (with wd -1) once the queue holds fs.inotify.max_queued_events events, and drops the
+      // events that follow, so the tree may be missing directories and the watcher can't be trusted anymore. Check it
+      // first, so it never completes a pending rename or reaches a handler.
+      if (event->mask & (uint32_t)IN_Q_OVERFLOW) {
+        error = "Inotify event queue overflowed, events were lost";
+        break;
+      }
+
+      #ifdef NSFW_TEST_SLOW_1
+        runTestHook(event);
+      #endif
 
       if (renameEvent.isStarted && event->cookie != renameEvent.cookie) {
         renameEnd();
@@ -136,14 +166,60 @@ void InotifyEventLoop::work() {
         inotifyService->removeDirectory(event->wd);
       }
     } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);
+    if (!error.empty()) {
+      // The run is about to end with this error and the events still queued are discarded, so a pending rename is
+      // dropped instead of being reported as a removal.
+      break;
+    }
     if (renameEvent.isStarted) {
       remove();
       renameEvent.isStarted = false;
     }
-    position = 0;
   }
-  mStarted = false;
+
+  // Errors are terminal: the poll thread reports this one (or the one recorded before it, or the root path error if the
+  // watched path is gone, see InotifyTree::getError()) through errorCallback and stops the watcher. isStarted() stays
+  // true, see its declaration.
+  inotifyService->setError(error);
 }
+
+#ifdef NSFW_TEST_SLOW_1
+// Lets js/spec/index-slow-spec.js drive the failures it can't cause from outside, when it creates a file with one of
+// these names in a watched directory.
+void InotifyEventLoop::runTestHook(const inotify_event *event) {
+  if (!(event->mask & (uint32_t)IN_CREATE) || event->len == 0) {
+    return;
+  }
+
+  std::string name = event->name;
+  if (name == "nsfw-test-hold-event-loop") {
+    // Stops reading events until the release file shows up next to this one or the directory goes away (for at most a
+    // minute), so the kernel queue overflows if enough events happen meanwhile.
+    std::string directory;
+    if (!mInotifyService->mTree->getPath(directory, event->wd)) {
+      return;
+    }
+    std::string releasePath = directory + "/nsfw-test-release-event-loop";
+    struct stat file;
+    for (int i = 0; i < 600 && stat(releasePath.c_str(), &file) != 0 && stat(directory.c_str(), &file) == 0; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  } else if (name == "nsfw-test-fail-read") {
+    failReads(mInotifyInstance);
+  }
+}
+
+// Puts a write-only descriptor in place of the inotify one, so the next read() fails with EBADF.
+bool InotifyEventLoop::failReads(int inotifyInstance) {
+  int writeOnly = open("/dev/null", O_WRONLY);
+  if (writeOnly == -1) {
+    return false;
+  }
+  dup2(writeOnly, inotifyInstance);
+  close(writeOnly);
+  return true;
+}
+#endif
 
 InotifyEventLoop::~InotifyEventLoop() {
   if (!mStarted) {

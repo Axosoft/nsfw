@@ -11,6 +11,7 @@
 #include <map>
 #include <unordered_set>
 #include <functional>
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <mutex>
@@ -32,6 +33,7 @@ public:
   bool nodeExists(int wd);
   void removeDirectory(int wd);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
+  void setError(const std::string &error);
   const std::vector<std::string>& getExcludedPaths() const;
   void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
@@ -88,7 +90,6 @@ private:
     bool mWatchDescriptorInitialized;
   };
 
-  void setError(std::string error);
   void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
   void removeNodeReferenceByWD(int watchDescriptor);
   bool addInode(ino_t inodeNumber, InotifyNode *node);
@@ -97,13 +98,19 @@ private:
   InotifyNode * findNodeByPath(const std::string path);
   std::string getParentPath(const std::string &filePath);
   bool existWatchedPath();
+  bool isWatchedPathGone();
 
+  // mError: the event loop thread records errors while it handles events, and so do the threads that add watches outside it
+  // (the initial scan on start, updateExcludedPaths()). The poll thread reads it in getError(), and any thread calling
+  // hasErrored() (the poll thread, inotifyInit() on the others) records the root path error there. Nothing else is
+  // locked while holding this mutex, so it can't take part in a lock order problem with the event loop mutex.
   std::string mError;
   std::mutex mErrorMutex;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   std::map<ino_t, InotifyNode *> inodes;
-  InotifyNode *mRoot;
+  // Read by the poll thread through isRootAlive() while the event loop thread clears it in removeDirectory().
+  std::atomic<InotifyNode *> mRoot;
   std::vector<std::string> mExcludedPaths;
   std::string mWatchedPath;
 

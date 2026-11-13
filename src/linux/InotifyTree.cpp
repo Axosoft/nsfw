@@ -4,12 +4,15 @@
 
 #include <algorithm>
 
+static const char *const ROOT_CHANGED_ERROR = "Service shutdown: root path changed (renamed or deleted)";
+
 /**
  * InotifyTree ---------------------------------------------------------------------------------------------------------
  */
 InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths):
   mError(""),
-  mInotifyInstance(inotifyInstance) {
+  mInotifyInstance(inotifyInstance),
+  mRoot(NULL) {
   mInotifyNodeByWatchDescriptor = new std::map<int, InotifyNode *>;
   std::string directory;
   std::string watchName;
@@ -27,11 +30,10 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
 
   struct stat file;
   if (stat(mWatchedPath.c_str(), &file) < 0) {
-    mRoot = NULL;
     return;
   }
 
-  mRoot = new InotifyNode(
+  InotifyNode *root = new InotifyNode(
     this,
     mInotifyInstance,
     NULL,
@@ -39,18 +41,23 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
     watchName,
     file.st_ino
   );
-  addInode(file.st_ino, mRoot);
+  addInode(file.st_ino, root);
 
-  if (!mRoot->isAlive()) {
-    delete mRoot;
-    mRoot = NULL;
+  if (!root->isAlive()) {
+    delete root;
     return;
   }
+  mRoot = root;
 }
 
 bool InotifyTree::existWatchedPath() {
   struct stat file;
   return stat(mWatchedPath.c_str(), &file) >= 0;
+}
+
+bool InotifyTree::isWatchedPathGone() {
+  struct stat file;
+  return stat(mWatchedPath.c_str(), &file) != 0 && (errno == ENOENT || errno == ENOTDIR);
 }
 
 void InotifyTree::addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent) {
@@ -68,6 +75,13 @@ void InotifyTree::addNodeReferenceByWD(int wd, InotifyNode *node) {
 }
 
 std::string InotifyTree::getError() {
+  // A watched path that is gone explains the failure better than what was recorded first: restarting won't help, and
+  // an overflow may have dropped the root's own deletion events. Only when it's really gone, though: a stat() that
+  // fails for another reason (permissions, a network filesystem hiccup) mustn't hide the recorded cause.
+  if (isWatchedPathGone()) {
+    return ROOT_CHANGED_ERROR;
+  }
+
   std::lock_guard<std::mutex> lock(mErrorMutex);
   return mError;
 }
@@ -92,12 +106,13 @@ bool InotifyTree::hasErrored() {
     if (!mError.empty()) return true;
   }
 
-  bool pathExists = existWatchedPath();
-  std::lock_guard<std::mutex> lock(mErrorMutex);
-  if (mError.empty() && !pathExists) {
-    mError = "Service shutdown: root path changed (renamed or deleted)";
+  // stat() outside the lock, so a slow filesystem doesn't hold up the other threads' error checks.
+  if (existWatchedPath()) {
+    return false;
   }
-  return !mError.empty();
+
+  setError(ROOT_CHANGED_ERROR);
+  return true;
 }
 
 bool InotifyTree::isRootAlive() {
@@ -118,9 +133,9 @@ void InotifyTree::removeDirectory(int wd) {
   InotifyNode *node = nodeIterator->second;
   InotifyNode *parent = node->getParent();
   if (parent == NULL) {
-    delete mRoot;
-    mRoot = NULL;
-    setError("Service shutdown: root path changed (renamed or deleted)");
+    // The error goes first, so the poll thread never finds the root gone without it and reports a generic one.
+    setError(ROOT_CHANGED_ERROR);
+    delete mRoot.exchange(NULL);
     return;
   }
 
@@ -159,9 +174,14 @@ void InotifyTree::renameDirectory(int fromWd, std::string fromName, int toWd, st
   toNodeIterator->second->takeChildAsName(pulledChild, toName);
 }
 
-void InotifyTree::setError(std::string error) {
+void InotifyTree::setError(const std::string &error) {
   std::lock_guard<std::mutex> lock(mErrorMutex);
-  mError = error;
+  // Errors are terminal and the poll thread reports only one, so the first is kept: it's the cause, and the ones after
+  // it tend to come from the same failure (say, the queue overflowing in the mkdir flood that hit the watch limit).
+  // getError() still reports a watched path that is gone over it.
+  if (mError.empty()) {
+    mError = error;
+  }
 }
 
 bool InotifyTree::addInode(ino_t inodeNumber, InotifyNode *node) {
@@ -192,9 +212,7 @@ InotifyTree::InotifyNode * InotifyTree::findNodeByPath(const std::string path) {
 
 
 InotifyTree::~InotifyTree() {
-  if (isRootAlive()) {
-    delete mRoot;
-  }
+  delete mRoot.load();
   delete mInotifyNodeByWatchDescriptor;
 }
 

@@ -3,6 +3,37 @@ const path = require('path');
 
 const NSFW = require('../../build/Release/nsfw.node');
 
+// Throws unless excludedPaths is an array of absolute paths.
+function validateExcludedPaths(excludedPaths) {
+  if (!Array.isArray(excludedPaths)) {
+    throw new TypeError('excludedPaths must be an array of strings.');
+  }
+  for (const excludedPath of excludedPaths) {
+    if (typeof excludedPath !== 'string') {
+      throw new TypeError('excludedPaths elements must be strings.');
+    }
+    if (!path.isAbsolute(excludedPath)) {
+      throw new Error('Excluded path must be an absolute path.');
+    }
+  }
+}
+
+// Whether excludedPath is watchPath or inside it. path.relative compares whole path components (so /a/foobar is not
+// inside /a/foo) and handles win32 case-insensitivity, mixed separators and other drives. Comparing the namespaced
+// forms also counts a `\\?\` path on one side and a plain one on the other as inside on win32, which the native
+// watcher handles by adding that prefix to every path.
+function isInsideWatchPath(watchPath, excludedPath) {
+  const relativePath = path.relative(path.toNamespacedPath(watchPath), path.toNamespacedPath(excludedPath));
+  return relativePath !== '..' && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath);
+}
+
+// Validates excludedPaths and drops the ones outside watchPath, which cannot exclude anything. It is done here and not
+// in the native watchers, where an ancestor of watchPath would match every event on macOS and Windows.
+function effectiveExcludedPaths(watchPath, excludedPaths) {
+  validateExcludedPaths(excludedPaths);
+  return excludedPaths.filter(excludedPath => isInsideWatchPath(watchPath, excludedPath));
+}
+
 function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
   const { CREATED, DELETED, MODIFIED } = nsfw.actions;
   const directory = path.dirname(watchPath);
@@ -50,7 +81,6 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS) {
   this.resume = () => this.start();
 }
 
-
 const buildNSFW = async (watchPath, eventCallback,
   { debounceMS = 500, errorCallback: _errorCallback, excludedPaths = [] } = {}) => {
   if (Number.isInteger(debounceMS)) {
@@ -74,24 +104,10 @@ const buildNSFW = async (watchPath, eventCallback,
     throw new Error('Path must be a valid path to a file or a directory.');
   }
 
-  if (excludedPaths) {
-    for (let i = 0; i < excludedPaths.length; i++) {
-      const excludedPath = excludedPaths[i];
-      if (process.platform === 'win32') {
-        if (!excludedPath.substring(0, watchPath.length - 1).
-          localeCompare(watchPath, undefined, { sensitivity: 'accent' })) {
-          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
-        }
-      } else {
-        if (!excludedPath.startsWith(watchPath)) {
-          throw new Error('Excluded path must be a valid subdirectory of the watching path.');
-        }
-      }
-    }
-  }
+  const effectivePaths = effectiveExcludedPaths(watchPath, excludedPaths);
 
   if (stats.isDirectory()) {
-    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, excludedPaths });
+    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, excludedPaths: effectivePaths });
   } else if (stats.isFile()) {
     return new NSFWFilePoller(watchPath, eventCallback, debounceMS);
   } else {
@@ -101,17 +117,20 @@ const buildNSFW = async (watchPath, eventCallback,
 
 function nsfw(watchPath, eventCallback, options) {
   if (!(this instanceof nsfw)) {
-    return buildNSFW(watchPath, eventCallback, options).then(implementation => new nsfw(implementation));
+    return buildNSFW(watchPath, eventCallback, options).then(implementation => new nsfw(implementation, watchPath));
   }
 
-  const implementation = watchPath;
+  // Constructed by the branch above.
+  const [implementation, watchedPath] = arguments;
 
   this.start = () => implementation.start();
   this.stop = () => implementation.stop();
   this.pause = () => implementation.pause();
   this.resume = () => implementation.resume();
   this.getExcludedPaths = () => implementation.getExcludedPaths();
-  this.updateExcludedPaths = (paths) => implementation.updateExcludedPaths(paths);
+  this.updateExcludedPaths = async (paths) => {
+    return implementation.updateExcludedPaths(effectiveExcludedPaths(watchedPath, paths));
+  };
 }
 
 

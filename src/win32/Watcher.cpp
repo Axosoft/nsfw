@@ -1,7 +1,5 @@
 #include "../../includes/win32/Watcher.h"
 
-#include <sstream>
-
 static
 void stripNTPrefix(std::wstring &path) {
   if (path.rfind(L"\\\\?\\UNC\\", 0) != std::wstring::npos) {
@@ -20,19 +18,16 @@ std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {
   return fileName;
 }
 
+static std::wstring joinPath(const std::wstring &directory, const std::wstring &relativePath) {
+  const auto last = directory.find_last_not_of(L"\\/");
+  return directory.substr(0, last == std::wstring::npos ? 0 : last + 1) + L"\\" + relativePath;
+}
+
 std::string Watcher::getUTF8Directory(std::wstring path) {
   std::wstring::size_type found = path.rfind('\\');
-  std::wstringstream utf16DirectoryStream;
-
-  utf16DirectoryStream << mPath;
-
-  if (found != std::wstring::npos) {
-      utf16DirectoryStream
-        << "\\"
-        << path.substr(0, found);
-  }
-
-  std::wstring uft16DirectoryString = utf16DirectoryStream.str();
+  std::wstring uft16DirectoryString = found == std::wstring::npos
+    ? mPath
+    : joinPath(mPath, path.substr(0, found));
   if (!mPathWasNtPrefixed) {
     // If we were the ones that prefixed the path, we should strip it
     // before returning it to the user
@@ -243,9 +238,9 @@ bool Watcher::isExcluded(const std::wstring &fileName) {
 
   std::wstring path;
   if (found != std::wstring::npos) {
-    path = mPath + L"\\" + fileName.substr(0, found);
+    path = joinPath(mPath, fileName.substr(0, found));
   } else {
-    path = mPath + L"\\" + fileName;
+    path = joinPath(mPath, fileName);
   }
   std::lock_guard<std::mutex> lock(mExcludedPathsMutex);
   for (const std::wstring &excludePath : mExcludedPaths) {

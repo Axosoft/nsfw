@@ -131,6 +131,10 @@ void InotifyEventLoop::work() {
         break;
       }
 
+      #ifdef NSFW_TEST_SLOW_1
+        runTestHook(event);
+      #endif
+
       if (renameEvent.isStarted && event->cookie != renameEvent.cookie) {
         renameEnd();
       }
@@ -178,6 +182,44 @@ void InotifyEventLoop::work() {
   // true, see its declaration.
   inotifyService->setError(error);
 }
+
+#ifdef NSFW_TEST_SLOW_1
+// Lets js/spec/index-slow-spec.js drive the failures it can't cause from outside, when it creates a file with one of
+// these names in a watched directory.
+void InotifyEventLoop::runTestHook(const inotify_event *event) {
+  if (!(event->mask & (uint32_t)IN_CREATE) || event->len == 0) {
+    return;
+  }
+
+  std::string name = event->name;
+  if (name == "nsfw-test-hold-event-loop") {
+    // Stops reading events until the release file shows up next to this one or the directory goes away (for at most a
+    // minute), so the kernel queue overflows if enough events happen meanwhile.
+    std::string directory;
+    if (!mInotifyService->mTree->getPath(directory, event->wd)) {
+      return;
+    }
+    std::string releasePath = directory + "/nsfw-test-release-event-loop";
+    struct stat file;
+    for (int i = 0; i < 600 && stat(releasePath.c_str(), &file) != 0 && stat(directory.c_str(), &file) == 0; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  } else if (name == "nsfw-test-fail-read") {
+    failReads(mInotifyInstance);
+  }
+}
+
+// Puts a write-only descriptor in place of the inotify one, so the next read() fails with EBADF.
+bool InotifyEventLoop::failReads(int inotifyInstance) {
+  int writeOnly = open("/dev/null", O_WRONLY);
+  if (writeOnly == -1) {
+    return false;
+  }
+  dup2(writeOnly, inotifyInstance);
+  close(writeOnly);
+  return true;
+}
+#endif
 
 InotifyEventLoop::~InotifyEventLoop() {
   if (!mStarted) {

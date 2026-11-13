@@ -1,5 +1,17 @@
 #include "../../includes/linux/InotifyService.h"
 
+#ifdef NSFW_TEST_SLOW_1
+// Lets js/spec/index-slow-spec.js stop the event loop before start() checks that the watcher runs: when the watched
+// directory holds this file, the loop's first read() fails.
+static bool failFirstRead(const std::string &path, int inotifyInstance) {
+  struct stat file;
+  if (stat((path + "/nsfw-test-fail-first-read").c_str(), &file) != 0) {
+    return false;
+  }
+  return InotifyEventLoop::failReads(inotifyInstance);
+}
+#endif
+
 InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
   mEventLoop(NULL),
   mQueue(queue),
@@ -17,10 +29,22 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
     mEventLoop = NULL;
     close(mInotifyInstance);
   } else {
+    #ifdef NSFW_TEST_SLOW_1
+      bool failingFirstRead = failFirstRead(path, mInotifyInstance);
+    #endif
     mEventLoop = new InotifyEventLoop(
       mInotifyInstance,
       this
     );
+    #ifdef NSFW_TEST_SLOW_1
+      // Waits for the loop to record the error, plus a margin for it to finish, so it stops before start()'s check.
+      for (int i = 0; failingFirstRead && i < 1000 && !mTree->hasErrored(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      if (failingFirstRead) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+    #endif
   }
 }
 

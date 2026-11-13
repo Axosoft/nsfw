@@ -33,6 +33,10 @@ public:
 
   void work();
 
+#ifdef NSFW_TEST_SLOW_1
+  static bool failReads(int inotifyInstance);
+#endif
+
   ~InotifyEventLoop();
 private:
   static const int BUFFER_SIZE = 8192;
@@ -43,6 +47,10 @@ private:
     std::string name;
     int wd;
   };
+
+#ifdef NSFW_TEST_SLOW_1
+  void runTestHook(const inotify_event *event);
+#endif
 
   int mInotifyInstance;
   InotifyService *mInotifyService;

@@ -1069,6 +1069,22 @@ describe('Node Sentinel File Watcher', function() {
       }, reportedPath);
     });
 
+    it('excludes a directory created after start()', async function() {
+      const inPath = path.join(workDir, 'test4');
+      // Shares the name of the directory excluded below, one level up.
+      const siblingPath = path.join(inPath, 'sub');
+      const excludedPath = path.join(inPath, 'created', 'sub');
+      await fse.mkdir(siblingPath);
+
+      await withWatchers(inPath, [], async ({ watch, actual, excluded }) => {
+        await actual.observe(excludedPath, undefined, () => fse.mkdirp(excludedPath));
+        assert.deepStrictEqual(await watch.updateExcludedPaths([excludedPath]), [excludedPath]);
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+        const siblingFile = path.join(siblingPath, 'sibling.file');
+        await actual.observe(siblingFile, nsfw.actions.CREATED, () => fse.writeFile(siblingFile, 'Sibling.'));
+      });
+    });
+
     it('rejects relative excluded paths and ignores the ones outside the watched directory', async function () {
       const inPath = path.join(workDir, 'test4');
       const validPath = path.join(inPath, 'excluded');

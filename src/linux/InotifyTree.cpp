@@ -368,22 +368,28 @@ InotifyTree::InotifyNode::~InotifyNode() {
 void InotifyTree::InotifyNode::addChild(std::string name, EmitCreatedEvent emitCreatedEvent) {
   struct stat file;
 
-  if (stat(createFullPath(mFullPath, name).c_str(), &file) >= 0 && mTree->addInode(file.st_ino, this)) {
-    InotifyNode *child = new InotifyNode(
-      mTree,
-      mInotifyInstance,
-      this,
-      mFullPath,
-      name,
-      file.st_ino,
-      emitCreatedEvent
-    );
+  // The inode is claimed before the child scans its contents, so a symlink back to it is not watched again.
+  if (stat(createFullPath(mFullPath, name).c_str(), &file) < 0 || !mTree->addInode(file.st_ino, this)) {
+    return;
+  }
 
-    if (child->isAlive()) {
-      (*mChildren)[name] = child;
-    } else {
-      delete child;
-    }
+  InotifyNode *child = new InotifyNode(
+    mTree,
+    mInotifyInstance,
+    this,
+    mFullPath,
+    name,
+    file.st_ino,
+    emitCreatedEvent
+  );
+
+  if (child->isAlive()) {
+    // Points the inode at the child, as the constructor does, so findNodeByPath finds the child and not this node.
+    mTree->inodes[file.st_ino] = child;
+    (*mChildren)[name] = child;
+  } else {
+    // Its destructor releases the inode.
+    delete child;
   }
 }
 

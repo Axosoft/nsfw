@@ -85,6 +85,8 @@ return nsfw(
 
 - debounceMS: delays notifications emitted by the library. Default 500 ms.
 - errorCallback(errors): the library will call this callback when an error happens.
+On Linux that includes an overflow of the inotify event queue (`fs.inotify.max_queued_events`), which means events
+were lost: restart the watcher and rescan what you track.
 A directory watcher retires the failed run and releases that run's native resources before calling `errorCallback`.
 Errors queued by a run that has already been explicitly stopped or replaced are discarded.
 After fixing the cause (for example, recreating a deleted directory), call `start()` to watch again;

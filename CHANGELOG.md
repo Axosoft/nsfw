@@ -3,7 +3,8 @@
 ## Unreleased
 
 Behaviour changes in excluded paths, so this needs a minor release: calls that used to succeed can now reject, and
-paths that used to be forwarded to the watcher are now ignored.
+paths that used to be forwarded to the watcher are now ignored. On Linux, a watcher whose inotify queue overflows now
+stops with an error instead of losing events silently.
 
 ### Changed
 - `nsfw()` and `updateExcludedPaths()` handle excluded paths the same way:
@@ -35,6 +36,14 @@ paths that used to be forwarded to the watcher are now ignored.
 - On macOS the addon is compiled as `gnu++17` with the deployment target of the Node or Electron headers it is built
   against (macOS 11.0 for Node 22, 13.5 for Node 24 and 26) instead of C++11 and macOS 10.7. Linux and Windows keep
   using the standard of the headers, C++17 or newer.
+- On Linux, an inotify event queue overflow fires `errorCallback` with `Inotify event queue overflowed, events were
+  lost` and stops the watcher, like any other error. Before, the events past `fs.inotify.max_queued_events` (16384 by
+  default) were dropped silently and the watcher kept running, possibly without watching the directories created in
+  the meantime. Call `start()` again and rescan what you track, since events were lost. When another error stopped the
+  watcher first (for example `Inotify limit reached` during the same burst), `errorCallback` gets that one instead. And
+  if the watched directory is gone by the time the error is reported, it gets the root path error, whatever came first.
+  It can also be deleted right after an overflow is reported (say, by the `rm -rf` that overflowed the queue), so if
+  `start()` then rejects, check that the directory still exists.
 
 ### Fixed
 - A fresh `npm install nsfw` compiles again (#212). `node-addon-api` 8.9.2 headers need C++17, but the build forced
@@ -52,6 +61,12 @@ paths that used to be forwarded to the watcher are now ignored.
 - `getExcludedPaths()` and `updateExcludedPaths()` work when watching a single file instead of throwing a `TypeError`.
 - Typings: `excludedPaths` is `string[]`, `getExcludedPaths()` is declared and `updateExcludedPaths()` resolves with
   `string[]`.
+- On Linux, a failed read of the inotify descriptor no longer parses the failure as events past the end of the read
+  buffer, which could crash the process. It fires `errorCallback` with `Inotify read failed: <reason>` and stops the
+  watcher, and an interrupted read is retried. Before, a read that returned no data stopped the watcher with the
+  generic `Service shutdown unexpectedly`.
+- On Linux, the watcher error and the watched root are no longer read and written from two threads without
+  synchronization, which could report a garbled error or crash right when the watcher failed.
 
 ## 2.3.0
 

@@ -9,7 +9,8 @@ const nsfw = require('nsfw');
  - **eventCallback**: callback that will be fired when NSFW has change events
  - **options**
    - **debounceMS**: time in milliseconds to debounce the event callback
-   - **errorCallback**: callback to fire in the case of errors
+   - **errorCallback**: callback to fire in the case of errors, including an overflow of the inotify event queue on
+     Linux, which means events were lost
    - **excludedPaths**: array of absolute paths inside **watchPath** whose events are not reported; the ones outside
      it are ignored, see [excluded paths](#excluded-paths)
 

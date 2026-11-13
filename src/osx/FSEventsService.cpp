@@ -1,17 +1,25 @@
 #include "../../includes/osx/FSEventsService.h"
 #include <iostream>
+#include <limits.h>
+#include <stdlib.h>
 
 FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
   mPath(path), mQueue(queue), mRootChanged(false) {
   mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
-  for (const std::string &excludedPath : excludedPaths) {
-    CFStringRef str = CFStringCreateWithCString(
-      NULL,
-      excludedPath.c_str(),
-      kCFStringEncodingUTF8
-    );
-    mExcludedPaths.push_back(str);
+  // FSEvents reports event paths with symlinks resolved (/private/tmp/w/... when watching /tmp/w), so keep both forms
+  // of the watched path when they differ, for toEventPath.
+  char realPath[PATH_MAX];
+  if (realpath(path.c_str(), realPath) != NULL) {
+    std::string watchedPath = path;
+    while (watchedPath.size() > 1 && watchedPath.back() == '/') {
+      watchedPath.pop_back();
+    }
+    if (watchedPath != realPath) {
+      mWatchedPath = watchedPath;
+      mRealPath = realPath;
+    }
   }
+  mExcludedPaths = createExcludedPaths(excludedPaths);
 
   mRunLoop = new RunLoop(this, path);
 
@@ -23,8 +31,49 @@ FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string 
 }
 
 FSEventsService::~FSEventsService() {
+  // Stops the run loop thread, the only other reader of mExcludedPaths.
   if (mRunLoop != NULL) {
     delete mRunLoop;
+  }
+  releaseExcludedPaths(mExcludedPaths);
+}
+
+// Moves an excluded path under the watched path as it was given to its real path, the form isExcluded compares event
+// paths against. Anything else, including a path already under the real path, is kept as is.
+std::string FSEventsService::toEventPath(const std::string &excludedPath) const {
+  if (mRealPath.empty()) {
+    return excludedPath;
+  }
+  std::string::size_type length = mWatchedPath.size();
+  bool isUnderWatchedPath =
+    excludedPath.compare(0, length, mWatchedPath) == 0 &&
+    (excludedPath.size() == length || excludedPath[length] == '/');
+  if (!isUnderWatchedPath) {
+    return excludedPath;
+  }
+  std::string suffix = excludedPath.substr(length);
+  // A watched path that resolves to / would otherwise give //tmp/x.
+  if (suffix.empty() || mRealPath != "/") {
+    return mRealPath + suffix;
+  }
+  return suffix;
+}
+
+std::vector<CFStringRef> FSEventsService::createExcludedPaths(const std::vector<std::string> &excludedPaths) const {
+  std::vector<CFStringRef> excludedPathRefs;
+  for (const std::string &excludedPath : excludedPaths) {
+    std::string eventPath = toEventPath(excludedPath);
+    CFStringRef excludedPathRef = CFStringCreateWithCString(NULL, eventPath.c_str(), kCFStringEncodingUTF8);
+    if (excludedPathRef != NULL) {
+      excludedPathRefs.push_back(excludedPathRef);
+    }
+  }
+  return excludedPathRefs;
+}
+
+void FSEventsService::releaseExcludedPaths(const std::vector<CFStringRef> &excludedPaths) {
+  for (CFStringRef excludedPath : excludedPaths) {
+    CFRelease(excludedPath);
   }
 }
 
@@ -74,12 +123,16 @@ void FSEventsServiceCallback(
 
 bool FSEventsService::isExcluded(std::string filePath) {
   uint32_t location = filePath.find_last_of("/");
-  std::string directory = (location == 0) ? "" : filePath.substr(0, location);
+  // The directory of /file is /, as in splitFilePath, so that excluding a watched / covers its direct children.
+  std::string directory = (location == 0) ? "/" : filePath.substr(0, location);
   CFStringRef fileDirectory = CFStringCreateWithCString(
     NULL,
     directory.c_str(),
     kCFStringEncodingUTF8
   );
+  if (fileDirectory == NULL) {
+    return false;
+  }
   CFIndex lenDirectory = CFStringGetLength(fileDirectory);
   CFStringCompareFlags flags;
   if (!mCaseSensitive) {
@@ -87,15 +140,31 @@ bool FSEventsService::isExcluded(std::string filePath) {
   } else {
     flags = kCFCompareLocalized;
   }
-  for (CFStringRef excludedPath : mExcludedPaths) {
-    CFIndex lenExclude = CFStringGetLength(excludedPath);
-    if (lenDirectory >= lenExclude) {
-      if (CFStringCompareWithOptions(fileDirectory, excludedPath, CFRangeMake(0, lenExclude), flags) == kCFCompareEqualTo) {
-        return true;
+  bool excluded = false;
+  {
+    std::lock_guard<std::mutex> lock(mExcludedPathsLock);
+    for (CFStringRef excludedPath : mExcludedPaths) {
+      CFIndex lenExclude = CFStringGetLength(excludedPath);
+      if (
+        lenExclude == 0 ||
+        lenDirectory < lenExclude ||
+        CFStringCompareWithOptions(fileDirectory, excludedPath, CFRangeMake(0, lenExclude), flags) != kCFCompareEqualTo
+      ) {
+        continue;
+      }
+      // Only whole path components match: excluding /a/foo must not exclude /a/foobar.
+      if (
+        lenDirectory == lenExclude ||
+        CFStringGetCharacterAtIndex(excludedPath, lenExclude - 1) == '/' ||
+        CFStringGetCharacterAtIndex(fileDirectory, lenExclude) == '/'
+      ) {
+        excluded = true;
+        break;
       }
     }
   }
-  return false;
+  CFRelease(fileDirectory);
+  return excluded;
 }
 
 void FSEventsService::create(std::string path) {
@@ -201,13 +270,11 @@ void FSEventsService::splitFilePath(std::string &directory, std::string &name, c
 }
 
 void FSEventsService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
-  mExcludedPaths.clear();
-  for (const std::string &path : excludedPaths) {
-    CFStringRef pathRef = CFStringCreateWithCString(
-      NULL,
-      path.c_str(),
-      kCFStringEncodingUTF8
-    );
-    mExcludedPaths.push_back(pathRef);
+  std::vector<CFStringRef> excludedPathRefs = createExcludedPaths(excludedPaths);
+  {
+    std::lock_guard<std::mutex> lock(mExcludedPathsLock);
+    mExcludedPaths.swap(excludedPathRefs);
   }
+  // Now holds the previous list, which the run loop thread can no longer reach.
+  releaseExcludedPaths(excludedPathRefs);
 }

@@ -21,8 +21,14 @@ declare module 'nsfw' {
             start: () => Promise<void>;
             /** Returns a Promise that resolves when NSFW object has halted. */
             stop: () => Promise<void>;
-            /** Returns a Promise that resolves when NSFW object has updated the excluded ppaths. */
-            updateExcludedPaths: (excludedPaths: [string]) => Promise<void>;
+            /** Returns a Promise that resolves with the excluded paths: absolute paths inside the watched path. */
+            getExcludedPaths: () => Promise<string[]>;
+            /**
+             * Replaces the excluded paths. Rejects unless every path is absolute, and ignores the ones outside the watched
+             * path; resolves with the paths this call set, without those and without trailing separators, even if a
+             * later call has replaced them.
+             */
+            updateExcludedPaths: (excludedPaths: string[]) => Promise<string[]>;
         }
 
         export const enum ActionType {
@@ -64,8 +70,8 @@ declare module 'nsfw' {
             debounceMS?: number;
             /** callback to fire in the case of errors */
             errorCallback?: (err: any) => void;
-            /** paths to be excluded */
-            excludedPaths?: [string];
+            /** absolute paths inside the watched path to be excluded; the ones outside it are ignored */
+            excludedPaths?: string[];
         }
     }
 

@@ -31,10 +31,11 @@ So why NSFW? Because it has a consistent and minimal footprint in the Javascript
 
 ```js
 var nsfw = require('nsfw');
+var path = require('path');
 
 var watcher1;
 return nsfw(
-  'dir1',
+  '/home/nsfw/dir1',
   function(events) {
     // handle events
   })
@@ -50,9 +51,10 @@ return nsfw(
   });
 
 // With options
+var dir2 = '/home/nsfw/dir2';
 var watcher2;
 return nsfw(
-  'dir2',
+  dir2,
   function(events) {
   // handles other events
   },
@@ -61,7 +63,7 @@ return nsfw(
     errorCallback(errors) {
       //handle errors
     },
-    excludedPaths: ['dir2/node_modules']
+    excludedPaths: [path.join(dir2, 'node_modules')]
   })
   .then(function(watcher) {
     watcher2 = watcher;
@@ -71,7 +73,7 @@ return nsfw(
     // we are now watching dir2 for events!
 
     // we can update excludedPaths array
-    return watcher2.updateExcludedPaths(['dir2/node_modules', '.git']);
+    return watcher2.updateExcludedPaths([path.join(dir2, 'node_modules'), path.join(dir2, '.git')]);
   })
   .then(function() {
     // To stop watching
@@ -91,8 +93,12 @@ in which case another `start()` rejects as already running. `stop()` on an alrea
 For directory watchers, `start()`, `stop()`, `pause()` and `resume()` run in call order.
 Thus `stop(); start()` restarts the watcher even when `stop()` is not awaited.
 Each operation still returns a promise that should be handled for errors.
-- excludedPaths: array with the absolute paths we want to exclude watching.
-You can update the excludedPaths array without restarting the service using the `updateExcludedPaths` function
+- excludedPaths: array with the absolute paths we want to exclude watching. A relative one makes the promise `nsfw()`
+returns reject; the ones outside the watched path are ignored. Paths match on whole path components: excluding
+`/home/nsfw/dir2/build` does not exclude `/home/nsfw/dir2/build-tools`. Trailing separators are dropped.
+You can update the excludedPaths array without restarting the service using the `updateExcludedPaths` function, which
+handles the paths the same way and resolves with the paths that call set, without the ignored ones.
+`getExcludedPaths` resolves with the current ones.
 
 ## Callback Argument
 

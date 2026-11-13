@@ -227,6 +227,62 @@ async function updateExcludedPathsBeforeStart() {
   await watch.stop();
 }
 
+// Many busy watchers whose excluded paths change while events flow: each platform watcher reads the list (and on
+// Linux changes its watch tree) on its own thread while updateExcludedPaths replaces it from a worker thread.
+async function updateExcludedPathsUnderLoad() {
+  const excludedDirs = [];
+  for (let i = 0; i < 20; i++) {
+    excludedDirs.push(path.join(watchDir, `excluded${i}`));
+    await fse.mkdirp(path.join(watchDir, `excluded${i}`, 'nested'));
+  }
+
+  const watches = [];
+  for (let i = 0; i < 40; i++) {
+    const watch = await nsfw(watchDir, () => {}, { debounceMS: 1 });
+    await watch.start();
+    watches.push(watch);
+  }
+
+  let writing = true;
+  let writes = 0;
+  const writer = (async () => {
+    for (let i = 0; writing; i++) {
+      const dir = path.join(excludedDirs[i % excludedDirs.length], 'nested', `dir${i % 5}`);
+      try {
+        await fse.mkdirp(dir);
+        await fse.writeFile(path.join(dir, 'file'), String(i));
+        await fse.writeFile(path.join(watchDir, `file${i % 20}`), String(i));
+        await fse.remove(dir);
+        writes++;
+      } catch (error) {
+        // Only here to keep the watchers busy: a transient failure (EBUSY or EPERM on Windows while something else
+        // holds a file) must not end the child as an unhandled rejection before `await writer`.
+      }
+    }
+  })();
+
+  let excluded = [];
+  const deadline = Date.now() + 5000;
+  for (let i = 0; Date.now() < deadline; i++) {
+    // Lists of changing length, so the native vectors also reallocate.
+    excluded = i % 2 === 0 ? [] : excludedDirs.slice(i % excludedDirs.length);
+    await Promise.all(watches.map(watch => watch.updateExcludedPaths(excluded)));
+  }
+  writing = false;
+  await writer;
+  if (writes === 0) {
+    throw new Error('the writer never kept the watchers busy');
+  }
+
+  for (const watch of watches) {
+    const stored = await watch.getExcludedPaths();
+    if (JSON.stringify(stored) !== JSON.stringify(excluded)) {
+      throw new Error(`excluded paths not kept: ${JSON.stringify(stored)}`);
+    }
+    await watch.stop();
+  }
+}
+
 // Many busy watchers in a worker that is terminated while they run: the poll threads must be gone before the
 // environment destroys the callbacks they use.
 async function terminateBusyWorkers() {
@@ -275,6 +331,7 @@ const scenarios = {
   'error': errorWithoutStop,
   'collect-callbacks': collectCallbacks,
   'update-before-start': updateExcludedPathsBeforeStart,
+  'update-excluded-under-load': updateExcludedPathsUnderLoad,
   'worker-terminate-busy': terminateBusyWorkers,
   'busy-watchers': startBusyWatchers,
   'worker-error': errorInWorker
@@ -285,5 +342,5 @@ const scenarios = {
 // leaves behind still keeps the child from exiting. A rejection exits with 1, and from a worker it reaches the parent.
 const watchdog = setTimeout(() => {
   throw new Error(`scenario '${mode}' did not settle`);
-}, mode === 'worker-terminate-busy' ? 55000 : 15000);
+}, ['worker-terminate-busy', 'update-excluded-under-load'].includes(mode) ? 55000 : 15000);
 scenarios[mode]().then(() => clearTimeout(watchdog));

@@ -25,6 +25,9 @@ public:
 
   bool isLooping();
 
+  // Holds off event handling while the returned lock lives, so another thread can change the tree the handlers use.
+  std::unique_lock<std::mutex> lockEventHandling();
+
   void work();
 
   ~InotifyEventLoop();

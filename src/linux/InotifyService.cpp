@@ -120,5 +120,7 @@ void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd,
 }
 
 void InotifyService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  // Adds and removes tree nodes, which the event loop thread reads and changes while it handles events.
+  std::unique_lock<std::mutex> lock = mEventLoop->lockEventHandling();
   mTree->updateExcludedPaths(excludedPaths);
 }

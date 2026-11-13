@@ -234,6 +234,10 @@ void Watcher::eventCallback(DWORD errorCode) {
   handleEvents();
 }
 
+static bool isSeparator(wchar_t character) {
+  return character == L'\\' || character == L'/';
+}
+
 bool Watcher::isExcluded(const std::wstring &fileName) {
   std::wstring::size_type found = fileName.rfind('\\');
 
@@ -243,18 +247,31 @@ bool Watcher::isExcluded(const std::wstring &fileName) {
   } else {
     path = mPath + L"\\" + fileName;
   }
+  std::lock_guard<std::mutex> lock(mExcludedPathsMutex);
   for (const std::wstring &excludePath : mExcludedPaths) {
-    if (path.size() >= excludePath.size() &&
+    if (
+      excludePath.empty() ||
+      path.size() < excludePath.size() ||
       CompareStringEx(
-      LOCALE_NAME_SYSTEM_DEFAULT,
-      LINGUISTIC_IGNORECASE,
-      path.data(),
-      excludePath.size(),
-      excludePath.data(),
-      excludePath.size(),
-      NULL,
-      NULL,
-      0) == CSTR_EQUAL) {
+        LOCALE_NAME_SYSTEM_DEFAULT,
+        LINGUISTIC_IGNORECASE,
+        path.data(),
+        static_cast<int>(excludePath.size()),
+        excludePath.data(),
+        static_cast<int>(excludePath.size()),
+        NULL,
+        NULL,
+        0
+      ) != CSTR_EQUAL
+    ) {
+      continue;
+    }
+    // Only whole path components match: excluding C:\w\foo must not exclude C:\w\foobar.
+    if (
+      path.size() == excludePath.size() ||
+      isSeparator(excludePath.back()) ||
+      isSeparator(path[excludePath.size()])
+    ) {
       return true;
     }
   }
@@ -398,5 +415,7 @@ void Watcher::checkWatchedPath() {
 }
 
 void Watcher::updateExcludedPaths(const std::vector<std::wstring> &excludedPaths) {
-  mExcludedPaths = excludedPaths;
+  std::vector<std::wstring> newExcludedPaths(excludedPaths);
+  std::lock_guard<std::mutex> lock(mExcludedPathsMutex);
+  mExcludedPaths.swap(newExcludedPaths);
 }

@@ -68,6 +68,7 @@ void InotifyTree::addNodeReferenceByWD(int wd, InotifyNode *node) {
 }
 
 std::string InotifyTree::getError() {
+  std::lock_guard<std::mutex> lock(mErrorMutex);
   return mError;
 }
 
@@ -86,7 +87,14 @@ const std::vector<std::string>& InotifyTree::getExcludedPaths() const {
 }
 
 bool InotifyTree::hasErrored() {
-  if (mError.empty() && !existWatchedPath()) {
+  {
+    std::lock_guard<std::mutex> lock(mErrorMutex);
+    if (!mError.empty()) return true;
+  }
+
+  bool pathExists = existWatchedPath();
+  std::lock_guard<std::mutex> lock(mErrorMutex);
+  if (mError.empty() && !pathExists) {
     mError = "Service shutdown: root path changed (renamed or deleted)";
   }
   return !mError.empty();
@@ -152,6 +160,7 @@ void InotifyTree::renameDirectory(int fromWd, std::string fromName, int toWd, st
 }
 
 void InotifyTree::setError(std::string error) {
+  std::lock_guard<std::mutex> lock(mErrorMutex);
   mError = error;
 }
 

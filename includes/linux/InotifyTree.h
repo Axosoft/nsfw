@@ -13,6 +13,7 @@
 #include <functional>
 #include <chrono>
 #include <thread>
+#include <mutex>
 
 /**
  * void EmitCreatedEvent(std::string directory, std::string file);
@@ -98,6 +99,7 @@ private:
   bool existWatchedPath();
 
   std::string mError;
+  std::mutex mErrorMutex;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
   std::map<ino_t, InotifyNode *> inodes;

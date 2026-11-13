@@ -38,6 +38,7 @@ paths that used to be forwarded to the watcher are now ignored.
   FSEvents reports events under the real path, which the excluded paths, given under the watched path, never matched.
 - On Linux, `updateExcludedPaths()` works on directories created after `start()`. It looked their parent up instead,
   so it kept watching the excluded directory and could stop watching an unrelated one with the same name.
+- On macOS, excluding a watched `/` also excludes the events of its direct children.
 - `getExcludedPaths()` and `updateExcludedPaths()` work when watching a single file instead of throwing a `TypeError`.
 - Typings: `excludedPaths` is `string[]`, `getExcludedPaths()` is declared and `updateExcludedPaths()` resolves with
   `string[]`.

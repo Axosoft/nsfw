@@ -48,7 +48,15 @@ std::string FSEventsService::toEventPath(const std::string &excludedPath) const 
   bool isUnderWatchedPath =
     excludedPath.compare(0, length, mWatchedPath) == 0 &&
     (excludedPath.size() == length || excludedPath[length] == '/');
-  return isUnderWatchedPath ? mRealPath + excludedPath.substr(length) : excludedPath;
+  if (!isUnderWatchedPath) {
+    return excludedPath;
+  }
+  std::string suffix = excludedPath.substr(length);
+  // A watched path that resolves to / would otherwise give //tmp/x.
+  if (suffix.empty() || mRealPath != "/") {
+    return mRealPath + suffix;
+  }
+  return suffix;
 }
 
 std::vector<CFStringRef> FSEventsService::createExcludedPaths(const std::vector<std::string> &excludedPaths) const {
@@ -115,7 +123,8 @@ void FSEventsServiceCallback(
 
 bool FSEventsService::isExcluded(std::string filePath) {
   uint32_t location = filePath.find_last_of("/");
-  std::string directory = (location == 0) ? "" : filePath.substr(0, location);
+  // The directory of /file is /, as in splitFilePath, so that excluding a watched / covers its direct children.
+  std::string directory = (location == 0) ? "/" : filePath.substr(0, location);
   CFStringRef fileDirectory = CFStringCreateWithCString(
     NULL,
     directory.c_str(),

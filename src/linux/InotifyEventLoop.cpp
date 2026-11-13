@@ -23,6 +23,10 @@ bool InotifyEventLoop::isLooping() {
   return mStarted;
 }
 
+std::unique_lock<std::mutex> InotifyEventLoop::lockEventHandling() {
+  return std::unique_lock<std::mutex>(mMutex);
+}
+
 void InotifyEventLoop::work() {
   char buffer[BUFFER_SIZE];
   inotify_event *event = NULL;

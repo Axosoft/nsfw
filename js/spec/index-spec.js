@@ -862,284 +862,149 @@ describe('Node Sentinel File Watcher', function() {
   });
 
   describe('Excluded paths', function() {
-    it('can ignore events from excluded paths', async function () {
-      const inPath = path.join(workDir, 'test4');
-      const excludedPath = path.join(inPath, 'excluded');
-      await fse.mkdir(excludedPath);
-      const file = 'excluded.file';
-      const filePath = path.join(excludedPath, file);
-      const TIMEOUT = 300;
+    const debounceMS = 100;
+    const eventTimeoutMS = 10000;
+    const absenceWindowMS = 500;
 
-      let changeEvents = 0;
-      let createEvents = 0;
-      let deleteEvents = 0;
+    function recordEvents() {
+      const events = [];
+      const listeners = new Set();
 
-      function findEvents(element) {
-        if (
-          element.action === nsfw.actions.MODIFIED
-        ) {
-          changeEvents++;
-        } else if (
-          element.action === nsfw.actions.CREATED
-        ) {
-          createEvents++;
-        } else if (
-          element.action === nsfw.actions.DELETED
-        ) {
-          deleteEvents++;
-        }
-      }
-
-      await sleep(TIMEOUT);
-      let watch = await nsfw(
-        inPath,
-        events => events.forEach(findEvents),
-        {
-          debounceMS: 100,
-          excludedPaths: [excludedPath]
-        }
-      );
-
-      try {
-        await watch.start();
-        await sleep(TIMEOUT);
-        await fse.writeFile(filePath, 'Excluded.');
-        await sleep(TIMEOUT);
-        await fse.remove(filePath);
-        await sleep(TIMEOUT);
-        await fse.writeFile(filePath, 'Excluded.');
-        await sleep(TIMEOUT);
-        await fse.appendFile(filePath, 'Append');
-        await sleep(TIMEOUT);
-        // A delete event will be captured
-        await fse.remove(path.join(inPath, 'testing4.file'));
-        await sleep(TIMEOUT);
-
-        assert.equal(changeEvents, 0);
-        assert.equal(createEvents, 0);
-        assert.equal(deleteEvents, 1);
-      } finally {
-        await watch.stop();
-        watch = null;
-      }
-
-    });
-
-    it('can remove an excluded path', async function () {
-      const T1Path = path.join(workDir, 'T1');
-      await fse.mkdir(T1Path);
-      const T2Path = path.join(T1Path, 'T2');
-      await fse.mkdir(T2Path);
-      const T3Path = path.join(T2Path, 'T3');
-      await fse.mkdir(T3Path);
-
-      const newFile = 'newfile.file';
-      const newFilePath = path.join(T2Path, newFile);
-
-      let changeEvents = 0;
-      let createEvents = 0;
-      let deleteEvents = 0;
-
-      function findEvents(element) {
-        if (
-          element.action === nsfw.actions.MODIFIED && element.file === newFile
-        ) {
-          changeEvents++;
-        } else if (
-          element.action === nsfw.actions.CREATED
-        ) {
-          createEvents++;
-        } else if (
-          element.action === nsfw.actions.DELETED
-        ) {
-          deleteEvents++;
-        }
-      }
-
-      const TIMEOUT = 300;
-
-      await sleep(TIMEOUT);
-      let watch = await nsfw(
-        workDir,
-        events => events.forEach(findEvents),
-        {
-          debounceMS: 100,
-          excludedPaths: [T2Path]
-        }
-      );
-
-      try {
-        await watch.start();
-        await sleep(TIMEOUT);
-        await fse.writeFile(newFilePath, 'New file.'); // createEvents should not happend
-        await sleep(TIMEOUT);
-        await sleep(TIMEOUT);
-        await watch.updateExcludedPaths([]);
-        await sleep(TIMEOUT);
-        await fse.appendFile(newFilePath, 'New file.'); // changeEvents should happend
-        await sleep(TIMEOUT);
-        assert.equal(changeEvents, 1);
-        assert.equal(createEvents, 0);
-        assert.equal(deleteEvents, 0);
-      } finally {
-        await watch.stop();
-        watch = null;
-      }
-    });
-
-    it('can add an excluded path', async function () {
-      const T1Path = path.join(workDir, 'T1');
-      await fse.mkdir(T1Path);
-      const T2Path = path.join(T1Path, 'T2');
-      await fse.mkdir(T2Path);
-      const T3Path = path.join(T2Path, 'T3');
-      await fse.mkdir(T3Path);
-
-      const newFile = 'newfile.file';
-      const newFilePath = path.join(T2Path, newFile);
-
-      let changeEvents = 0;
-      let createEvents = 0;
-      let deleteEvents = 0;
-
-      function findEvents(element) {
-        if (element.file === newFile) {
-          if (
-            element.action === nsfw.actions.MODIFIED
-          ) {
-            changeEvents++;
-          } else if (
-            element.action === nsfw.actions.CREATED
-          ) {
-            createEvents++;
-          } else if (
-            element.action === nsfw.actions.DELETED
-          ) {
-            deleteEvents++;
+      return {
+        events,
+        callback(batch) {
+          events.push(...batch);
+          listeners.forEach(listener => listener());
+        },
+        async observe(filePath, action, operation) {
+          const offset = events.length;
+          let listener, timer;
+          const received = new Promise((resolve, reject) => {
+            listener = () => {
+              if (events.slice(offset).some(event =>
+                matches(event, filePath) && (action === undefined || event.action === action))) {
+                resolve();
+              }
+            };
+            listeners.add(listener);
+            timer = setTimeout(() => reject(new Error(
+              `No action ${action} observed for ${filePath}: ${JSON.stringify(events.slice(offset))}`
+            )), eventTimeoutMS);
+          });
+          try {
+            await Promise.all([received, operation()]);
+          } finally {
+            clearTimeout(timer);
+            listeners.delete(listener);
           }
         }
+      };
+    }
+
+    function matches(event, filePath) {
+      return event.directory === path.dirname(filePath) && event.file === path.basename(filePath);
+    }
+
+    async function withWatchers(inPath, excludedPaths, test) {
+      const actual = recordEvents();
+      const control = recordEvents();
+      const watch = await nsfw(inPath, actual.callback, { debounceMS, excludedPaths });
+      const witness = await nsfw(inPath, control.callback, { debounceMS });
+      let marker = 0;
+
+      async function barrier() {
+        const markerPath = path.join(inPath, `barrier-${marker++}.file`);
+        await actual.observe(markerPath, nsfw.actions.CREATED, () => fse.writeFile(markerPath, 'Barrier'));
       }
 
-      const TIMEOUT = 300;
-
-      await sleep(TIMEOUT);
-      let watch = await nsfw(
-        workDir,
-        events => events.forEach(findEvents),
-        {
-          debounceMS: 100,
-          excludedPaths: []
-        }
-      );
+      async function excluded(filePath, action, operation) {
+        const offset = actual.events.length;
+        await control.observe(filePath, action, operation);
+        await barrier();
+        // Absence needs a bounded window even after both watchers have demonstrated progress.
+        await new Promise(resolve => setTimeout(resolve, absenceWindowMS));
+        assert.deepStrictEqual(actual.events.slice(offset).filter(event => matches(event, filePath)), []);
+      }
 
       try {
+        await witness.start();
         await watch.start();
-        await sleep(TIMEOUT);
-        await fse.writeFile(newFilePath, 'New file.'); // createEvents & changeEvents should happend
-        await sleep(TIMEOUT);
-        await watch.updateExcludedPaths([T2Path]);
-        await sleep(TIMEOUT);
-        await fse.appendFile(newFilePath, 'New file.'); // changeEvents should not happend
-        await sleep(TIMEOUT);
-        if (process.platform === 'darwin') {
-          // In osx writeFile only triggers a create event
-          assert.equal(changeEvents, 0);
-        } else {
-          assert.equal(changeEvents, 1);
-        }
-        assert.equal(createEvents, 1);
-        assert.equal(deleteEvents, 0);
+        await barrier();
+        await test({ watch, actual, barrier, excluded });
       } finally {
-        await watch.stop();
-        watch = null;
+        await Promise.all([watch.stop(), witness.stop()]);
       }
-    });
+    }
 
-    it('can modify excluded paths', async function () {
+    async function appendFile(filePath, contents) {
+      await fse.appendFile(filePath, contents);
+      // FSEvents demangles combined flags using birth/mtime seconds, so keep those seconds distinct.
+      await fse.utimes(filePath, new Date(), new Date(Date.now() + 60000));
+    }
+
+    async function exerciseExcludedFile(filePath, excluded) {
+      await excluded(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'Excluded.'));
+      await excluded(filePath, nsfw.actions.DELETED, () => fse.remove(filePath));
+      await excluded(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'Excluded again.'));
+      await excluded(filePath, undefined, () => fse.appendFile(filePath, 'Append'));
+    }
+
+    it('can ignore events from excluded paths', async function() {
       const inPath = path.join(workDir, 'test4');
       const excludedPath = path.join(inPath, 'excluded');
       await fse.mkdir(excludedPath);
-      const file = 'excluded.file';
-      const filePath = path.join(excludedPath, file);
 
-      const newexcludedPath = path.join(inPath, 'newExcluded');
-      await fse.mkdir(newexcludedPath);
-      const newFile = 'excluded.file';
-      const newFilePath = path.join(newexcludedPath, newFile);
+      await withWatchers(inPath, [excludedPath], async ({ actual, excluded }) => {
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+        const includedFile = path.join(inPath, 'testing4.file');
+        await actual.observe(includedFile, nsfw.actions.DELETED, () => fse.remove(includedFile));
+      });
+    });
 
-      const TIMEOUT = 300;
+    it('can remove an excluded path', async function() {
+      const excludedPath = path.join(workDir, 'T1', 'T2');
+      await fse.ensureDir(path.join(excludedPath, 'T3'));
+      const filePath = path.join(excludedPath, 'newfile.file');
 
-      let changeEvents = 0;
-      let createEvents = 0;
-      let deleteEvents = 0;
+      await withWatchers(workDir, [excludedPath], async ({ watch, actual, barrier, excluded }) => {
+        await excluded(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'New file.'));
+        await watch.updateExcludedPaths([]);
+        await actual.observe(filePath, nsfw.actions.MODIFIED, () => appendFile(filePath, 'Now included.'));
+        await barrier();
+        assert.ok(!actual.events.some(event => matches(event, filePath) && event.action === nsfw.actions.CREATED));
+        assert.ok(!actual.events.some(event => matches(event, filePath) && event.action === nsfw.actions.DELETED));
+      });
+    });
 
-      function findEvents(element) {
-        if (
-          element.action === nsfw.actions.MODIFIED
-        ) {
-          changeEvents++;
-        } else if (
-          element.action === nsfw.actions.CREATED
-        ) {
-          createEvents++;
-        } else if (
-          element.action === nsfw.actions.DELETED
-        ) {
-          deleteEvents++;
-        }
-      }
+    it('can add an excluded path', async function() {
+      const excludedPath = path.join(workDir, 'T1', 'T2');
+      await fse.ensureDir(path.join(excludedPath, 'T3'));
+      const filePath = path.join(excludedPath, 'newfile.file');
 
-      await sleep(TIMEOUT);
-      let watch = await nsfw(
-        inPath,
-        events => events.forEach(findEvents),
-        {
-          debounceMS: 100,
-          excludedPaths: [excludedPath]
-        }
-      );
+      await withWatchers(workDir, [], async ({ watch, actual, barrier, excluded }) => {
+        await actual.observe(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'New file.'));
+        await actual.observe(filePath, nsfw.actions.MODIFIED, () => appendFile(filePath, 'Still included.'));
+        await barrier();
+        await watch.updateExcludedPaths([excludedPath]);
+        await excluded(filePath, nsfw.actions.MODIFIED, () => appendFile(filePath, 'Now excluded.'));
+      });
+    });
 
-      try {
-        await watch.start();
-        await sleep(TIMEOUT);
+    it('can modify excluded paths', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'excluded');
+      const newExcludedPath = path.join(inPath, 'newExcluded');
+      await Promise.all([fse.mkdir(excludedPath), fse.mkdir(newExcludedPath)]);
 
-        const paths = await watch.getExcludedPaths();
-        assert.equal(paths.length, 1);
-        assert.equal(paths[0], excludedPath);
-        await watch.updateExcludedPaths([excludedPath, newexcludedPath]);
-        const newpaths = await watch.getExcludedPaths();
-        assert.equal(newpaths.length, 2);
-
-        await fse.writeFile(filePath, 'Excluded.');
-        await sleep(TIMEOUT);
-        await fse.remove(filePath);
-        await sleep(TIMEOUT);
-        await fse.writeFile(filePath, 'Excluded.');
-        await sleep(TIMEOUT);
-        await fse.appendFile(filePath, 'Append');
-        await sleep(TIMEOUT);
-
-        await fse.writeFile(newFilePath, 'New excluded.');
-        await sleep(TIMEOUT);
-        await fse.remove(newFilePath);
-        await sleep(TIMEOUT);
-        await fse.writeFile(newFilePath, 'New excluded.');
-        await sleep(TIMEOUT);
-        await fse.appendFile(newFilePath, 'New append');
-        await sleep(TIMEOUT);
-
-
-        // This delete event will be captured because it is not in the excluded paths
-        await fse.remove(path.join(inPath, 'testing4.file'));
-        await sleep(TIMEOUT);
-
-        assert.equal(changeEvents, 0);
-        assert.equal(createEvents, 0);
-        assert.equal(deleteEvents, 1);
-      } finally {
-        await watch.stop();
-        watch = null;
-      }
+      await withWatchers(inPath, [excludedPath], async ({ watch, actual, excluded }) => {
+        assert.deepStrictEqual(await watch.getExcludedPaths(), [excludedPath]);
+        await watch.updateExcludedPaths([excludedPath, newExcludedPath]);
+        assert.deepStrictEqual(await watch.getExcludedPaths(), [excludedPath, newExcludedPath]);
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+        await exerciseExcludedFile(path.join(newExcludedPath, 'excluded.file'), excluded);
+        const includedFile = path.join(inPath, 'testing4.file');
+        await actual.observe(includedFile, nsfw.actions.DELETED, () => fse.remove(includedFile));
+      });
     });
   });
 

@@ -30,8 +30,15 @@ paths that used to be forwarded to the watcher are now ignored.
 - All trailing separators of excluded paths are dropped (`\` too on Windows), not just one `/`; roots are kept.
 - Typings: code that silenced the old `[string]` type of `excludedPaths` with `// @ts-expect-error` now fails with
   "Unused '@ts-expect-error' directive"; drop the directive.
+- `node-addon-api` is bounded to `^8.0.0` instead of `*`, and `engines.node` is `^18 || ^20 || >=21`, the versions
+  `node-addon-api` 8 supports, instead of `>=10.16.0`.
+- On macOS the addon is compiled as `gnu++17` with the deployment target of the Node or Electron headers it is built
+  against (macOS 11.0 for Node 22, 13.5 for Node 24 and 26) instead of C++11 and macOS 10.7. Linux and Windows keep
+  using the standard of the headers, C++17 or newer.
 
 ### Fixed
+- A fresh `npm install nsfw` compiles again (#212). `node-addon-api` 8.9.2 headers need C++17, but the build forced
+  C++11 on macOS.
 - Excluding a directory no longer excludes siblings whose name starts with it (`/a/foo` excluded `/a/foobar`) on
   macOS and Windows.
 - `updateExcludedPaths()` no longer races with the watcher threads that read the excluded paths on macOS, Windows and

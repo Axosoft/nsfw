@@ -50,10 +50,18 @@ jobs:
           check-latest: true
 
       - name: Run tests
+        id: tests
         run: |
           npm install --global yarn
           yarn install --frozen-lockfile
           yarn test
+
+      # Installs the packed package into an empty project without a lockfile, as `npm install nsfw` does, so
+      # dependency ranges resolve to their newest versions instead of the ones yarn.lock pins above. Runs even when
+      # the tests failed, so both results show. One container per arch is enough: the result doesn't depend on it.
+      - name: Install the packed package and watch a directory
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && matrix.container == 'ubuntu:latest' }}
+        run: node js/scripts/fresh-install-test.js
 
   macos-tests:
     name: "MacOS Tests (Node ${{ matrix.node }})"
@@ -73,10 +81,16 @@ jobs:
           check-latest: true
 
       - name: Run tests
+        id: tests
         run: |
           npm install --global yarn
           yarn install --frozen-lockfile
           yarn test
+
+      # Same as in linux-tests.
+      - name: Install the packed package and watch a directory
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: node js/scripts/fresh-install-test.js
 
   windows-tests:
     name: "Windows Tests (Node ${{ matrix.node }})"
@@ -103,10 +117,16 @@ jobs:
           "npm_config_node_gyp=$(npm prefix -g)\node_modules\node-gyp\bin\node-gyp.js" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Run tests
+        id: tests
         run: |
           npm install --global yarn
           yarn install --frozen-lockfile
           yarn test
+
+      # Same as in linux-tests.
+      - name: Install the packed package and watch a directory
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: node js/scripts/fresh-install-test.js
 
   # Single stable check for branch protection, so matrix changes don't require
   # editing the required status checks.

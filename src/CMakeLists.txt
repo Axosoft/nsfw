@@ -29,7 +29,8 @@ if (UNIX)
     endif(APPLE)
 endif (UNIX)
 
-set (CMAKE_CXX_STANDARD 11)
+set (CMAKE_CXX_STANDARD 17)
+set (CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(nsfw STATIC ${NSFW_LIBRARY_SOURCES})
 target_include_directories(nsfw PUBLIC ${NSFW_INCLUDE_DIR})

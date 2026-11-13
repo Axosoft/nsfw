@@ -18,7 +18,6 @@
         "xcode_settings": {
             "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
             "CLANG_CXX_LIBRARY": "libc++",
-            "MACOSX_DEPLOYMENT_TARGET": "10.7",
         },
         "msvs_settings": {
             "VCCLCompilerTool": { "ExceptionHandling": 1 },
@@ -46,11 +45,10 @@
                 ],
                 "xcode_settings": {
                     "GCC_SYMBOLS_PRIVATE_EXTERN": "YES", # -fvisibility=hidden
-                    "MACOSX_DEPLOYMENT_TARGET": "10.7",
-                    "OTHER_CFLAGS": [
-                        "-std=c++11",
-                        "-stdlib=libc++"
-                    ],
+                    # Pinned because common.gypi only sets it when clang==1, and with --nodedir or --dist-url node-gyp
+                    # reads clang from the headers' config.gypi (0 for Node 22 and 24), so the same Node built as
+                    # gnu++20 or as Apple clang's C++14 default depending on the install route. napi.h needs C++17.
+                    "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17", # -std=gnu++17
                 },
                 "link_settings": {
                     "xcode_settings": {
@@ -73,8 +71,7 @@
                     "src/linux/InotifyService.cpp"
                 ],
                 "cflags": [
-                    "-Wno-unknown-pragmas",
-                    "-std=c++11"
+                    "-Wno-unknown-pragmas"
                 ]
             }],
             ["OS=='win'", {

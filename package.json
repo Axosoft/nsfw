@@ -19,7 +19,7 @@
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
   },
   "engines": {
-    "node": ">=10.16.0"
+    "node": "^18 || ^20 || >=21"
   },
   "files": [
     "index.d.ts",
@@ -30,7 +30,7 @@
   ],
   "homepage": "https://github.com/axosoft/node-simple-file-watcher",
   "dependencies": {
-    "node-addon-api": "*"
+    "node-addon-api": "^8.0.0"
   },
   "devDependencies": {
     "eslint": "8.x",

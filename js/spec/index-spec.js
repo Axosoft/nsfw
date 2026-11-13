@@ -1041,6 +1041,27 @@ describe('Node Sentinel File Watcher', function() {
       });
     });
 
+    it('excludes paths that are only inside the watched path once `.` and `..` are resolved', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'excluded');
+      await fse.mkdir(excludedPath);
+      // Raw, since path.join would collapse them.
+      const unresolvedPath = [workDir, 'test5', '..', 'test4', '.', 'excluded'].join(path.sep);
+      const unresolvedOther = [inPath, 'excluded', '..', 'other'].join(path.sep);
+      const otherPath = path.join(inPath, 'other');
+      await fse.mkdir(otherPath);
+
+      await withWatchers(inPath, [unresolvedPath], async ({ watch, actual, excluded }) => {
+        assert.deepStrictEqual(await watch.getExcludedPaths(), [excludedPath]);
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+
+        assert.deepStrictEqual(await watch.updateExcludedPaths([unresolvedOther]), [otherPath]);
+        await exerciseExcludedFile(path.join(otherPath, 'other.file'), excluded);
+        const includedFile = path.join(excludedPath, 'included.file');
+        await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included.'));
+      });
+    });
+
     it('excludes paths under a watched path that goes through a symlink', async function() {
       if (process.platform === 'win32') {
         // Creating a symlink needs extra privileges on Windows.
@@ -1127,15 +1148,17 @@ describe('Node Sentinel File Watcher', function() {
       assert.deepEqual(await watch.getExcludedPaths(), []);
 
       const validPaths = [inPath, validPath, path.join(inPath, '..excluded')];
+      const effectivePaths = [...validPaths];
       if (process.platform === 'win32') {
-        // The native watcher adds this prefix to every path, so either form counts as inside.
+        // Either form counts as inside, and it is kept spelled like the watched path.
         validPaths.push(path.toNamespacedPath(validPath));
+        effectivePaths.push(validPath);
       }
       const mixedPaths = [outsidePaths[0], ...validPaths, outsidePaths[1]];
-      assert.deepEqual(await watch.updateExcludedPaths(mixedPaths), validPaths);
-      assert.deepEqual(await watch.getExcludedPaths(), validPaths);
+      assert.deepEqual(await watch.updateExcludedPaths(mixedPaths), effectivePaths);
+      assert.deepEqual(await watch.getExcludedPaths(), effectivePaths);
       const constructed = await nsfw(inPath, () => {}, { excludedPaths: mixedPaths });
-      assert.deepEqual(await constructed.getExcludedPaths(), validPaths);
+      assert.deepEqual(await constructed.getExcludedPaths(), effectivePaths);
     });
 
     it('keeps reporting events when the excluded paths are outside the watched directory', async function() {

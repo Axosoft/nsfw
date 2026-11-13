@@ -20,20 +20,35 @@ function validateExcludedPaths(excludedPaths) {
   }
 }
 
-// Whether excludedPath is watchPath or inside it. path.relative compares whole path components (so /a/foobar is not
-// inside /a/foo) and handles win32 case-insensitivity, mixed separators and other drives. Comparing the namespaced
-// forms also counts a `\\?\` path on one side and a plain one on the other as inside on win32, which the native
-// watcher handles by adding that prefix to every path.
-function isInsideWatchPath(watchPath, excludedPath) {
+// Rewrites excludedPath as watchPath without trailing separators followed by the normalized part below it, or returns
+// null when excludedPath is outside watchPath. The native watchers match that spelling: Linux builds its tree from
+// watchPath as given and macOS moves paths under it onto its real path, so a path that is only inside after resolving
+// `.` or `..` (/a/b/../w/x when watching /a/w) would otherwise be kept and never match.
+// path.relative compares whole path components (so /a/foobar is not inside /a/foo) and handles win32
+// case-insensitivity, mixed separators and other drives. Comparing the namespaced forms also counts a `\\?\` path on
+// one side and a plain one on the other as inside on win32.
+function rebaseOnWatchPath(watchPath, excludedPath) {
   const relativePath = path.relative(path.toNamespacedPath(watchPath), path.toNamespacedPath(excludedPath));
-  return relativePath !== '..' && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath);
+  if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    return null;
+  }
+  const base = normalizeExcludedPath(watchPath);
+  if (relativePath === '') {
+    return base;
+  }
+  // Only a root keeps its trailing separator.
+  const endsWithSeparator = base.endsWith('/') || (isWin32 && base.endsWith('\\'));
+  return endsWithSeparator ? base + relativePath : base + path.sep + relativePath;
 }
 
-// Validates excludedPaths and drops the ones outside watchPath, which cannot exclude anything. It is done here and not
-// in the native watchers, where an ancestor of watchPath would match every event on macOS and Windows.
+// Validates excludedPaths, drops the ones outside watchPath, which cannot exclude anything, and rebases the rest on
+// watchPath. The filter is here and not in the native watchers, where an ancestor of watchPath would match every
+// event on macOS and Windows.
 function effectiveExcludedPaths(watchPath, excludedPaths) {
   validateExcludedPaths(excludedPaths);
-  return excludedPaths.filter(excludedPath => isInsideWatchPath(watchPath, excludedPath));
+  return excludedPaths
+    .map(excludedPath => rebaseOnWatchPath(watchPath, excludedPath))
+    .filter(excludedPath => excludedPath !== null);
 }
 
 // Mirrors normalizeExcludedPath in src/NSFW.cpp: drops trailing separators, but a root keeps its own.

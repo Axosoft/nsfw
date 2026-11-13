@@ -40,8 +40,12 @@ const nsfw = require('nsfw');
     **updateExcludedPaths()** reject.
   - Paths outside the watched path are ignored: they are left out of the list the watcher uses and of what
     **getExcludedPaths()** and **updateExcludedPaths()** resolve with. The check is case-insensitive on Windows only,
-    and there the `\\?\` form of a path counts as the same path; Windows does not normalize that form, so give it
-    without `.`, `..` or `/`.
+    and there the `\\?\` form of a path counts as the same path.
+  - Paths inside are rewritten as the watched path as it was passed, without trailing separators, followed by the
+    rest with `.`, `..` and repeated separators resolved and joined with the platform separator: watching
+    `/home/me/project`, `/home/me/other/../project/build` is stored as `/home/me/project/build`. On Linux and Windows,
+    pass the watched path without trailing separators if you exclude paths: the native watchers build event paths
+    from it as given (#210, #211).
   - Give excluded paths under the watched path as it was passed, also when it goes through a symlink: the check is
     lexical, so a path under the real path is ignored, and on macOS the watcher moves them onto the watched path's
     real path, where FSEvents reports events. Symlinks inside the excluded part of a path are not resolved.

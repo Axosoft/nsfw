@@ -18,11 +18,14 @@ paths that used to be forwarded to the watcher are now ignored.
   - Whether a path is inside is decided lexically, and on Linux and macOS case-sensitively: a differently cased path,
     or one under the real path of a watched path that goes through a symlink (`/private/tmp/w/build` when watching
     `/tmp/w`), is ignored, also on update, where it used to be forwarded and took effect on macOS. On Windows the check
-    is case-insensitive and the `\\?\` form of a path counts as the same path as its plain form (it must already be
-    normalized).
+    is case-insensitive and the `\\?\` form of a path counts as the same path as its plain form.
+  - Paths inside the watched path are rewritten as the watched path as it was passed, without trailing separators,
+    followed by the rest with `.`, `..` and repeated separators resolved and joined with the platform separator, and
+    that is what the watcher uses and what `getExcludedPaths()` and `updateExcludedPaths()` resolve with. Before, a path such as `/a/b/../w/x` when watching `/a/w` was forwarded
+    as is and never matched.
 - Non-array `excludedPaths`, or non-string elements, reject with a `TypeError`; `updateExcludedPaths()` now rejects
   instead of throwing synchronously.
-- `updateExcludedPaths()` resolves with the paths that call set, without the ignored ones and trailing separators;
+- `updateExcludedPaths()` resolves with the paths that call set, without the ignored ones and rewritten as above;
   before it resolved with whatever the latest call had set.
 - All trailing separators of excluded paths are dropped (`\` too on Windows), not just one `/`; roots are kept.
 - Typings: code that silenced the old `[string]` type of `excludedPaths` with `// @ts-expect-error` now fails with

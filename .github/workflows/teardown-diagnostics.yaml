@@ -1,0 +1,54 @@
+name: macOS worker teardown diagnostics
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/teardown-diagnostics.yaml'
+      - 'js/scripts/teardown-diagnostics*.js'
+      - 'js/spec/lifecycle-child.js'
+      - 'src/**'
+      - 'includes/**'
+      - 'binding.gyp'
+      - 'yarn.lock'
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: 'Number of child runs (1-200; stops at first failure)'
+        default: '30'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  teardown:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        timeout-minutes: 2
+      - uses: actions/setup-node@v7
+        timeout-minutes: 2
+        with:
+          node-version: '26.13.1'
+      - name: Install and build
+        timeout-minutes: 5
+        run: |
+          npm install --global yarn
+          yarn install --frozen-lockfile
+      - name: Check diagnostic capture
+        timeout-minutes: 2
+        run: node --test js/scripts/teardown-diagnostics-test.js
+      - name: Repeat busy worker teardown
+        timeout-minutes: 15
+        env:
+          REPETITIONS: ${{ inputs.repetitions || '30' }}
+        run: node js/scripts/teardown-diagnostics.js "$REPETITIONS"
+      - name: Upload diagnostic evidence
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-worker-teardown-${{ github.run_id }}-${{ github.run_attempt }}
+          path: teardown-diagnostics/
+          if-no-files-found: warn

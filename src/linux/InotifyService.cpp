@@ -70,7 +70,7 @@ void InotifyService::dispatch(EventType action, int wd, std::string name) {
     return;
   }
 
-  mQueue->enqueue(action, path, name);
+  if (!mTree->isRootExcluded()) mQueue->enqueue(action, path, name);
 }
 
 void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName) {
@@ -79,7 +79,7 @@ void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, 
     return;
   }
 
-  mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName);
+  if (!mTree->isRootExcluded()) mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName);
 }
 
 std::string InotifyService::getError() {
@@ -125,7 +125,7 @@ void InotifyService::createDirectory(int wd, std::string name) {
 
   dispatch(CREATED, wd, name);
   mTree->addDirectory(wd, name, [this](std::string directory, std::string file) {
-    mQueue->enqueue(CREATED, directory, file);
+    if (!mTree->isRootExcluded()) mQueue->enqueue(CREATED, directory, file);
   });
 }
 

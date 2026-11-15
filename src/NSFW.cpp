@@ -124,28 +124,6 @@ void NSFW::Run::poll() {
   mEventCallback.Release();
 }
 
-// The platform watchers match excluded paths as prefixes of event paths, which carry no trailing separator, so a
-// trailing one would keep files directly inside an excluded directory from matching. A backslash is only a separator
-// on Windows (on POSIX it is a filename character), and a root keeps its separator: "C:" alone is drive-relative.
-static std::string normalizeExcludedPath(std::string path) {
-  while (path.size() > 1) {
-    char last = path.back();
-#ifdef _WIN32
-    bool isSeparator = last == '/' || last == '\\';
-    bool isDriveRoot = path[path.size() - 2] == ':';
-    if (!isSeparator || isDriveRoot) {
-      break;
-    }
-#else
-    if (last != '/') {
-      break;
-    }
-#endif
-    path.pop_back();
-  }
-  return path;
-}
-
 static std::vector<std::string> toExcludedPaths(Napi::Env env, Napi::Array paths, const char *notStringError) {
   std::vector<std::string> excludedPaths;
   for (uint32_t i = 0; i < paths.Length(); i++) {
@@ -153,7 +131,7 @@ static std::vector<std::string> toExcludedPaths(Napi::Env env, Napi::Array paths
     if (!path.IsString()) {
       throw Napi::TypeError::New(env, notStringError);
     }
-    excludedPaths.push_back(normalizeExcludedPath(path.ToString().Utf8Value()));
+    excludedPaths.push_back(path.ToString().Utf8Value());
   }
   return excludedPaths;
 }

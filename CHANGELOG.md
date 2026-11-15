@@ -16,18 +16,28 @@ stops with an error instead of losing events silently.
     (`/a/foo-bar` when watching `/a/foo`) or `/a/foo/../bar`, while `nsfw()` on Windows and `updateExcludedPaths()`
     forwarded them all. A forwarded ancestor of the watched path excluded every event on macOS and Windows; it is
     now ignored too.
-  - Whether a path is inside is decided lexically, and on Linux and macOS case-sensitively: a differently cased path,
-    or one under the real path of a watched path that goes through a symlink (`/private/tmp/w/build` when watching
-    `/tmp/w`), is ignored, also on update, where it used to be forwarded and took effect on macOS. On Windows the check
-    is case-insensitive and the `\\?\` form of a path counts as the same path as its plain form.
-  - Paths inside the watched path are rewritten as the watched path as it was passed, without trailing separators,
-    followed by the rest with `.`, `..` and repeated separators resolved and joined with the platform separator, and
-    that is what the watcher uses and what `getExcludedPaths()` and `updateExcludedPaths()` resolve with. Before, a path such as `/a/b/../w/x` when watching `/a/w` was forwarded
-    as is and never matched.
+  - Linux and macOS resolve the watched root with filesystem realpath once at construction, preserving physical
+    `symlink/..` semantics. Exclusions under that root or an alias pointing there share one canonical form. Windows
+    uses absolute namespaced paths. Returned exclusions use that canonical root; future children are supported and
+    names below the root remain lexical. macOS containment follows the volume's case sensitivity. `..` in an
+    exclusion is resolved by the filesystem, so `symlink/..` keeps its physical meaning: watching `/a/w`,
+    `/a/link/../w/x` and `/a/w/link/..` are ignored when `link` points into another directory. The complete prefix through the last `..` must exist and be traversable; missing components are no longer
+    cancelled by `..`. Plain future children without `..` remain supported. A path the filesystem cannot look up as spelled, for example through a
+    directory that cannot be searched or through more symlinks than one lookup follows, is ignored. A watched path that the filesystem cannot look up, or whose target
+    changes while it is resolved, makes `nsfw()` reject.
+  - Native watchers receive the same canonical paths used by JS containment. Repeated separators, dot segments,
+    trailing separators and symlinked watch roots no longer cause mismatched exclusions. Event directories retain
+    caller spelling on Linux and Windows; macOS continues reporting realpaths. A watched symlink is bound to its
+    original target across updates and restarts.
+  - Excluding the watched root suppresses every event consistently, including on Linux and for single-file pollers.
+    Removing that exclusion resumes reporting. Previously Linux ignored root exclusions and file pollers only stored
+    them. Directory events for excluded descendants themselves may still be reported.
 - Non-array `excludedPaths`, or non-string elements, reject with a `TypeError`; `updateExcludedPaths()` now rejects
   instead of throwing synchronously.
 - `updateExcludedPaths()` resolves with the paths that call set, without the ignored ones and rewritten as above;
   before it resolved with whatever the latest call had set.
+- Calls made while an `updateExcludedPaths()` is still resolving its paths on disk reach the watcher after it, in call
+  order, instead of running with the previous excluded paths.
 - All trailing separators of excluded paths are dropped (`\` too on Windows), not just one `/`; roots are kept.
 - Typings: code that silenced the old `[string]` type of `excludedPaths` with `// @ts-expect-error` now fails with
   "Unused '@ts-expect-error' directive"; drop the directive.

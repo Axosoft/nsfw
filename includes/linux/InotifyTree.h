@@ -31,6 +31,7 @@ public:
   bool hasErrored();
   bool isRootAlive();
   bool nodeExists(int wd);
+  bool isRootExcluded() const;
   void removeDirectory(int wd);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
   void setError(const std::string &error);
@@ -112,6 +113,7 @@ private:
   // Read by the poll thread through isRootAlive() while the event loop thread clears it in removeDirectory().
   std::atomic<InotifyNode *> mRoot;
   std::vector<std::string> mExcludedPaths;
+  bool mRootExcluded;
   std::string mWatchedPath;
 
   friend class InotifyNode;

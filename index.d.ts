@@ -21,12 +21,15 @@ declare module 'nsfw' {
             start: () => Promise<void>;
             /** Returns a Promise that resolves when NSFW object has halted. */
             stop: () => Promise<void>;
-            /** Returns a Promise that resolves with the excluded paths: absolute paths inside the watched path. */
+            /**
+             * Returns a Promise that resolves with the excluded paths: absolute paths inside the watched path, spelled
+             * under its canonical form (its real path on Linux and macOS, its `\\?\` form on Windows).
+             */
             getExcludedPaths: () => Promise<string[]>;
             /**
              * Replaces the excluded paths. Rejects unless every path is absolute, and ignores the ones outside the watched
-             * path; resolves with the paths this call set, without those and without trailing separators, even if a
-             * later call has replaced them.
+             * path; resolves with the paths this call set, without those and without trailing separators, spelled
+             * like the ones getExcludedPaths() returns, even if a later call has replaced them.
              */
             updateExcludedPaths: (excludedPaths: string[]) => Promise<string[]>;
         }

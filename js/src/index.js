@@ -20,79 +20,165 @@ function validateExcludedPaths(excludedPaths) {
   }
 }
 
-// Rewrites excludedPath as watchPath without trailing separators followed by the normalized part below it, or returns
-// null when excludedPath is outside watchPath. The native watchers match that spelling: Linux builds its tree from
-// watchPath as given and macOS moves paths under it onto its real path, so a path that is only inside after resolving
-// `.` or `..` (/a/b/../w/x when watching /a/w) would otherwise be kept and never match.
-// path.relative compares whole path components (so /a/foobar is not inside /a/foo) and handles win32
-// case-insensitivity, mixed separators and other drives. Comparing the namespaced forms also counts a `\\?\` path on
-// one side and a plain one on the other as inside on win32.
-function rebaseOnWatchPath(watchPath, excludedPath) {
-  const relativePath = path.relative(path.toNamespacedPath(watchPath), path.toNamespacedPath(excludedPath));
-  if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
-    return null;
+const isExtendedUnc = value => value.slice(0, 8).toLowerCase() === '\\\\?\\unc\\';
+
+function stripTrailingSeparators(value) {
+  const rootLength = isWin32 && isExtendedUnc(value) ?
+    path.parse('\\\\' + value.slice(8)).root.length + 6 : path.parse(value).root.length;
+  while (value.length > rootLength && (value.endsWith('/') || (isWin32 && value.endsWith('\\')))) {
+    value = value.slice(0, -1);
   }
-  const base = normalizeExcludedPath(watchPath);
-  if (relativePath === '') {
-    return base;
-  }
-  // Only a root keeps its trailing separator.
-  const endsWithSeparator = base.endsWith('/') || (isWin32 && base.endsWith('\\'));
-  return endsWithSeparator ? base + relativePath : base + path.sep + relativePath;
+  return value;
 }
 
-// Validates excludedPaths, drops the ones outside watchPath, which cannot exclude anything, and rebases the rest on
-// watchPath. The filter is here and not in the native watchers, where an ancestor of watchPath would match every
-// event on macOS and Windows.
-function effectiveExcludedPaths(watchPath, excludedPaths) {
-  validateExcludedPaths(excludedPaths);
-  return excludedPaths
-    .map(excludedPath => rebaseOnWatchPath(watchPath, excludedPath))
-    .filter(excludedPath => excludedPath !== null);
-}
-
-// Mirrors normalizeExcludedPath in src/NSFW.cpp: drops trailing separators, but a root keeps its own.
-function normalizeExcludedPath(excludedPath) {
-  let normalized = excludedPath;
-  while (normalized.length > 1) {
-    const last = normalized[normalized.length - 1];
-    const isSeparator = last === '/' || (isWin32 && last === '\\');
-    const isDriveRoot = isWin32 && normalized[normalized.length - 2] === ':';
-    if (!isSeparator || isDriveRoot) {
-      break;
+async function canonicalPath(value) {
+  if (isWin32) {
+    if (isExtendedUnc(value)) {
+      value = '\\\\' + value.slice(8);
+    } else if (value.startsWith('\\\\?\\') && /^[a-z]:/i.test(value.slice(4))) {
+      value = value.slice(4);
     }
-    normalized = normalized.slice(0, -1);
+    return stripTrailingSeparators(path.toNamespacedPath(path.resolve(value)));
   }
-  return normalized;
+  // realpath must see symlink/.. before any lexical normalization.
+  return fs.realpath(stripTrailingSeparators(value));
 }
 
-function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths) {
+const pathComponents = value => value.split('/').filter(component => component !== '' && component !== '.');
+
+// realpath(3) can resolve `..` as text, also inside symlink targets, without the search permission check of the
+// kernel's own lookup. A spelling it returns only counts when that lookup reaches the same file.
+async function isSameFile(lookup, physical) {
+  const [found, expected] = await Promise.all([fs.stat(lookup, { bigint: true }), fs.stat(physical, { bigint: true })]);
+  return found.dev === expected.dev && found.ino === expected.ino;
+}
+
+// Plain children stay lexical so they may name future paths or internal symlinks. A prefix containing `..`
+// must pass one cumulative kernel lookup, preserving search permissions and the symlink traversal limit.
+async function createPosixExclusionResolver(watchPath, canonicalWatchPath) {
+  const canonicalRoot = pathComponents(canonicalWatchPath);
+  const knownRoots = [pathComponents(watchPath), canonicalRoot];
+  const lexicalRoot = path.resolve(watchPath);
+  if (lexicalRoot !== canonicalWatchPath) {
+    try {
+      if (await fs.realpath(lexicalRoot) === canonicalWatchPath && await isSameFile(lexicalRoot, canonicalWatchPath)) {
+        knownRoots.push(pathComponents(lexicalRoot));
+      }
+    } catch (error) { /* A collapsed spelling need not exist. */ }
+  }
+  const childPrefix = canonicalWatchPath === '/' ? '/' : canonicalWatchPath + '/';
+  const isInside = value => value === canonicalWatchPath || value.startsWith(childPrefix);
+
+  return async value => {
+    let components = pathComponents(value);
+    const knownRoot = knownRoots.find(root => root.every((component, index) => component === components[index]));
+    if (knownRoot !== undefined) {
+      // Frozen root aliases remain bound to the original target even after a symlink is repointed.
+      components = [...canonicalRoot, ...components.slice(knownRoot.length)];
+    }
+    const lastParent = components.lastIndexOf('..');
+    if (knownRoot !== undefined && lastParent < canonicalRoot.length) {
+      return '/' + components.join('/');
+    }
+
+    // Unknown aliases are probed cumulatively until their spelling enters the watched namespace. Never
+    // rebuild a later lookup from realpath's answer: that would reset the kernel's traversal budget.
+    for (let end = Math.max(1, lastParent + 1); end <= components.length; end++) {
+      const lookup = '/' + components.slice(0, end).join('/');
+      let physical;
+      try {
+        physical = await fs.realpath(lookup);
+        if (!await isSameFile(lookup, physical)) return null;
+      } catch (error) {
+        return null;
+      }
+      if (isInside(physical)) {
+        return path.join(physical, ...components.slice(end));
+      }
+    }
+    return null;
+  };
+}
+
+// The directory the native watchers reported for the watched path before they received canonical paths.
+function legacyDirectory(watchPath) {
+  if (!isWin32) return watchPath !== '/' && watchPath.endsWith('/') ? watchPath.slice(0, -1) : watchPath;
+  if (watchPath.startsWith('\\\\?\\')) return watchPath;
+  const resolved = path.resolve(watchPath);
+  return resolved + (/[\\/]$/.test(watchPath) && !resolved.endsWith(path.sep) ? path.sep : '');
+}
+
+// Native events carry canonical directories, while Linux and Windows callers keep receiving the legacy spelling.
+// Returns undefined when no directory needs rewriting.
+function createDirectoryMapper(watchPath, canonicalWatchPath, canonicalChildPrefix, contains) {
+  if (process.platform === 'darwin') return undefined;
+  const reportedBase = legacyDirectory(watchPath);
+  const reportedParent = stripTrailingSeparators(reportedBase);
+  const reportedChildPrefix = isWin32 ? reportedParent + (reportedParent.endsWith(path.sep) ? '' : path.sep) :
+    reportedBase + (watchPath === '/' ? '' : '/');
+  if (reportedBase === canonicalWatchPath && reportedChildPrefix === canonicalChildPrefix) return undefined;
+  return value => {
+    if (!contains(value)) return value;
+    const suffix = value.slice(canonicalChildPrefix.length);
+    return suffix ? reportedChildPrefix + suffix : reportedBase;
+  };
+}
+
+async function createPathContext(watchPath) {
+  const canonicalWatchPath = await canonicalPath(watchPath);
+  if (!isWin32 && !await isSameFile(watchPath, canonicalWatchPath)) throw new Error('Not the watched path.');
+  const compare = value => isWin32 ? value.toLowerCase() : value;
+  const base = compare(canonicalWatchPath);
+  const canonicalChildPrefix = canonicalWatchPath.endsWith(path.sep) ? canonicalWatchPath :
+    canonicalWatchPath + path.sep;
+  const prefix = compare(canonicalChildPrefix);
+  const contains = value => {
+    const compared = compare(value);
+    return compared === base || compared.startsWith(prefix);
+  };
+  // Win32 itself resolves `..` as a string, before any reparse point.
+  const excludedPath = isWin32 ? canonicalPath : await createPosixExclusionResolver(watchPath, canonicalWatchPath);
+
+  return {
+    watchPath: canonicalWatchPath,
+    directory: createDirectoryMapper(watchPath, canonicalWatchPath, canonicalChildPrefix, contains),
+    isWatchPath: value => compare(value) === base,
+    async excludedPaths(paths) {
+      validateExcludedPaths(paths);
+      return (await Promise.all(paths.map(excludedPath))).filter(value => value !== null && contains(value));
+    }
+  };
+}
+
+function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths, reportedPath, isExcluded) {
   const { CREATED, DELETED, MODIFIED } = nsfw.actions;
-  const directory = path.dirname(watchPath);
-  const file = path.basename(watchPath);
+  const directory = path.dirname(reportedPath);
+  const file = path.basename(reportedPath);
 
   let fileStatus;
   let filePollerInterval;
-  // Nothing inside a single file can be excluded, so the list is only kept to be returned, like the native watcher's.
-  let currentExcludedPaths = excludedPaths.map(normalizeExcludedPath);
+
+  let currentExcludedPaths = excludedPaths;
+
+  const report = events => { if (!currentExcludedPaths.some(isExcluded)) eventCallback(events); };
 
   const getStatus = async () => {
     try {
       const status = await fs.stat(watchPath);
       if (fileStatus === null) {
         fileStatus = status;
-        eventCallback([{ action: CREATED, directory, file }]);
+        report([{ action: CREATED, directory, file }]);
       } else if (
         status.mtime - fileStatus.mtime !== 0 ||
         status.ctime - fileStatus.ctime !== 0
       ) {
         fileStatus = status;
-        eventCallback([{ action: MODIFIED, directory, file }]);
+        report([{ action: MODIFIED, directory, file }]);
       }
     } catch (e) {
       if (fileStatus !== null) {
         fileStatus = null;
-        eventCallback([{ action: DELETED, directory, file }]);
+        report([{ action: DELETED, directory, file }]);
       }
     }
   };
@@ -116,7 +202,7 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths) {
 
   this.getExcludedPaths = async () => [...currentExcludedPaths];
   this.updateExcludedPaths = async (paths) => {
-    currentExcludedPaths = paths.map(normalizeExcludedPath);
+    currentExcludedPaths = paths;
     return [...currentExcludedPaths];
   };
 }
@@ -137,39 +223,80 @@ const buildNSFW = async (watchPath, eventCallback,
     throw new Error('Path to watch must be an absolute path.');
   }
 
-  let stats;
+  let context, stats;
   try {
-    stats = await fs.stat(watchPath);
+    context = await createPathContext(watchPath);
+    // Node's metadata APIs reject extended drive roots that the native watcher can open.
+    const metadataPath = isWin32 && /^\\\\\?\\[A-Za-z]:\\$/.test(context.watchPath) ?
+      context.watchPath.slice(4) : context.watchPath;
+    stats = await fs.stat(metadataPath);
   } catch (e) {
     throw new Error('Path must be a valid path to a file or a directory.');
   }
 
-  const effectivePaths = effectiveExcludedPaths(watchPath, excludedPaths);
+  if (typeof eventCallback !== 'function') throw new TypeError('eventCallback must be a function.');
+
+  const effectivePaths = await context.excludedPaths(excludedPaths);
+  const callback = context.directory === undefined ? eventCallback : events => eventCallback(events.map(event => ({
+    ...event,
+    directory: context.directory(event.directory),
+    ...(event.newDirectory === undefined ? {} : { newDirectory: context.directory(event.newDirectory) })
+  })));
+  let implementation;
 
   if (stats.isDirectory()) {
-    return new NSFW(watchPath, eventCallback, { debounceMS, errorCallback, excludedPaths: effectivePaths });
+    implementation = new NSFW(context.watchPath, callback,
+      { debounceMS, errorCallback, excludedPaths: effectivePaths });
   } else if (stats.isFile()) {
-    return new NSFWFilePoller(watchPath, eventCallback, debounceMS, effectivePaths);
+    implementation = new NSFWFilePoller(context.watchPath, eventCallback, debounceMS, effectivePaths,
+      watchPath, context.isWatchPath);
   } else {
     throw new Error('Path must be a valid path to a file or a directory');
   }
+  return { implementation, context };
 };
 
 function nsfw(watchPath, eventCallback, options) {
   if (!(this instanceof nsfw)) {
-    return buildNSFW(watchPath, eventCallback, options).then(implementation => new nsfw(implementation, watchPath));
+    return buildNSFW(watchPath, eventCallback, options).then(result => new nsfw(result));
   }
 
   // Constructed by the branch above.
-  const [implementation, watchedPath] = arguments;
+  const { implementation, context } = watchPath;
 
-  this.start = () => implementation.start();
-  this.stop = () => implementation.stop();
-  this.pause = () => implementation.pause();
-  this.resume = () => implementation.resume();
-  this.getExcludedPaths = () => implementation.getExcludedPaths();
-  this.updateExcludedPaths = async (paths) => {
-    return implementation.updateExcludedPaths(effectiveExcludedPaths(watchedPath, paths));
+  // Calls reach the watcher in call order. Canonicalizing an update can wait for the filesystem, so a call made
+  // while an earlier one has not reached the watcher yet waits behind it; any other call goes straight to the
+  // watcher, which creates its job synchronously.
+  let waiting = 0;
+  let updates = Promise.resolve();
+  const inOrder = method => () => {
+    if (waiting === 0) return implementation[method]();
+    waiting++;
+    return updates.then(() => {
+      waiting--;
+      return implementation[method]();
+    });
+  };
+  this.start = inOrder('start');
+  this.stop = inOrder('stop');
+  this.pause = inOrder('pause');
+  this.resume = inOrder('resume');
+  this.getExcludedPaths = inOrder('getExcludedPaths');
+  this.updateExcludedPaths = async paths => {
+    validateExcludedPaths(paths);
+    const snapshot = [...paths];
+    waiting++;
+    const update = updates.then(async () => {
+      let canonicalPaths;
+      try {
+        canonicalPaths = await context.excludedPaths(snapshot);
+      } finally {
+        waiting--;
+      }
+      return implementation.updateExcludedPaths(canonicalPaths);
+    });
+    updates = update.catch(() => {});
+    return update;
   };
 }
 

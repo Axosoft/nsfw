@@ -1,15 +1,6 @@
 #include "../../includes/win32/Watcher.h"
 
 static
-void stripNTPrefix(std::wstring &path) {
-  if (path.rfind(L"\\\\?\\UNC\\", 0) != std::wstring::npos) {
-    path.replace(0, 7, L"\\");
-  } else if (path.rfind(L"\\\\?\\", 0) != std::wstring::npos) {
-    path.erase(0, 4);
-  }
-}
-
-static
 std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {
   LPWSTR nullTerminatedFileName = new WCHAR[length + 1]();
   memcpy(nullTerminatedFileName, cFileName, length);
@@ -28,11 +19,6 @@ std::string Watcher::getUTF8Directory(std::wstring path) {
   std::wstring uft16DirectoryString = found == std::wstring::npos
     ? mPath
     : joinPath(mPath, path.substr(0, found));
-  if (!mPathWasNtPrefixed) {
-    // If we were the ones that prefixed the path, we should strip it
-    // before returning it to the user
-    stripNTPrefix(uft16DirectoryString);
-  }
 
   int utf8length = WideCharToMultiByte(
       CP_UTF8,
@@ -99,12 +85,11 @@ std::string getUTF8FileName(std::wstring path) {
   return utf8Directory;
 }
 
-Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed,
+Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
     const std::vector<std::wstring> &excludedPaths)
   : mRunning(false),
   mQueue(queue),
   mPath(path),
-  mPathWasNtPrefixed(pathWasNtPrefixed),
   mExcludedPaths(excludedPaths)
 {
   mDirectoryHandle = openDirectory(mPath);

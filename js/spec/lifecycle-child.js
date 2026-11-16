@@ -12,6 +12,7 @@ const nsfw = require('../src');
 const [mode, watchDir] = isMainThread ? process.argv.slice(2) : workerData;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const canonicalPaths = paths => paths.map(value => process.platform === 'win32' ? path.toNamespacedPath(value) : value);
 
 async function stopAndRestart() {
   const watch = await nsfw(watchDir, () => {});
@@ -220,7 +221,7 @@ async function updateExcludedPathsBeforeStart() {
   const watch = await nsfw(watchDir, () => {});
   await watch.updateExcludedPaths(excluded);
   const stored = await watch.getExcludedPaths();
-  if (JSON.stringify(stored) !== JSON.stringify(excluded)) {
+  if (JSON.stringify(stored) !== JSON.stringify(canonicalPaths(excluded))) {
     throw new Error(`excluded paths not kept: ${JSON.stringify(stored)}`);
   }
   await watch.start();
@@ -276,7 +277,7 @@ async function updateExcludedPathsUnderLoad() {
 
   for (const watch of watches) {
     const stored = await watch.getExcludedPaths();
-    if (JSON.stringify(stored) !== JSON.stringify(excluded)) {
+    if (JSON.stringify(stored) !== JSON.stringify(canonicalPaths(excluded))) {
       throw new Error(`excluded paths not kept: ${JSON.stringify(stored)}`);
     }
     await watch.stop();

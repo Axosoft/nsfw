@@ -18,7 +18,7 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
   std::string watchName;
   mExcludedPaths = excludedPaths;
   if (path.length() == 1 && path[0] == '/') {
-    directory = "";
+    directory = "/";
     watchName = "";
   } else {
     uint32_t location = path.find_last_of("/");
@@ -26,7 +26,8 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
     watchName = path.substr(location + 1);
   }
 
-  mWatchedPath = directory + "/" + watchName;
+  mWatchedPath = path;
+  mRootExcluded = std::find(mExcludedPaths.begin(), mExcludedPaths.end(), mWatchedPath) != mExcludedPaths.end();
 
   struct stat file;
   if (stat(mWatchedPath.c_str(), &file) < 0) {
@@ -98,6 +99,10 @@ bool InotifyTree::getPath(std::string &out, int wd) {
 
 const std::vector<std::string>& InotifyTree::getExcludedPaths() const {
   return mExcludedPaths;
+}
+
+bool InotifyTree::isRootExcluded() const {
+  return mRootExcluded;
 }
 
 bool InotifyTree::hasErrored() {
@@ -219,7 +224,7 @@ InotifyTree::~InotifyTree() {
 std::string InotifyTree::getParentPath(const std::string &filePath) {
   std::string directory;
   uint32_t location = filePath.find_last_of("/");
-  directory = filePath.substr(0, location);
+  directory = location == 0 ? "/" : filePath.substr(0, location);
   return directory;
 }
 
@@ -244,8 +249,10 @@ void InotifyTree::updateExcludedPaths(const std::vector<std::string> &excludedPa
   }
 
   mExcludedPaths = excludedPaths;
+  mRootExcluded = std::find(mExcludedPaths.begin(), mExcludedPaths.end(), mWatchedPath) != mExcludedPaths.end();
 
   for (auto excludedPath : removedExcludedPaths) {
+    if (excludedPath == mWatchedPath) continue;
     auto path = getParentPath(excludedPath);
     InotifyNode *node = findNodeByPath(path);
     if (node) {
@@ -255,6 +262,7 @@ void InotifyTree::updateExcludedPaths(const std::vector<std::string> &excludedPa
   }
 
   for (auto excludedPath : addedExcludedPaths) {
+    if (excludedPath == mWatchedPath) continue;
     auto path = getParentPath(excludedPath);
     InotifyNode *node = findNodeByPath(path);
     if (node) {
@@ -321,8 +329,11 @@ InotifyTree::InotifyNode::InotifyNode(
     }
 
     bool excludedFound = false;
-    for (std::string excludedPath : mTree->getExcludedPaths()) {
-      if ((mFullPath + '/' + fileName).compare(excludedPath) == 0) {
+    const std::string candidate = createFullPath(mFullPath, fileName);
+    for (const std::string &excludedPath : mTree->getExcludedPaths()) {
+      if (excludedPath.empty() || excludedPath == mTree->mWatchedPath) continue;
+      if (candidate.compare(0, excludedPath.size(), excludedPath) == 0 &&
+          (candidate.size() == excludedPath.size() || excludedPath.back() == '/' || candidate[excludedPath.size()] == '/')) {
         excludedFound = true;
         break;
       }
@@ -527,7 +538,7 @@ std::string InotifyTree::InotifyNode::createFullPath(std::string parentPath, std
   }
   fullPathStream
     << parentPath
-    << '/'
+    << (parentPath == "/" ? "" : "/")
     << name;
 
   return fullPathStream.str();

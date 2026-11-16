@@ -15,7 +15,7 @@
 class Watcher
 {
   public:
-    Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path, bool pathWasNtPrefixed,
+    Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
       const std::vector<std::wstring> &excludedPaths);
     ~Watcher();
 
@@ -54,7 +54,6 @@ class Watcher
     const std::wstring mPath;
     std::shared_ptr<EventQueue> mQueue;
     HANDLE mDirectoryHandle;
-    bool mPathWasNtPrefixed;
     // Read on the watcher thread, replaced from a worker thread by updateExcludedPaths.
     std::mutex mExcludedPathsMutex;
     std::vector<std::wstring> mExcludedPaths;

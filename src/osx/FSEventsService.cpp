@@ -1,25 +1,11 @@
 #include "../../includes/osx/FSEventsService.h"
 #include <iostream>
-#include <limits.h>
-#include <stdlib.h>
 
 FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
   mPath(path), mQueue(queue), mRootChanged(false) {
   mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
-  // FSEvents reports event paths with symlinks resolved (/private/tmp/w/... when watching /tmp/w), so keep both forms
-  // of the watched path when they differ, for toEventPath.
-  char realPath[PATH_MAX];
-  if (realpath(path.c_str(), realPath) != NULL) {
-    std::string watchedPath = path;
-    while (watchedPath.size() > 1 && watchedPath.back() == '/') {
-      watchedPath.pop_back();
-    }
-    if (watchedPath != realPath) {
-      mWatchedPath = watchedPath;
-      mRealPath = realPath;
-    }
-  }
   mExcludedPaths = createExcludedPaths(excludedPaths);
+  mRootExcluded = excludesRoot(mExcludedPaths);
 
   mRunLoop = new RunLoop(this, path);
 
@@ -38,32 +24,10 @@ FSEventsService::~FSEventsService() {
   releaseExcludedPaths(mExcludedPaths);
 }
 
-// Moves an excluded path under the watched path as it was given to its real path, the form isExcluded compares event
-// paths against. Anything else, including a path already under the real path, is kept as is.
-std::string FSEventsService::toEventPath(const std::string &excludedPath) const {
-  if (mRealPath.empty()) {
-    return excludedPath;
-  }
-  std::string::size_type length = mWatchedPath.size();
-  bool isUnderWatchedPath =
-    excludedPath.compare(0, length, mWatchedPath) == 0 &&
-    (excludedPath.size() == length || excludedPath[length] == '/');
-  if (!isUnderWatchedPath) {
-    return excludedPath;
-  }
-  std::string suffix = excludedPath.substr(length);
-  // A watched path that resolves to / would otherwise give //tmp/x.
-  if (suffix.empty() || mRealPath != "/") {
-    return mRealPath + suffix;
-  }
-  return suffix;
-}
-
 std::vector<CFStringRef> FSEventsService::createExcludedPaths(const std::vector<std::string> &excludedPaths) const {
   std::vector<CFStringRef> excludedPathRefs;
   for (const std::string &excludedPath : excludedPaths) {
-    std::string eventPath = toEventPath(excludedPath);
-    CFStringRef excludedPathRef = CFStringCreateWithCString(NULL, eventPath.c_str(), kCFStringEncodingUTF8);
+    CFStringRef excludedPathRef = CFStringCreateWithCString(NULL, excludedPath.c_str(), kCFStringEncodingUTF8);
     if (excludedPathRef != NULL) {
       excludedPathRefs.push_back(excludedPathRef);
     }
@@ -75,6 +39,21 @@ void FSEventsService::releaseExcludedPaths(const std::vector<CFStringRef> &exclu
   for (CFStringRef excludedPath : excludedPaths) {
     CFRelease(excludedPath);
   }
+}
+
+bool FSEventsService::excludesRoot(const std::vector<CFStringRef> &excludedPaths) const {
+  CFStringRef root = CFStringCreateWithCString(NULL, mPath.c_str(), kCFStringEncodingUTF8);
+  if (root == NULL) return false;
+  const CFStringCompareFlags flags = mCaseSensitive ? kCFCompareLocalized : kCFCompareLocalized | kCFCompareCaseInsensitive;
+  bool excluded = false;
+  for (CFStringRef excludedPath : excludedPaths) {
+    if (CFStringCompare(root, excludedPath, flags) == kCFCompareEqualTo) {
+      excluded = true;
+      break;
+    }
+  }
+  CFRelease(root);
+  return excluded;
 }
 
 void FSEventsServiceCallback(
@@ -122,9 +101,8 @@ void FSEventsServiceCallback(
 }
 
 bool FSEventsService::isExcluded(std::string filePath) {
-  uint32_t location = filePath.find_last_of("/");
-  // The directory of /file is /, as in splitFilePath, so that excluding a watched / covers its direct children.
-  std::string directory = (location == 0) ? "/" : filePath.substr(0, location);
+  std::string directory, name;
+  splitFilePath(directory, name, filePath);
   CFStringRef fileDirectory = CFStringCreateWithCString(
     NULL,
     directory.c_str(),
@@ -143,6 +121,10 @@ bool FSEventsService::isExcluded(std::string filePath) {
   bool excluded = false;
   {
     std::lock_guard<std::mutex> lock(mExcludedPathsLock);
+    if (mRootExcluded) {
+      CFRelease(fileDirectory);
+      return true;
+    }
     for (CFStringRef excludedPath : mExcludedPaths) {
       CFIndex lenExclude = CFStringGetLength(excludedPath);
       if (
@@ -274,6 +256,7 @@ void FSEventsService::updateExcludedPaths(const std::vector<std::string> &exclud
   {
     std::lock_guard<std::mutex> lock(mExcludedPathsLock);
     mExcludedPaths.swap(excludedPathRefs);
+    mRootExcluded = excludesRoot(mExcludedPaths);
   }
   // Now holds the previous list, which the run loop thread can no longer reach.
   releaseExcludedPaths(excludedPathRefs);

@@ -42,9 +42,9 @@ class NSFW::Run {
       mThread.join();
     }
 
-    void updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+    std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
       std::lock_guard<std::mutex> lock(mLock);
-      mInterface->updateExcludedPaths(excludedPaths);
+      return mInterface->updateExcludedPaths(excludedPaths);
     }
 
   private:
@@ -74,7 +74,9 @@ void NSFW::Run::poll() {
       NSFW *watcher = mWatcher;
       uint64_t runId = mRunId;
       mErrorCallback.NonBlockingCall([error, watcher, runId](Napi::Env env, Napi::Function jsCallback) {
-        if (!watcher->stopRun(runId)) return;
+        bool stopped = watcher->stopRun(runId);
+        watcher->resolveRetiredUpdates();
+        if (!stopped) return;
         Napi::Value jsError = Napi::Error::New(env, error).Value();
         jsCallback.Call({ jsError });
       });
@@ -254,6 +256,7 @@ bool NSFW::stopRun(uint64_t runId) {
     return false;
   }
   mRun.reset();
+  mRetiredRunId = mRunId;
   mQueue->clear();
   return true;
 }
@@ -271,6 +274,7 @@ NSFW::Job::Job(Napi::Env env, NSFW *nsfw):
   Napi::AsyncWorker(env, "nsfw"),
   mDeferred(Napi::Promise::Deferred::New(env)),
   mNSFW(nsfw),
+  mJobId(++nsfw->mNextJobId),
   mWatcher(Napi::Persistent(nsfw->Value()))
 {}
 
@@ -310,6 +314,7 @@ NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
       env, self.Get(ERROR_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1,
       [nsfw, runId](Napi::Env) {
         nsfw->stopRun(runId);
+        nsfw->resolveRetiredUpdates();
         nsfw->Unref();
       }
     );
@@ -410,6 +415,7 @@ void NSFW::StopWorker::Execute() {
 }
 
 void NSFW::StopWorker::OnOK() {
+  mNSFW->resolveRetiredUpdates();
   if (mDidStopWatching) {
     mDeferred.Resolve(Env().Undefined());
   } else {
@@ -418,7 +424,9 @@ void NSFW::StopWorker::OnOK() {
 }
 
 Napi::Value NSFW::Stop(const Napi::CallbackInfo &info) {
-  return (new StopWorker(info.Env(), this))->RunJob();
+  auto worker = new StopWorker(info.Env(), this);
+  mStopThroughJobId = mNextJobId;
+  return worker->RunJob();
 }
 
 NSFW::PauseWorker::PauseWorker(Napi::Env env, NSFW *nsfw):
@@ -501,9 +509,15 @@ NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const 
 }
 
 void NSFW::UpdateExcludedPathsWorker::Execute() {
-  std::lock_guard<std::mutex> lock(mNSFW->mRunLock);
+  std::unique_lock<std::mutex> lock(mNSFW->mRunLock);
+  auto yieldToStop = [this]() {
+    if (mNSFW->mStopThroughJobId <= mJobId) return false;
+    mYieldedToStop = true;
+    mDidUpdatetExcludedPaths = true;
+    return true;
+  };
   // A stopped watcher only keeps them for its next start().
-  if (mNSFW->mRun) {
+  while (mNSFW->mRun) {
     // The latest list, which can already be a later call's: each call stores its list when it is made, before the
     // jobs queued ahead of it execute, so an earlier job must not apply its own older list.
     std::vector<std::string> excludedPaths;
@@ -511,13 +525,25 @@ void NSFW::UpdateExcludedPathsWorker::Execute() {
       std::lock_guard<std::mutex> excludedPathsLock(mNSFW->mExcludedPathsLock);
       excludedPaths = mNSFW->mExcludedPaths;
     }
-    mNSFW->mRun->updateExcludedPaths(excludedPaths);
+    mWaitingRunId = mNSFW->mRunId;
+    auto completion = mNSFW->mRun->updateExcludedPaths(excludedPaths);
+    lock.unlock();
+    if (!completion.valid()) break;
+    while (completion.wait_for(std::chrono::milliseconds(10)) != std::future_status::ready) {
+      if (yieldToStop()) return;
+    }
+    if (completion.get()) break;
+    if (yieldToStop()) return;
+    lock.lock();
   }
   mDidUpdatetExcludedPaths = true;
 }
 
 void NSFW::UpdateExcludedPathsWorker::OnOK() {
-  if (mDidUpdatetExcludedPaths) {
+  if (mYieldedToStop) {
+    mNSFW->mPendingUpdates.push_back({ mWaitingRunId, mDeferred, std::move(mExcludedPaths) });
+    mNSFW->resolveRetiredUpdates();
+  } else if (mDidUpdatetExcludedPaths) {
     // What this call set, even if a later call has already replaced it.
     mDeferred.Resolve(toJsArray(Env(), mExcludedPaths));
   } else {
@@ -527,6 +553,20 @@ void NSFW::UpdateExcludedPathsWorker::OnOK() {
 
 Napi::Value NSFW::UpdateExcludedPaths(const Napi::CallbackInfo &info) {
   return (new UpdateExcludedPathsWorker(info.Env(), info, this))->RunJob();
+}
+
+// A stop can run before the yielding update's OnOK. Retirement is remembered by run, so its
+// promise can settle on the main thread even if a later run has already started.
+void NSFW::resolveRetiredUpdates() {
+  if (mClosing) return;
+  for (auto i = mPendingUpdates.begin(); i != mPendingUpdates.end();) {
+    if (i->runId <= mRetiredRunId) {
+      i->deferred.Resolve(toJsArray(Env(), i->paths));
+      i = mPendingUpdates.erase(i);
+    } else {
+      ++i;
+    }
+  }
 }
 
 void NSFW::pauseQueue() {

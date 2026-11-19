@@ -77,6 +77,57 @@ stops with an error instead of losing events silently.
   generic `Service shutdown unexpectedly`.
 - On Linux, the watcher error and the watched root are no longer read and written from two threads without
   synchronization, which could report a garbled error or crash right when the watcher failed.
+- On Linux, an excluded directory created, recreated or moved into place after `start()` is no longer watched, and
+  neither is an excluded path below a directory that moves there (#210). Before, their contents were reported, while
+  macOS and Windows dropped them. The other way around, a directory that was only excluded under its old path is
+  watched once it moves.
+  These checks use the path recorded by the Linux watcher. For example, if it watches `a-link` as an alias for
+  `z-real`, excluding `z-real/hidden` can still allow events under `a-link/hidden` after a rename or recreation (#222).
+- On Linux, a directory moved out of the watched path, or into an excluded directory, is no longer watched. Before, its
+  events kept being reported under its old path, and it wasn't watched again when moved back in under another path.
+  Moved back, whether its old watches were removed already or not, it is watched like a directory that moves in for the
+  first time: it and what it holds then are reported as `CREATED`. A change in it between the move back and the moment
+  its directory is watched again has no event of its own, so a `DELETED`, `RENAMED` or `MODIFIED` for it can be
+  missing, as for a directory that moves in for the first time. Before, a deletion right after a move back to the same
+  path was reported, since its watches were never removed. The event read
+  right after such a move is no longer also reported as `CREATED`, and a move into or out of such a directory right
+  after it left is reported as a creation or a deletion. A move split across two reads of the inotify descriptor is
+  reported as one `RENAMED` instead of `DELETED` and `CREATED`; for that, a move out of the watched path is reported
+  once no other event comes for 10 ms, or right before the next one.
+- On Linux, a directory moved into one that was just created is watched at its new path, also when a symlink takes its
+  old place, and so is one that a rename moved while it was being scanned, or created in a directory renamed before its
+  creation was handled. A directory that leaves for a place that can't be watched, while a symlink or a bind mount
+  created meanwhile still leads to it from the watched path, is watched there, with the exclusions of that path.
+- On Linux, `updateExcludedPaths()` removes the inotify watches of the directories it excludes a few at a time, while
+  few events are waiting to be read, instead of all at once. Each removal queues an event, so excluding a tree of more
+  directories than `fs.inotify.max_queued_events` (16384 by default) overflowed the inotify queue, and events were lost.
+  The events of the excluded directories stop being reported right away. One that keeps having events has its watch
+  removed at its next one. The directories that stop being watched because they moved away or onto an excluded path have
+  their watches removed the same way, but not at their next event. When the limit of watches is reached, such watches
+  are removed to make room while the queue is less than about half full (estimated from its size in bytes); a directory
+  that can't be watched meanwhile is tried again after a read once any pending rename is handled, while such watches
+  wait. Once watched, its contents are reported as `CREATED`, including when `updateExcludedPaths()` brought the
+  directory back into scope. The error stays terminal once there are no dropped watches left. A directory found again
+  while its old watch isn't removed yet (moved back, included again by `updateExcludedPaths()`, seen by a scan before
+  its move back is handled, or found below one of those) keeps that
+  watch, but none of the events it queued before it was found are reported, also once it is back at a visible path,
+  since some may be from while it couldn't be watched. The directories found together share a marker, an event queued
+  right after the last of them was found: their events before it are dropped, the later ones reported. All the paths
+  one `updateExcludedPaths()` call or one move includes again are found together, so whatever their number they take
+  one marker; what happens in such a directory while the call is still running may not be reported. Each is scanned
+  after that marker is queued. A scan triggered by a move back reports visible entries as `CREATED`. Re-including a
+  path normally resumes watching silently, except for a deferred retry at the watch limit. Recovery scans required by
+  a concurrent rename can report existing descendant contents again to avoid losing newly created entries.
+  Directories found again by
+  those scans get a marker of their own, queued after them, one per level of the tree. As for a directory that moves in
+  for the first time, changes between its move back and its level's marker can lack their own `DELETED`, `RENAMED`
+  or `MODIFIED` event. A file created and deleted again in that interval goes unreported. Marker generation shares the
+  retirement budget between reads; scans that exhaust that budget wait for the reader to make room. An explicit
+  re-inclusion waits for its paced scans before resolving; recovery from concurrent renames can continue afterward.
+  If `stop()` is requested meanwhile, the update can yield to shutdown and resolves with its own requested list once
+  that run has ended.
+- On Linux, a directory that was not watched (excluded, for instance) renamed over an empty watched directory is
+  watched.
 
 ## 2.3.0
 

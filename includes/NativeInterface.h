@@ -14,6 +14,7 @@ using NativeImplementation = InotifyService;
 
 #include "Queue.h"
 #include <vector>
+#include <future>
 
 class NativeInterface {
 public:
@@ -23,7 +24,7 @@ public:
   std::string getError();
   bool hasErrored();
   bool isWatching();
-  void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
+  std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
 private:
   std::unique_ptr<NativeImplementation> mNativeInterface;

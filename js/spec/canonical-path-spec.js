@@ -5,7 +5,7 @@ const vm = require('vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8');
 
-function platformWrapper(platform, files = {}) {
+function platformWrapper(platform, files = {}, methods = {}) {
   let native;
   class Native {
     constructor(watchPath, callback, options) {
@@ -14,6 +14,7 @@ function platformWrapper(platform, files = {}) {
     async getExcludedPaths() { return native.excludedPaths; }
     async updateExcludedPaths(paths) { native.excludedPaths = paths; return paths; }
   }
+  Object.assign(Native.prototype, methods);
   const module = { exports: {} };
   vm.runInNewContext(source, {
     module,
@@ -160,5 +161,40 @@ describe('Canonical Windows paths at the native boundary', function() {
     wrapper.native().callback([{ directory: '\\\\?\\C:\\watch', newDirectory: '\\\\?\\C:\\watch\\sub' }]);
     assert.strictEqual(events[0].directory, '\\\\?\\C:\\watch\\');
     assert.strictEqual(events[0].newDirectory, '\\\\?\\C:\\watch\\sub');
+  });
+});
+
+
+describe('Watcher call submission order', function() {
+  it('submits stop after canonicalization without waiting for native update completion', async function() {
+    const calls = [];
+    let complete, readPath, releasePath;
+    const reading = new Promise(resolve => { readPath = resolve; });
+    const canonicalizing = new Promise(resolve => { releasePath = resolve; });
+    const completion = new Promise(resolve => { complete = resolve; });
+    const wrapper = platformWrapper('linux', {
+      async realpath(value) {
+        if (value === '/alias') {
+          readPath();
+          await canonicalizing;
+          return '/root/child';
+        }
+        return value;
+      }
+    }, {
+      updateExcludedPaths(paths) { calls.push(['update', paths]); return completion; },
+      async stop() { calls.push(['stop']); complete(['/root/child']); }
+    });
+    const watch = await wrapper.nsfw('/root', () => {});
+    const update = watch.updateExcludedPaths(['/alias']);
+    await reading;
+    const stop = watch.stop();
+    assert.deepStrictEqual(calls, []);
+    releasePath();
+    await stop;
+    assert.deepStrictEqual(Array.from(await update), ['/root/child']);
+    assert.strictEqual(calls[0][0], 'update');
+    assert.deepStrictEqual(Array.from(calls[0][1]), ['/root/child']);
+    assert.deepStrictEqual(calls[1], ['stop']);
   });
 });

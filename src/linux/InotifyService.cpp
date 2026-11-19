@@ -114,8 +114,17 @@ void InotifyService::remove(int wd, std::string name) {
   dispatch(DELETED, wd, name);
 }
 
+// Either side of a move may be a directory that was dropped from the tree (moved out, into an excluded directory, or
+// excluded) whose watch the kernel still has: its events queued before the drop, or the watch isn't removed yet (see
+// InotifyTree::removeDroppedWatches()). The move is then only a move in or out.
 void InotifyService::rename(int fromWd, std::string fromName, int toWd, std::string toName) {
-  dispatchRename(fromWd, fromName, toWd, toName);
+  if (!mTree->nodeExists(fromWd)) {
+    create(toWd, toName);
+  } else if (!mTree->nodeExists(toWd)) {
+    remove(fromWd, fromName);
+  } else {
+    dispatchRename(fromWd, fromName, toWd, toName);
+  }
 }
 
 void InotifyService::createDirectory(int wd, std::string name) {
@@ -124,31 +133,80 @@ void InotifyService::createDirectory(int wd, std::string name) {
   }
 
   dispatch(CREATED, wd, name);
-  mTree->addDirectory(wd, name, [this](std::string directory, std::string file) {
+  mTree->addDirectory(wd, name, emitCreated());
+}
+
+// What the tree uses to report the contents of the directories it adds; nothing while the watched path is excluded.
+EmitCreatedEvent InotifyService::emitCreated() {
+  return [this](std::string directory, std::string file) {
     if (!mTree->isRootExcluded()) mQueue->enqueue(CREATED, directory, file);
-  });
+  };
 }
 
 void InotifyService::removeDirectory(int wd) {
-  mTree->removeDirectory(wd);
+  mTree->removeDirectory(wd, emitCreated());
 }
 
+bool InotifyService::isQuarantined(int wd, uint32_t mask) {
+  return mTree->isQuarantined(wd, mask);
+}
+
+void InotifyService::finishRead(int eventsRead, size_t bytesRead) {
+  mTree->finishRead(eventsRead, bytesRead);
+}
+
+void InotifyService::watchIgnored(int wd) {
+  mTree->watchIgnored(wd);
+}
+
+bool InotifyService::removeDroppedWatch(int wd) {
+  return mTree->removeDroppedWatch(wd);
+}
+
+void InotifyService::removeDroppedWatches(int eventsRead) {
+  mTree->removeDroppedWatches(eventsRead);
+}
+
+void InotifyService::retryWatches() {
+  mTree->retryWatches(emitCreated());
+}
+
+void InotifyService::forgetIncompleteScans() {
+  mTree->forgetIncompleteScans();
+}
+
+void InotifyService::removeMovedDirectory(int wd, std::string name) {
+  dispatch(DELETED, wd, name);
+  mTree->removeMovedDirectory(wd, name, emitCreated());
+}
+
+// See rename() for a side that isn't in the tree.
 void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName) {
-  if (!mTree->nodeExists(fromWd) || !mTree->nodeExists(toWd)) {
+  if (!mTree->nodeExists(fromWd)) {
+    createDirectory(toWd, toName);
+    return;
+  }
+  if (!mTree->nodeExists(toWd)) {
+    removeMovedDirectory(fromWd, fromName);
     return;
   }
 
-  mTree->renameDirectory(fromWd, fromName, toWd, toName);
-
+  // Reported first: the tree change may drop the node of the directory it left (see InotifyTree::discard()),
+  // and report creations under the new path, which the rename has to come before.
   dispatchRename(fromWd, fromName, toWd, toName);
+  mTree->renameDirectory(fromWd, fromName, toWd, toName, emitCreated());
 }
 
 void InotifyService::setError(const std::string &error) {
   mTree->setError(error);
 }
 
-void InotifyService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+std::future<bool> InotifyService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
   // Adds and removes tree nodes, which the event loop thread reads and changes while it handles events.
   std::unique_lock<std::mutex> lock = mEventLoop->lockEventHandling();
-  mTree->updateExcludedPaths(excludedPaths);
+  auto completion = mTree->updateExcludedPaths(excludedPaths, emitCreated());
+  // The event loop may be waiting for events, and the first removals wake it up for the rest, and for the retries.
+  mTree->removeDroppedWatches(0);
+  mEventLoop->wakeForEntryRetry();
+  return completion;
 }

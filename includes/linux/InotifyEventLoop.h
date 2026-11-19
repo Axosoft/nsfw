@@ -2,6 +2,7 @@
 #define INOTIFY_EVENT_LOOP_H
 
 #include "InotifyService.h"
+#include "InotifyTree.h"
 #include "../SingleshotSemaphore.h"
 
 #include <sys/inotify.h>
@@ -32,14 +33,18 @@ public:
   std::unique_lock<std::mutex> lockEventHandling();
 
   void work();
+  void wakeForEntryRetry();
 
 #ifdef NSFW_TEST_SLOW_1
   static bool failReads(int inotifyInstance);
 #endif
 
   ~InotifyEventLoop();
+
 private:
-  static const int BUFFER_SIZE = 8192;
+  static const int BUFFER_SIZE = InotifyTree::READ_SIZE;
+  // How long a move out of a watched directory whose other half didn't come in the same read waits for it, see work().
+  static const int RENAME_PAIRING_TIMEOUT_MS = 10;
   struct InotifyRenameEvent {
     uint32_t cookie;
     bool isDirectory;
@@ -50,6 +55,8 @@ private:
 
 #ifdef NSFW_TEST_SLOW_1
   void runTestHook(const inotify_event *event);
+  void pauseBeforeLock(const char *buffer, ssize_t bytesRead);
+  void waitForTestFile(const std::string &directory, const std::string &release);
 #endif
 
   int mInotifyInstance;
@@ -59,7 +66,8 @@ private:
   std::mutex mMutex;
   SingleshotSemaphore mLoopingSemaphore;
   // Only the constructor writes it. The destructor joins the thread whenever it was created.
-  bool mStarted;
+  int mWakePipe[2] = { -1, -1 };
+  bool mStarted = false;
 };
 
 #endif

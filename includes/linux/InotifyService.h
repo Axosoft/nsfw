@@ -17,7 +17,7 @@ public:
   std::string getError();
   bool hasErrored();
   bool isWatching();
-  void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
+  std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
   ~InotifyService();
 private:
@@ -26,9 +26,18 @@ private:
   void createDirectoryTree(std::string directoryTreePath);
   void dispatch(EventType action, int wd, std::string name);
   void dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName);
+  EmitCreatedEvent emitCreated();
+  void watchIgnored(int wd);
+  bool isQuarantined(int wd, uint32_t mask);
+  void finishRead(int eventsRead, size_t bytesRead);
   void modify(int wd, std::string name);
   void remove(int wd, std::string name);
   void removeDirectory(int wd);
+  void forgetIncompleteScans();
+  bool removeDroppedWatch(int wd);
+  void removeDroppedWatches(int eventsRead);
+  void retryWatches();
+  void removeMovedDirectory(int wd, std::string name);
   void rename(int fromWd, std::string fromName, int toWd, std::string toName);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
   void setError(const std::string &error);

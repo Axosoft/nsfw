@@ -293,10 +293,12 @@ function nsfw(watchPath, eventCallback, options) {
       } finally {
         waiting--;
       }
-      return implementation.updateExcludedPaths(canonicalPaths);
+      // The native FIFO orders execution; waiting for completion here would keep stop()
+      // from reaching an update that needs to yield its unfinished scan to shutdown.
+      return { result: implementation.updateExcludedPaths(canonicalPaths) };
     });
     updates = update.catch(() => {});
-    return update;
+    return (await update).result;
   };
 }
 

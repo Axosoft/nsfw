@@ -3,7 +3,9 @@ const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
 
-const { DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, sleep } = require('./common');
+const {
+  DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, sleep
+} = require('./common');
 
 const nsfw = require('../src');
 
@@ -18,6 +20,11 @@ describe('Node Sentinel File Watcher (slow)', function() {
 
   afterEach(function() {
     return fse.remove(workDir);
+  });
+
+  // Created by the hooks of the slow build once the event loop waits, see untilLoopWaits().
+  after(function() {
+    return fse.remove(`/tmp/nsfw-test-waiting-${process.pid}`);
   });
 
   it('can listen for the creation of a deeply nested file', async function () {
@@ -188,4 +195,6 @@ describe('Node Sentinel File Watcher (slow)', function() {
       }
     });
   });
+
+
 });

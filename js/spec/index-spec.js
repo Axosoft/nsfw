@@ -4,7 +4,9 @@ const exec = require('executive');
 const fse = require('fs-extra');
 const path = require('path');
 
-const { DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, sleep } = require('./common');
+const {
+  DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, countInotifyWatches, sleep, watchCountReaches
+} = require('./common');
 
 const nsfw = require('../src');
 
@@ -909,8 +911,23 @@ describe('Node Sentinel File Watcher', function() {
       };
     }
 
+    // Returns a barrier: once the marker file it creates in directory is reported, the events before it have been.
+    function markerBarrier(directory, recorder) {
+      let marker = 0;
+      return async () => {
+        const markerPath = path.join(directory, `barrier-${marker++}.file`);
+        await recorder.observe(markerPath, undefined, () => fse.writeFile(markerPath, 'Barrier'));
+      };
+    }
+
     function matches(event, filePath) {
-      return event.directory === path.dirname(filePath) && event.file === path.basename(filePath);
+      return event.directory === path.dirname(filePath) &&
+        (event.file === path.basename(filePath) || event.oldFile === path.basename(filePath));
+    }
+
+    // Events for a file with this name anywhere, also under a path the watcher shouldn't use anymore.
+    function eventsNamed(events, file) {
+      return events.filter(event => [event.file, event.oldFile, event.newFile].includes(file));
     }
 
     // reportedPath is where the watcher reports inPath's events, when that differs (macOS resolves symlinks).
@@ -919,12 +936,7 @@ describe('Node Sentinel File Watcher', function() {
       const control = recordEvents();
       const watch = await nsfw(inPath, actual.callback, { debounceMS, excludedPaths });
       const witness = await nsfw(inPath, control.callback, { debounceMS });
-      let marker = 0;
-
-      async function barrier() {
-        const markerPath = path.join(reportedPath, `barrier-${marker++}.file`);
-        await actual.observe(markerPath, undefined, () => fse.writeFile(markerPath, 'Barrier'));
-      }
+      const barrier = markerBarrier(reportedPath, actual);
 
       async function excluded(filePath, action, operation) {
         const offset = actual.events.length;
@@ -939,7 +951,7 @@ describe('Node Sentinel File Watcher', function() {
         await witness.start();
         await watch.start();
         await barrier();
-        await test({ watch, actual, barrier, excluded });
+        await test({ watch, actual, control, barrier, excluded });
       } finally {
         await Promise.all([watch.stop(), witness.stop()]);
       }
@@ -1661,6 +1673,438 @@ describe('Node Sentinel File Watcher', function() {
         await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
         const siblingFile = path.join(siblingPath, 'sibling.file');
         await actual.observe(siblingFile, nsfw.actions.CREATED, () => fse.writeFile(siblingFile, 'Sibling.'));
+      });
+    });
+
+    it('does not watch an excluded directory created after start()', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'created-later');
+
+      await withWatchers(inPath, [excludedPath], async ({ control, barrier, excluded }) => {
+        await control.observe(excludedPath, undefined, () => fse.mkdir(excludedPath));
+        await barrier();
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+      });
+    });
+
+    it('does not watch an excluded directory recreated after start()', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'recreated');
+      await fse.mkdir(excludedPath);
+
+      await withWatchers(inPath, [excludedPath], async ({ control, barrier, excluded }) => {
+        await control.observe(excludedPath, undefined, () => fse.remove(excludedPath));
+        await control.observe(excludedPath, undefined, () => fse.mkdir(excludedPath));
+        await barrier();
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+      });
+    });
+
+    for (const crossParent of [false, true]) {
+      it(`respects exclusions when a directory moves ${crossParent ? 'between parents' : 'within a parent'}`,
+        async function() {
+          const inPath = path.join(workDir, 'test4');
+          const sourceParent = path.join(inPath, 'source');
+          const targetParent = crossParent ? path.join(inPath, 'target') : sourceParent;
+          const source = path.join(sourceParent, 'included');
+          const excludedPath = path.join(targetParent, 'excluded');
+          const includedAgain = path.join(sourceParent, 'included-again');
+          await fse.ensureDir(source);
+          await fse.ensureDir(targetParent);
+
+          await withWatchers(inPath, [excludedPath], async ({ actual, control, barrier, excluded }) => {
+            await actual.observe(source, undefined, () => fse.rename(source, excludedPath));
+            await barrier();
+            await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+
+            await control.observe(excludedPath, undefined, () => fse.rename(excludedPath, includedAgain));
+            await barrier();
+            const includedFile = path.join(includedAgain, 'included.file');
+            await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included'));
+          });
+        });
+    }
+
+    it('respects excluded descendants when their parent moves', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const source = path.join(inPath, 'source');
+      const target = path.join(inPath, 'target');
+      const excludedPath = path.join(target, 'child');
+      await fse.ensureDir(path.join(source, 'child'));
+
+      await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+        await actual.observe(source, undefined, () => fse.rename(source, target));
+        await barrier();
+        await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+        assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+      });
+    });
+
+    it('watches a formerly excluded descendant after its parent moves', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const source = path.join(inPath, 'source');
+      const target = path.join(inPath, 'target');
+      const excludedPath = path.join(source, 'child');
+      await fse.ensureDir(excludedPath);
+
+      await withWatchers(inPath, [excludedPath], async ({ actual, barrier }) => {
+        await actual.observe(source, undefined, () => fse.rename(source, target));
+        await barrier();
+        const includedFile = path.join(target, 'child', 'included.file');
+        await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included'));
+      });
+    });
+
+    it('watches an excluded directory moved to another parent', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'excluded');
+      const target = path.join(inPath, 'target', 'included');
+      await fse.ensureDir(excludedPath);
+      await fse.ensureDir(path.dirname(target));
+
+      await withWatchers(inPath, [excludedPath], async ({ actual, control, barrier }) => {
+        await control.observe(excludedPath, undefined, () => fse.rename(excludedPath, target));
+        await barrier();
+        const includedFile = path.join(target, 'included.file');
+        await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included'));
+      });
+    });
+
+    // Windows can't rename a directory over another one.
+    if (process.platform !== 'win32') {
+      it('watches an excluded directory renamed over an empty directory', async function() {
+        const inPath = path.join(workDir, 'test4');
+        const excludedPath = path.join(inPath, 'excluded');
+        const target = path.join(inPath, 'target');
+        await Promise.all([fse.ensureDir(path.join(excludedPath, 'child')), fse.ensureDir(target)]);
+
+        await withWatchers(inPath, [excludedPath], async ({ actual, control, barrier }) => {
+          await control.observe(excludedPath, undefined, () => fse.rename(excludedPath, target));
+          await barrier();
+          const includedFile = path.join(target, 'child', 'included.file');
+          await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included'));
+        });
+      });
+    }
+
+    it('stops watching a directory moved into an excluded directory', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'excluded');
+      const source = path.join(inPath, 'moving');
+      const moved = path.join(excludedPath, 'moving');
+      await Promise.all([fse.ensureDir(excludedPath), fse.ensureDir(source)]);
+
+      await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+        await actual.observe(source, undefined, () => fse.rename(source, moved));
+        await barrier();
+        await exerciseExcludedFile(path.join(moved, 'excluded.file'), excluded);
+        // Nor under the path it had before.
+        assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+      });
+    });
+
+    it('stops watching a directory moved out of the watched path, and watches it again when it comes back',
+      async function() {
+        const inPath = path.join(workDir, 'test4');
+        const source = path.join(inPath, 'leaving');
+        const outside = path.join(workDir, 'test5', 'leaving');
+        const back = path.join(inPath, 'back');
+        await fse.ensureDir(source);
+
+        await withWatchers(inPath, [], async ({ actual, barrier }) => {
+          await actual.observe(source, undefined, () => fse.rename(source, outside));
+          await barrier();
+          await fse.writeFile(path.join(outside, 'outside.file'), 'Outside');
+          await barrier();
+          await sleep(absenceWindowMS);
+          assert.deepStrictEqual(eventsNamed(actual.events, 'outside.file'), []);
+
+          // From outside, so how it's reported differs by platform.
+          await fse.rename(outside, back);
+          await barrier();
+          const backFile = path.join(back, 'back.file');
+          await actual.observe(backFile, nsfw.actions.CREATED, () => fse.writeFile(backFile, 'Back'));
+        });
+      });
+
+    if (process.platform === 'linux') {
+      const countDirectories = (directory, excludedPaths) => excludedPaths.includes(directory) ? 0 :
+        fse.readdirSync(directory, { withFileTypes: true })
+          .filter(entry => entry.isDirectory())
+          .reduce((count, entry) => count + countDirectories(path.join(directory, entry.name), excludedPaths), 1);
+
+      // The watches of directories that stop being watched are removed a few at a time, since each removal queues an
+      // event: removing more than the inotify queue holds at once would overflow it.
+      describe('with more directories than the inotify queue holds', function() {
+        const readLimit = name => Number(fse.readFileSync(`/proc/sys/fs/inotify/${name}`, 'utf8'));
+        const inPath = path.join(workDir, 'test4');
+        const dist = path.join(inPath, 'dist');
+        let directoryCount;
+        // The directory scanned last (in alphabetical order), whose watch is the last to be removed.
+        const lastScanned = () => path.join(dist,
+          Array.from({ length: Math.ceil(directoryCount / 100) }, (unused, i) => `d${i}`).sort().pop(), 'd99');
+
+        before(function() {
+          directoryCount = readLimit('max_queued_events') + 1000;
+          // Hosts with raised limits would take too long to fill.
+          if (directoryCount > 66000 || readLimit('max_user_watches') < directoryCount + 5000) {
+            this.skip();
+          }
+        });
+
+        beforeEach(function() {
+          for (let i = 0; i * 100 < directoryCount; ++i) {
+            for (let j = 0; j < 100; ++j) {
+              fse.mkdirSync(path.join(dist, `d${i}`, `d${j}`), { recursive: true });
+            }
+          }
+        });
+
+        async function withLargeTreeWatcher(excludedPaths, test) {
+          const actual = recordEvents();
+          const errors = [];
+          const otherWatches = countInotifyWatches();
+          const watch = await nsfw(inPath, actual.callback, {
+            debounceMS,
+            errorCallback: error => errors.push(error),
+            excludedPaths
+          });
+          const barrier = markerBarrier(inPath, actual);
+
+          const watchesConverge = currentExcludedPaths =>
+            watchCountReaches(otherWatches + countDirectories(inPath, currentExcludedPaths), 200);
+
+          try {
+            await watch.start();
+            await watchesConverge(excludedPaths);
+            await test({ watch, actual, barrier, watchesConverge });
+            assert.deepStrictEqual(errors, []);
+          } finally {
+            await watch.stop();
+          }
+        }
+
+        it('keeps watching after moving it away and onto an excluded path', async function() {
+          const outside = path.join(workDir, 'test5', 'dist');
+          const build = path.join(inPath, 'build');
+
+          await withLargeTreeWatcher([build], async ({ actual, barrier, watchesConverge }) => {
+            await fse.rename(dist, outside);
+            await barrier();
+            await watchesConverge([build]);
+            await fse.rename(outside, dist);
+            await barrier();
+            await watchesConverge([build]);
+            await fse.rename(dist, build);
+            await barrier();
+            await watchesConverge([build]);
+            // Stops while the watches of a tree that just moved away are being removed.
+            await fse.rename(build, dist);
+            await barrier();
+            await actual.observe(dist, nsfw.actions.DELETED, () => fse.rename(dist, outside));
+          });
+        });
+
+        it('stops reporting what an excluded tree holds while its watches are still being removed', async function() {
+          await withLargeTreeWatcher([], async ({ watch, actual, barrier, watchesConverge }) => {
+            await watch.updateExcludedPaths([dist]);
+            const filePath = path.join(lastScanned(), 'excluded.file');
+            await fse.writeFile(filePath, 'Excluded');
+            await barrier();
+            assert.deepStrictEqual(actual.events.filter(event => matches(event, filePath)), []);
+            await watchesConverge([dist]);
+          });
+        });
+
+        it('reports changes in a tree right after it is included again', async function() {
+          await withLargeTreeWatcher([], async ({ watch, actual, barrier, watchesConverge }) => {
+            // Its watch is still there when the tree is included again. That the events it queued meanwhile are dropped
+            // needs the event loop held, see the slow spec.
+            const deepPath = lastScanned();
+            const existingPath = path.join(deepPath, 'existing.file');
+            const excludedPath = path.join(deepPath, 'excluded.file');
+            await fse.writeFile(existingPath, 'Existing');
+            await barrier();
+
+            await watch.updateExcludedPaths([dist]);
+            await fse.writeFile(excludedPath, 'Excluded');
+            await watch.updateExcludedPaths([]);
+            await actual.observe(existingPath, nsfw.actions.DELETED, () => fse.remove(existingPath));
+            await barrier();
+            assert.deepStrictEqual(actual.events.filter(event => matches(event, excludedPath)), []);
+            await watchesConverge([]);
+          });
+        });
+
+        it('keeps watching after excluding it, and after including it again right away', async function() {
+          await withLargeTreeWatcher([], async ({ watch, actual, watchesConverge }) => {
+            // Nothing else happens meanwhile, so the event loop only wakes up for the removals.
+            await watch.updateExcludedPaths([dist]);
+            await watchesConverge([dist]);
+
+            await watch.updateExcludedPaths([]);
+            await watch.updateExcludedPaths([dist]);
+            await watch.updateExcludedPaths([]);
+            const last = Math.ceil(directoryCount / 100) - 1;
+            for (const directory of ['d0/d0', `d${Math.floor(last / 2)}/d50`, `d${last}/d99`]) {
+              const filePath = path.join(dist, directory, 'included.file');
+              await actual.observe(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'Included'));
+            }
+            await watchesConverge([]);
+          });
+        });
+      });
+
+      it('does not watch an excluded directory through a symlink to it', async function() {
+        const inPath = path.join(workDir, 'test4');
+        // Scanned before the symlink, so the directory is watched at its own path.
+        const excludedPath = path.join(inPath, 'a-real');
+        await fse.ensureDir(excludedPath);
+        await fse.ensureDir(path.join(inPath, 'links'));
+        await fse.symlink(path.join('..', 'a-real'), path.join(inPath, 'links', 'link'));
+
+        await withWatchers(inPath, [], async ({ watch, actual, excluded }) => {
+          await watch.updateExcludedPaths([excludedPath]);
+          await exerciseExcludedFile(path.join(excludedPath, 'excluded.file'), excluded);
+          assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+        });
+      });
+
+      it('keeps watching a directory at a symlink scanned before it, with its exclusions', async function() {
+        const inPath = path.join(workDir, 'test4');
+        const realPath = path.join(inPath, 'z-real');
+        const linkPath = path.join(inPath, 'a-link');
+        await fse.ensureDir(path.join(realPath, 'sub'));
+        await fse.symlink('z-real', linkPath);
+
+        await withWatchers(inPath, [path.join(linkPath, 'sub')], async ({ actual, excluded }) => {
+          const linkFile = path.join(linkPath, 'linked.file');
+          await actual.observe(linkFile, nsfw.actions.CREATED,
+            () => fse.writeFile(path.join(realPath, 'linked.file'), 'Linked'));
+          await excluded(path.join(linkPath, 'sub', 'excluded.file'), nsfw.actions.CREATED,
+            () => fse.writeFile(path.join(realPath, 'sub', 'excluded.file'), 'Excluded'));
+          assert.deepStrictEqual(actual.events.filter(event => event.directory.startsWith(realPath)), []);
+          assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+        });
+      });
+
+      for (const settleExclusion of [false, true]) {
+        const when = settleExclusion ? 'after events settle' : 'right away';
+        it(`restores watches through a symlink when a real path is included again ${when}`, async function() {
+          const inPath = path.join(workDir, 'test4');
+          const realSub = path.join(inPath, 'z-real', 'sub');
+          const linkSub = path.join(inPath, 'a-link', 'sub');
+          const blocked = path.join(linkSub, 'blocked');
+          await fse.ensureDir(path.join(realSub, 'blocked'));
+          await fse.symlink('z-real', path.join(inPath, 'a-link'));
+
+          await withWatchers(inPath, [blocked], async ({ watch, actual, excluded }) => {
+            const write = file => fse.writeFile(path.join(realSub, file), file);
+            await actual.observe(path.join(linkSub, 'before.file'), nsfw.actions.CREATED, () => write('before.file'));
+
+            await watch.updateExcludedPaths([blocked, realSub]);
+            if (settleExclusion) {
+              await excluded(path.join(linkSub, 'hidden.file'), nsfw.actions.CREATED, () => write('hidden.file'));
+            } else {
+              await write('hidden.file');
+            }
+            await watch.updateExcludedPaths([blocked]);
+
+            await actual.observe(path.join(linkSub, 'after.file'), nsfw.actions.CREATED, () => write('after.file'));
+            await excluded(path.join(blocked, 'blocked.file'), nsfw.actions.CREATED,
+              () => write(path.join('blocked', 'blocked.file')));
+            assert.deepStrictEqual(eventsNamed(actual.events, 'hidden.file'), []);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'blocked.file'), []);
+          });
+        });
+      }
+
+      it('keeps overlapping alias exclusions until the last spelling is removed', async function() {
+        const inPath = path.join(workDir, 'test4');
+        const realSub = path.join(inPath, 'z-real', 'sub');
+        const reportedSub = path.join(inPath, 'a-link', 'sub');
+        const alternateSub = path.join(inPath, 'b-link', 'sub');
+        await fse.ensureDir(realSub);
+        await fse.symlink('z-real', path.join(inPath, 'a-link'));
+        await fse.symlink('z-real', path.join(inPath, 'b-link'));
+
+        await withWatchers(inPath, [], async ({ watch, actual, excluded }) => {
+          for (const [index, retained] of [realSub, alternateSub].entries()) {
+            await watch.updateExcludedPaths([alternateSub, realSub]);
+            await watch.updateExcludedPaths([retained]);
+            const hidden = `hidden-${index}.file`;
+            await excluded(path.join(reportedSub, hidden), nsfw.actions.CREATED,
+              () => fse.writeFile(path.join(realSub, hidden), 'Excluded'));
+
+            await watch.updateExcludedPaths([]);
+            const visible = `visible-${index}.file`;
+            await actual.observe(path.join(reportedSub, visible), nsfw.actions.CREATED,
+              () => fse.writeFile(path.join(realSub, visible), 'Included'));
+          }
+        });
+      });
+
+      it('keeps a descendant excluded through another alias when its ancestor is included again', async function() {
+        const inPath = path.join(workDir, 'test4');
+        const realSub = path.join(inPath, 'z-real', 'sub');
+        const reportedSub = path.join(inPath, 'a-link', 'sub');
+        const blocked = path.join(inPath, 'b-link', 'sub', 'blocked');
+        await fse.ensureDir(path.join(realSub, 'blocked'));
+        await fse.symlink('z-real', path.join(inPath, 'a-link'));
+        await fse.symlink('z-real', path.join(inPath, 'b-link'));
+
+        await withWatchers(inPath, [], async ({ watch, actual, excluded }) => {
+          await watch.updateExcludedPaths([blocked]);
+          await watch.updateExcludedPaths([blocked, realSub]);
+          await watch.updateExcludedPaths([blocked]);
+
+          await actual.observe(path.join(reportedSub, 'visible.file'), nsfw.actions.CREATED,
+            () => fse.writeFile(path.join(realSub, 'visible.file'), 'Included'));
+          await excluded(path.join(reportedSub, 'blocked', 'hidden.file'), nsfw.actions.CREATED,
+            () => fse.writeFile(path.join(realSub, 'blocked', 'hidden.file'), 'Excluded'));
+
+          await watch.updateExcludedPaths([]);
+          await actual.observe(path.join(reportedSub, 'blocked', 'restored.file'), nsfw.actions.CREATED,
+            () => fse.writeFile(path.join(realSub, 'blocked', 'restored.file'), 'Included'));
+        });
+      });
+
+      it('removes the watches of directories that move away, including one deleted right after', async function() {
+        const inPath = path.join(workDir, 'test4');
+        const outsidePath = path.join(workDir, 'test5');
+        for (const tree of ['deleted', 'kept']) {
+          for (let i = 0; i < 300; ++i) {
+            await fse.mkdirp(path.join(inPath, tree, `d${i % 10}`, `d${i}`));
+          }
+        }
+        const actual = recordEvents();
+        const otherWatches = countInotifyWatches();
+        const watch = await nsfw(inPath, actual.callback, { debounceMS });
+        try {
+          await watch.start();
+          await fse.rename(path.join(inPath, 'deleted'), path.join(outsidePath, 'deleted'));
+          await fse.remove(path.join(outsidePath, 'deleted'));
+          await fse.rename(path.join(inPath, 'kept'), path.join(outsidePath, 'kept'));
+          await markerBarrier(inPath, actual)();
+          await watchCountReaches(otherWatches + countDirectories(inPath, []), 200);
+        } finally {
+          await watch.stop();
+        }
+      });
+    }
+
+    it('can include an excluded directory created after start()', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const excludedPath = path.join(inPath, 'created-later');
+
+      await withWatchers(inPath, [excludedPath], async ({ watch, actual, control, barrier, excluded }) => {
+        await control.observe(excludedPath, undefined, () => fse.mkdir(excludedPath));
+        await barrier();
+        const filePath = path.join(excludedPath, 'included.file');
+        await excluded(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'Excluded'));
+        await watch.updateExcludedPaths([]);
+        await actual.observe(filePath, nsfw.actions.MODIFIED, () => appendFile(filePath, 'Included'));
       });
     });
 

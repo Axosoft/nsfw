@@ -3,7 +3,7 @@ const cp = require('child_process');
 if (process.platform !== 'win32' && process.platform !== 'darwin') {
   // When ran as a npm script we can invoke npm bins such as node-gyp and mocha directly
   exec('node-gyp rebuild', { env: { ...process.env, NSFW_TEST_SLOW: 1 } });
-  exec('mocha --exit --v8-expose-gc js/spec/index-slow-spec.js');
+  exec('mocha --exit --v8-expose-gc js/spec/index-slow-spec.js js/spec/slow/*-spec.js');
   exec('node-gyp rebuild');
 }
 exec('mocha --exit --v8-expose-gc js/spec/canonical-path-spec.js js/spec/index-spec.js js/spec/lifecycle-spec.js');

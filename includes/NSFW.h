@@ -48,6 +48,16 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     uint64_t mNextRunId = 0;
     uint64_t mRunId = 0;
     bool stopRun(uint64_t runId = 0);
+    std::atomic<uint64_t> mRetiredRunId{0};
+    uint64_t mNextJobId = 0;
+    std::atomic<uint64_t> mStopThroughJobId{0};
+    struct PendingUpdate {
+      uint64_t runId;
+      Napi::Promise::Deferred deferred;
+      std::vector<std::string> paths;
+    };
+    std::vector<PendingUpdate> mPendingUpdates;
+    void resolveRetiredUpdates();
 
     class Job;
     // Main-thread only; at most the front job is submitted to the thread pool.
@@ -67,6 +77,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
 
         Napi::Promise::Deferred mDeferred;
         NSFW *mNSFW;
+        uint64_t mJobId;
 
       private:
         Napi::ObjectReference mWatcher;
@@ -145,6 +156,8 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
 
       private:
         std::atomic<bool> mDidUpdatetExcludedPaths;
+        uint64_t mWaitingRunId = 0;
+        bool mYieldedToStop = false;
         // The normalized list this call set, which its promise resolves with.
         std::vector<std::string> mExcludedPaths;
     };

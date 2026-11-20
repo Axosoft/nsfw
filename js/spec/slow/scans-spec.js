@@ -28,6 +28,23 @@ describe('inotify scans (slow)', function() {
       }, [path.join(watchedPath, 'A', 'child')]);
     });
 
+  it('reports what was created in a directory a move includes again once a later move in the same read took it on',
+    async function() {
+      await fse.ensureDir(path.join(watchedPath, 'source', 'blocked'));
+      const includedPath = path.join(watchedPath, 'moved', 'blocked');
+
+      await watchWhile(async events => {
+        await whileHeld(async () => {
+          // The first move excludes blocked and drops its watch, which has this creation queued.
+          await fse.rename(path.join(watchedPath, 'source'), path.join(watchedPath, 'target'));
+          await fse.rename(path.join(watchedPath, 'target'), path.join(watchedPath, 'moved'));
+          await fse.writeFile(path.join(includedPath, 'inside.file'), 'Inside');
+        });
+        await waitFor(events, event => event.action === nsfw.actions.CREATED && event.directory === includedPath &&
+          event.file === 'inside.file', 'creation in the directory included again');
+      }, [path.join(watchedPath, 'target', 'blocked')]);
+    });
+
   it('does not watch the subtree of a directory that took the place where a move includes a directory again',
     async function() {
       await fse.ensureDir(path.join(watchedPath, 'A', 'child'));

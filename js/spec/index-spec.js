@@ -2070,6 +2070,25 @@ describe('Node Sentinel File Watcher', function() {
         });
       });
 
+      it('reports what a formerly excluded descendant holds once its parent moves', async function() {
+        const inPath = path.join(workDir, 'test4');
+        const source = path.join(inPath, 'source');
+        const target = path.join(inPath, 'target');
+        const excludedPath = path.join(source, 'child');
+        await fse.outputFile(path.join(excludedPath, 'nested', 'held.file'), 'Held');
+
+        await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+          await exerciseExcludedFile(path.join(excludedPath, 'nested', 'excluded.file'), excluded);
+          await actual.observe(path.join(target, 'child', 'nested', 'held.file'), nsfw.actions.CREATED,
+            () => fse.rename(source, target));
+          await barrier();
+          for (const file of ['held.file', 'excluded.file']) {
+            assert.deepStrictEqual(eventsNamed(actual.events, file).map(event => event.directory),
+              [path.join(target, 'child', 'nested')]);
+          }
+        });
+      });
+
       it('removes the watches of directories that move away, including one deleted right after', async function() {
         const inPath = path.join(workDir, 'test4');
         const outsidePath = path.join(workDir, 'test5');

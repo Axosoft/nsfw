@@ -80,7 +80,7 @@ stops with an error instead of losing events silently.
 - On Linux, an excluded directory created, recreated or moved into place after `start()` is no longer watched, and
   neither is an excluded path below a directory that moves there (#210). Before, their contents were reported, while
   macOS and Windows dropped them. The other way around, a directory that was only excluded under its old path is
-  watched once it moves.
+  watched once it moves, and what it holds is reported as `CREATED`.
   These checks use the path recorded by the Linux watcher. For example, if it watches `a-link` as an alias for
   `z-real`, excluding `z-real/hidden` can still allow events under `a-link/hidden` after a rename or recreation (#222).
 - On Linux, a directory moved out of the watched path, or into an excluded directory, is no longer watched. Before, its

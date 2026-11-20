@@ -369,7 +369,7 @@ void InotifyTree::renameDirectory(
     // another one's dropped watch each time, while this one event is handled. The discards below see no node left
     // unscanned.
     Creating creating(this);
-    excludedAfterMove = applyExclusionsAfterMove(child, oldPath);
+    excludedAfterMove = applyExclusionsAfterMove(child, oldPath, emitCreatedEvent);
   }
   for (int excluded : excludedAfterMove) {
     // Unless an earlier one took it where it isn't excluded.
@@ -929,7 +929,11 @@ bool InotifyTree::isAncestorOrSelf(InotifyNode *ancestor, InotifyNode *node) {
 // The tree only holds what's excluded at the path each directory had when it was added, so once node moves from
 // oldPath, the directories only the old path excluded are watched, and the watch descriptors of the excluded
 // directories now under it are returned, for the caller to discard: that may move nodes elsewhere, see discard().
-std::vector<int> InotifyTree::applyExclusionsAfterMove(InotifyNode *node, const std::string &oldPath) {
+std::vector<int> InotifyTree::applyExclusionsAfterMove(
+  InotifyNode *node,
+  const std::string &oldPath,
+  EmitCreatedEvent emitCreatedEvent
+) {
   std::vector<int> excluded;
   const std::string newPath = node->getFullPath();
   for (const std::string &excludedPath : mExcludedPaths) {
@@ -958,7 +962,7 @@ std::vector<int> InotifyTree::applyExclusionsAfterMove(InotifyNode *node, const 
 
     std::string name = relativePath.substr(location == std::string::npos ? 0 : location + 1);
     if (reinclude) {
-      includeAgain(parent, name);
+      includeAgain(parent, name, emitCreatedEvent);
     } else {
       InotifyNode *child = parent->findDescendant(name);
       if (child != NULL) {
@@ -972,8 +976,10 @@ std::vector<int> InotifyTree::applyExclusionsAfterMove(InotifyNode *node, const 
 // Watches name in parent, a path an exclusion no longer covers. Not if parent's path leads elsewhere: a rename still
 // queued put another directory there, whose subtree it would watch as parent's. Nor if name went away: a rename still
 // queued may have taken it. Then the rescan after that rename watches what is there, see rescanIncomplete().
-void InotifyTree::includeAgain(InotifyNode *parent, const std::string &name) {
-  if (!parent->leadsToItself() || parent->createChild(name)) {
+// With emitCreatedEvent, for a move that takes it out of an excluded path, what it holds is reported as created: none
+// of it was visible before, and a watch dropped while it was excluded has its events since the move dropped too.
+void InotifyTree::includeAgain(InotifyNode *parent, const std::string &name, EmitCreatedEvent emitCreatedEvent) {
+  if (!parent->leadsToItself() || parent->createChild(name, emitCreatedEvent)) {
     markScanIncomplete(parent);
   }
 }

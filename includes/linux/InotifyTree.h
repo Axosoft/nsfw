@@ -174,8 +174,12 @@ private:
   void rescanIncomplete(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);
   bool isExcluded(const std::string &path) const;
   bool isExcludedThroughAlias(InotifyNode *parent, const std::string &name);
-  std::vector<int> applyExclusionsAfterMove(InotifyNode *node, const std::string &oldPath);
-  void includeAgain(InotifyNode *parent, const std::string &name);
+  std::vector<int> applyExclusionsAfterMove(
+    InotifyNode *node,
+    const std::string &oldPath,
+    EmitCreatedEvent emitCreatedEvent
+  );
+  void includeAgain(InotifyNode *parent, const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr);
   bool existWatchedPath();
   bool isWatchedPathGone();
 

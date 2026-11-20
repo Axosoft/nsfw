@@ -29,6 +29,7 @@ private:
   EmitCreatedEvent emitCreated();
   void watchIgnored(int wd);
   bool isQuarantined(int wd, uint32_t mask);
+  void entryDropped(int wd, std::string name);
   void finishRead(int eventsRead, size_t bytesRead);
   void modify(int wd, std::string name);
   void remove(int wd, std::string name);
@@ -37,6 +38,7 @@ private:
   bool removeDroppedWatch(int wd);
   void removeDroppedWatches(int eventsRead);
   void retryWatches();
+  void revalidateRejected();
   void removeMovedDirectory(int wd, std::string name);
   void rename(int fromWd, std::string fromName, int toWd, std::string toName);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);

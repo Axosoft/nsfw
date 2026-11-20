@@ -2094,6 +2094,357 @@ describe('Node Sentinel File Watcher', function() {
         });
       });
 
+      describe('through a symlink scanned before the directory it leads to', function() {
+        const inPath = path.join(workDir, 'test4');
+        // The exclusions are spelled with this one, while the watches are reported under the symlink.
+        const realPath = path.join(inPath, 'z-real');
+        const linkPath = path.join(inPath, 'a-link');
+
+        beforeEach(async function() {
+          await fse.ensureDir(realPath);
+          await fse.symlink('z-real', linkPath);
+        });
+
+        it('excludes a directory renamed to an excluded path', async function() {
+          await fse.ensureDir(path.join(realPath, 'visible'));
+          await fse.ensureDir(path.join(realPath, 'hidden-other'));
+
+          await withWatchers(inPath, [path.join(realPath, 'hidden')], async ({ actual, barrier, excluded }) => {
+            await actual.observe(path.join(linkPath, 'visible'), undefined,
+              () => fse.rename(path.join(realPath, 'visible'), path.join(realPath, 'hidden')));
+            await barrier();
+            await exerciseExcludedFile(path.join(linkPath, 'hidden', 'excluded.file'), excluded);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+            await expectReported(actual, path.join(linkPath, 'hidden-other'));
+          });
+        });
+
+        it('excludes a descendant when its parent is renamed', async function() {
+          await fse.ensureDir(path.join(realPath, 'source', 'blocked'));
+          await fse.ensureDir(path.join(realPath, 'source', 'blocked-other'));
+          await fse.ensureDir(path.join(realPath, 'target-other', 'blocked'));
+          const excludedPath = path.join(realPath, 'target', 'blocked');
+
+          await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+            await expectReported(actual, path.join(linkPath, 'source', 'blocked'));
+            await actual.observe(path.join(linkPath, 'source'), undefined,
+              () => fse.rename(path.join(realPath, 'source'), path.join(realPath, 'target')));
+            await barrier();
+            await exerciseExcludedFile(path.join(linkPath, 'target', 'blocked', 'excluded.file'), excluded);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+            for (const sibling of [['target'], ['target', 'blocked-other'], ['target-other', 'blocked']]) {
+              await expectReported(actual, path.join(linkPath, ...sibling));
+            }
+          });
+        });
+
+        it('watches a descendant again when its parent is renamed away', async function() {
+          await fse.ensureDir(path.join(realPath, 'source', 'blocked'));
+          const excludedPath = path.join(realPath, 'source', 'blocked');
+          const includedPath = path.join(linkPath, 'target', 'blocked');
+
+          await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+            await exerciseExcludedFile(path.join(linkPath, 'source', 'blocked', 'excluded.file'), excluded);
+            // What it holds by then shows up with it.
+            await actual.observe(path.join(includedPath, 'excluded.file'), nsfw.actions.CREATED,
+              () => fse.rename(path.join(realPath, 'source'), path.join(realPath, 'target')));
+            await barrier();
+            await expectReported(actual, includedPath);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file').map(event => event.directory),
+              [includedPath]);
+          });
+        });
+
+        it('excludes what takes the place of a renamed parent, not what the parent holds then', async function() {
+          await fse.ensureDir(path.join(realPath, 'parent'));
+          const excludedPath = path.join(realPath, 'parent', 'future');
+          const reportedPath = path.join(linkPath, 'parent', 'future');
+
+          await withWatchers(inPath, [excludedPath], async ({ actual, control, barrier, excluded }) => {
+            await actual.observe(path.join(linkPath, 'parent'), undefined,
+              () => fse.rename(path.join(realPath, 'parent'), path.join(realPath, 'moved')));
+            await barrier();
+            await actual.observe(path.join(linkPath, 'moved', 'future'), nsfw.actions.CREATED,
+              () => fse.mkdir(path.join(realPath, 'moved', 'future')));
+            await barrier();
+            await expectReported(actual, path.join(linkPath, 'moved', 'future'));
+
+            await control.observe(reportedPath, nsfw.actions.CREATED, () => fse.mkdirp(excludedPath));
+            await barrier();
+            await exerciseExcludedFile(path.join(reportedPath, 'excluded.file'), excluded);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+          });
+        });
+
+        for (const fromStart of [true, false]) {
+          const when = fromStart ? 'from the first scan' : 'by an update';
+          it(`keeps a directory excluded ${when} when it is recreated`, async function() {
+            const excludedPath = path.join(realPath, 'sub');
+            const reportedPath = path.join(linkPath, 'sub');
+            await fse.ensureDir(excludedPath);
+            await fse.ensureDir(path.join(realPath, 'sub-other'));
+
+            await withWatchers(inPath, fromStart ? [excludedPath] : [],
+              async ({ watch, actual, control, barrier, excluded }) => {
+                if (!fromStart) {
+                  await expectReported(actual, reportedPath);
+                  await watch.updateExcludedPaths([excludedPath]);
+                }
+                await exerciseExcludedFile(path.join(reportedPath, 'excluded.file'), excluded);
+
+                await control.observe(reportedPath, nsfw.actions.DELETED, () => fse.remove(excludedPath));
+                await control.observe(reportedPath, nsfw.actions.CREATED, () => fse.mkdir(excludedPath));
+                await barrier();
+                await exerciseExcludedFile(path.join(reportedPath, 'excluded.file'), excluded);
+                assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+                await expectReported(actual, path.join(linkPath, 'sub-other'));
+
+                await watch.updateExcludedPaths([]);
+                await expectReported(actual, reportedPath);
+              });
+          });
+        }
+
+        it('watches at its own path a directory whose rename leaves the symlink dangling', async function() {
+          const otherPath = path.join(inPath, 'z-other');
+          await fse.ensureDir(path.join(realPath, 'hidden'));
+          await fse.ensureDir(path.join(realPath, 'shown'));
+
+          await withWatchers(inPath, [path.join(realPath, 'hidden')], async ({ actual, barrier, excluded }) => {
+            await exerciseExcludedFile(path.join(linkPath, 'hidden', 'excluded.file'), excluded);
+            // No excluded path names hidden once its parent has another name: what it holds shows up with it.
+            await actual.observe(path.join(otherPath, 'hidden', 'excluded.file'), nsfw.actions.CREATED,
+              () => fse.rename(realPath, otherPath));
+            await barrier();
+            for (const directory of ['hidden', 'shown']) {
+              await expectReported(actual, path.join(otherPath, directory));
+            }
+            await actual.observe(path.join(otherPath, 'created'), nsfw.actions.CREATED,
+              () => fse.mkdir(path.join(otherPath, 'created')));
+            await barrier();
+            await expectReported(actual, path.join(otherPath, 'created'));
+          });
+        });
+
+        for (const repointed of [false, true]) {
+          const change = repointed ? 'repointed' : 'removed';
+          it(`watches a directory again once the symlink in its excluded path is ${change}`, async function() {
+            const aliasPath = path.join(inPath, 'b-link');
+            const reportedPath = path.join(linkPath, 'hidden');
+            await fse.ensureDir(path.join(realPath, 'hidden'));
+            await fse.ensureDir(path.join(inPath, 'm-other'));
+            await fse.symlink('z-real', aliasPath);
+
+            await withWatchers(inPath, [path.join(aliasPath, 'hidden')], async ({ actual, barrier, excluded }) => {
+              await exerciseExcludedFile(path.join(reportedPath, 'excluded.file'), excluded);
+              // What it holds by then shows up with it.
+              await actual.observe(path.join(reportedPath, 'excluded.file'), nsfw.actions.CREATED, async () => {
+                await fse.remove(aliasPath);
+                if (repointed) {
+                  await fse.symlink('m-other', aliasPath);
+                }
+              });
+              await barrier();
+              await expectReported(actual, reportedPath);
+            });
+          });
+        }
+
+        it('reports a directory at the symlink once it leads elsewhere', async function() {
+          const otherPath = path.join(inPath, 'm-other');
+          await fse.ensureDir(otherPath);
+
+          await withWatchers(inPath, [path.join(realPath, 'hidden')], async ({ actual, barrier }) => {
+            await fse.remove(linkPath);
+            await fse.symlink('m-other', linkPath);
+            await barrier();
+            // Through the symlink, which no longer leads to the directory the excluded path is in.
+            await actual.observe(path.join(otherPath, 'hidden'), nsfw.actions.CREATED,
+              () => fse.mkdir(path.join(linkPath, 'hidden')));
+            await barrier();
+            await actual.observe(path.join(otherPath, 'hidden', 'included.file'), nsfw.actions.CREATED,
+              () => fse.writeFile(path.join(linkPath, 'hidden', 'included.file'), 'Included'));
+          });
+        });
+
+        it('follows a symlink in an excluded path to the directory it leads to now', async function() {
+          const otherPath = path.join(inPath, 'm-other');
+          const aliasPath = path.join(inPath, 'b-link');
+          await fse.ensureDir(otherPath);
+          await fse.symlink('z-real', aliasPath);
+
+          const excludedPath = path.join(aliasPath, 'hidden');
+          await withWatchers(inPath, [excludedPath], async ({ actual, control, barrier, excluded }) => {
+            await fse.remove(aliasPath);
+            await fse.symlink('m-other', aliasPath);
+            await barrier();
+
+            // Where the symlink led when the path was excluded.
+            await actual.observe(path.join(linkPath, 'hidden'), nsfw.actions.CREATED,
+              () => fse.mkdir(path.join(realPath, 'hidden')));
+            await barrier();
+            await expectReported(actual, path.join(linkPath, 'hidden'));
+
+            await control.observe(path.join(otherPath, 'hidden'), nsfw.actions.CREATED,
+              () => fse.mkdir(path.join(otherPath, 'hidden')));
+            await barrier();
+            await exerciseExcludedFile(path.join(otherPath, 'hidden', 'excluded.file'), excluded);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+          });
+        });
+
+        it('excludes by an absolute symlink when the watched path is given through another one', async function() {
+          const givenPath = path.join(workDir, 'test5', 'given');
+          await fse.ensureDir(path.join(realPath, 'hidden'));
+          await fse.symlink(inPath, givenPath);
+          // Spelled with no symlink, as the watcher has the watched path.
+          await fse.symlink(path.join(await fse.realpath(inPath), 'z-real'), path.join(inPath, 'b-link'));
+
+          await withWatchers(givenPath, [path.join(givenPath, 'b-link', 'hidden')], async ({ actual, excluded }) => {
+            await exerciseExcludedFile(path.join(givenPath, 'a-link', 'hidden', 'excluded.file'), excluded);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+          });
+        });
+
+        // Nothing tells when such a path stops leading to the directory, which would stay excluded.
+        it('does not exclude by a path that leads to the directory from outside the watched one', async function() {
+          const outsideLink = path.join(workDir, 'test5', 'c-link');
+          await fse.ensureDir(path.join(realPath, 'hidden'));
+          await fse.symlink(realPath, outsideLink);
+          await fse.symlink(outsideLink, path.join(inPath, 'b-link'));
+
+          await withWatchers(inPath, [path.join(inPath, 'b-link', 'hidden')],
+            ({ actual }) => expectReported(actual, path.join(linkPath, 'hidden')));
+        });
+
+        // Nothing tells what changes in a directory that isn't watched.
+        describe('by a path through a directory that is excluded itself', function() {
+          const unwatchedPath = path.join(inPath, 'b-unwatched');
+          const excludedPath = path.join(unwatchedPath, 'b-link', 'hidden');
+          const reportedPath = path.join(linkPath, 'hidden');
+
+          beforeEach(async function() {
+            await fse.ensureDir(path.join(realPath, 'hidden'));
+            await fse.ensureDir(unwatchedPath);
+            await fse.symlink(path.join('..', 'z-real'), path.join(unwatchedPath, 'b-link'));
+          });
+
+          it('does not exclude from the start', async function() {
+            await withWatchers(inPath, [excludedPath, unwatchedPath],
+              ({ actual }) => expectReported(actual, reportedPath));
+          });
+
+          it('stops excluding once an update excludes that directory', async function() {
+            await withWatchers(inPath, [excludedPath], async ({ watch, actual, excluded }) => {
+              await exerciseExcludedFile(path.join(reportedPath, 'excluded.file'), excluded);
+              await watch.updateExcludedPaths([excludedPath, unwatchedPath]);
+              await expectReported(actual, reportedPath);
+            });
+          });
+
+          it('excludes once an update stops excluding that directory', async function() {
+            await withWatchers(inPath, [excludedPath, unwatchedPath], async ({ watch, actual, excluded }) => {
+              await expectReported(actual, reportedPath);
+              await watch.updateExcludedPaths([excludedPath]);
+              await exerciseExcludedFile(path.join(reportedPath, 'excluded.file'), excluded);
+              assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+            });
+          });
+        });
+      });
+
+      describe('through a symlink to a directory scanned before it', function() {
+        const inPath = path.join(workDir, 'test4');
+
+        it('watches a directory again once a rename leaves the symlink in its excluded path dangling',
+          async function() {
+            const oldPath = path.join(inPath, 'a-real', 'old');
+            const newPath = path.join(inPath, 'a-real', 'new');
+            await fse.ensureDir(path.join(oldPath, 'excluded'));
+            await fse.symlink(path.join('a-real', 'old'), path.join(inPath, 'm-link'));
+            const excludedPath = path.join(inPath, 'm-link', 'excluded');
+
+            await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+              await exerciseExcludedFile(path.join(oldPath, 'excluded', 'excluded.file'), excluded);
+              // What it holds by then shows up with it.
+              await actual.observe(path.join(newPath, 'excluded', 'excluded.file'), nsfw.actions.CREATED,
+                () => fse.rename(oldPath, newPath));
+              await barrier();
+              await expectReported(actual, path.join(newPath, 'excluded'));
+              assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file').map(event => event.directory),
+                [path.join(newPath, 'excluded')]);
+            });
+          });
+
+        it('watches at its own path a directory once a rename above it leaves its symlink dangling',
+          async function() {
+            const oldPath = path.join(inPath, 'b', 'z-real');
+            const newPath = path.join(inPath, 'c', 'z-real');
+            const linkPath = path.join(inPath, 'a-link');
+            await fse.ensureDir(path.join(oldPath, 'x'));
+            await fse.ensureDir(path.join(oldPath, 'y'));
+            await fse.symlink(path.join('b', 'z-real'), linkPath);
+
+            await withWatchers(inPath, [path.join(oldPath, 'x')], async ({ actual, barrier, excluded }) => {
+              await exerciseExcludedFile(path.join(linkPath, 'x', 'excluded.file'), excluded);
+              // No excluded path names x once b has another name: what it holds shows up with it.
+              await actual.observe(path.join(newPath, 'x', 'excluded.file'), nsfw.actions.CREATED,
+                () => fse.rename(path.join(inPath, 'b'), path.join(inPath, 'c')));
+              await barrier();
+              for (const directory of ['x', 'y']) {
+                await expectReported(actual, path.join(newPath, directory));
+              }
+            });
+          });
+
+        for (const holder of ['a-link', 'z-real']) {
+          const where = holder === 'a-link' ? 'a symlink' : 'its own path';
+          it(`watches a directory, held at ${where}, again once a rename hides the symlink in its excluded path`,
+            async function() {
+              const reportedPath = path.join(inPath, holder, 'x');
+              await fse.ensureDir(path.join(inPath, 'z-real', 'x'));
+              await fse.ensureDir(path.join(inPath, 'zz-old'));
+              if (holder === 'a-link') {
+                await fse.symlink('z-real', path.join(inPath, 'a-link'));
+              }
+              // Scanned after the directory it leads to, in both cases.
+              await fse.symlink(path.join('..', 'z-real'), path.join(inPath, 'zz-old', 'q-link'));
+              const excludedPath = path.join(inPath, 'zz-old', 'q-link', 'x');
+
+              await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+                await exerciseExcludedFile(path.join(reportedPath, 'excluded.file'), excluded);
+                await actual.observe(path.join(reportedPath, 'excluded.file'), nsfw.actions.CREATED,
+                  () => fse.rename(path.join(inPath, 'zz-old'), path.join(inPath, 'zz-new')));
+                await barrier();
+                await expectReported(actual, reportedPath);
+              });
+            });
+        }
+
+        for (const parent of [[], ['a-real']]) {
+          const where = parent.length === 0 ? 'the watched directory' : 'a directory below it';
+          it(`excludes a directory once a rename in ${where} makes the symlink in its excluded path lead to it`,
+            async function() {
+              const oldPath = path.join(inPath, ...parent, 'old');
+              const newPath = path.join(inPath, ...parent, 'new');
+              await fse.ensureDir(path.join(oldPath, 'excluded'));
+              await fse.ensureDir(path.join(oldPath, 'excluded-other'));
+              // Dangling until old is renamed.
+              await fse.symlink(path.join(...parent, 'new'), path.join(inPath, 's-link'));
+              const excludedPath = path.join(inPath, 's-link', 'excluded');
+
+              await withWatchers(inPath, [excludedPath], async ({ actual, barrier, excluded }) => {
+                await expectReported(actual, path.join(oldPath, 'excluded'));
+                await actual.observe(oldPath, undefined, () => fse.rename(oldPath, newPath));
+                await barrier();
+                await exerciseExcludedFile(path.join(newPath, 'excluded', 'excluded.file'), excluded);
+                assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+                await expectReported(actual, path.join(newPath, 'excluded-other'));
+              });
+            });
+        }
+      });
+
       describe('a directory watched at a symlink in a directory scanned before its own', function() {
         const inPath = path.join(workDir, 'test4');
         const holderPath = path.join(inPath, 'node_modules');

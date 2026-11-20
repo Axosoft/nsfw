@@ -81,8 +81,9 @@ stops with an error instead of losing events silently.
   neither is an excluded path below a directory that moves there (#210). Before, their contents were reported, while
   macOS and Windows dropped them. The other way around, a directory that was only excluded under its old path is
   watched once it moves, and what it holds is reported as `CREATED`.
-  These checks use the path recorded by the Linux watcher. For example, if it watches `a-link` as an alias for
-  `z-real`, excluding `z-real/hidden` can still allow events under `a-link/hidden` after a rename or recreation (#222).
+- On Linux, an excluded path also applies when the watcher has its directory at another path, such as a symlink
+  scanned before it (#222): with `a-link` a symlink to `z-real`, excluding `z-real/hidden` stops the events reported
+  under `a-link/hidden`. Before, only `updateExcludedPaths()` did, for a directory watched at that moment.
 - On Linux, a directory watched under a symlink stays watched, at its own path from then on, once the symlink no
   longer leads to it or stops being watched (#223). Before, the directory was no longer watched until the watcher
   was restarted, or its events kept the path of the symlink.

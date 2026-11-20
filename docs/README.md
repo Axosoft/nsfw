@@ -66,6 +66,16 @@ const nsfw = require('nsfw');
   - Excluded children need not exist. Below the watched root, names are lexical: a symlink named in that suffix is
     not resolved unless `..` follows it. Excluding `/home/me/project/build` excludes events inside it, but not inside `build-tools`. Directory
     creation/deletion events for an excluded directory itself can still be reported by directory watchers.
+  - On Linux, a directory that two paths inside the watched path lead to (through a symlink, say) is reported at the
+    one scanned first, and an excluded path through either excludes what is below it: with a symlink `a-link` to
+    `z-real`, excluding `z-real/build` also excludes `a-link/build`. `z-real` is reported at its own path once
+    `a-link` no longer leads to it or stops being watched. Not covered:
+    - Excluding `z-real` itself does not stop its events under `a-link`.
+    - An excluded path does not apply through an excluded directory, nor through a symlink that leads outside the
+      watched path (an absolute one has to give the watched path with its symlinks resolved).
+    - A symlink that gets on an excluded path later (created, repointed or moved there) does not exclude what is
+      already watched until the next **updateExcludedPaths()**, or until that directory or one above it is renamed.
+    - An excluded path written through `a-link` keeps applying once `a-link` is removed, until then as well.
   - Excluding the watched root suppresses every event detected from then on, on every platform. Removing it with
     **updateExcludedPaths()** resumes reporting. This also applies when watching a single file, including its deletion and recreation;
     previously single-file exclusions were only stored and returned.

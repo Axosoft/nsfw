@@ -157,6 +157,10 @@ bool InotifyService::isQuarantined(int wd, uint32_t mask) {
   return mTree->isQuarantined(wd, mask);
 }
 
+void InotifyService::entryDropped(int wd, std::string name) {
+  mTree->entryDropped(wd, name);
+}
+
 void InotifyService::finishRead(int eventsRead, size_t bytesRead) {
   mTree->finishRead(eventsRead, bytesRead);
 }
@@ -175,6 +179,10 @@ void InotifyService::removeDroppedWatches(int eventsRead) {
 
 void InotifyService::retryWatches() {
   mTree->retryWatches(emitCreated());
+}
+
+void InotifyService::revalidateRejected() {
+  mTree->revalidateRejected(emitCreated());
 }
 
 void InotifyService::forgetIncompleteScans() {

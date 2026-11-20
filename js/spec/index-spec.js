@@ -963,6 +963,11 @@ describe('Node Sentinel File Watcher', function() {
       await fse.utimes(filePath, new Date(), new Date(Date.now() + 60000));
     }
 
+    async function expectReported(actual, directory, file = 'included.file') {
+      const filePath = path.join(directory, file);
+      await actual.observe(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'Included'));
+    }
+
     async function exerciseExcludedFile(filePath, excluded) {
       await excluded(filePath, undefined, () => fse.writeFile(filePath, 'Excluded.'));
       await excluded(filePath, nsfw.actions.DELETED, () => fse.remove(filePath));
@@ -2087,6 +2092,136 @@ describe('Node Sentinel File Watcher', function() {
               [path.join(target, 'child', 'nested')]);
           }
         });
+      });
+
+      describe('a directory watched at a symlink in a directory scanned before its own', function() {
+        const inPath = path.join(workDir, 'test4');
+        const holderPath = path.join(inPath, 'node_modules');
+        const linkPath = path.join(holderPath, 'pkg');
+        const ownPath = path.join(inPath, 'packages', 'pkg');
+
+        beforeEach(async function() {
+          await fse.outputFile(path.join(ownPath, 'sub', 'held.file'), 'Held');
+          await fse.ensureDir(holderPath);
+          await fse.symlink(path.join('..', 'packages', 'pkg'), linkPath);
+        });
+
+        async function expectWatchedAtOwnPathOnly({ actual, barrier }, watchedPath = ownPath, file = 'own.file') {
+          const offset = actual.events.length;
+          for (const directory of [watchedPath, path.join(watchedPath, 'sub')]) {
+            await expectReported(actual, directory, file);
+          }
+          await barrier();
+          assert.deepStrictEqual(
+            actual.events.slice(offset).filter(event => event.directory.startsWith(holderPath)), []);
+        }
+
+        // Its watch isn't dropped: what happens in it right then is reported, and nothing it holds is as created.
+        async function expectMovedToOwnPath(watchers, stopWatchingSymlink, watchedPath = ownPath) {
+          const heldPath = path.join(watchedPath, 'sub', 'held.file');
+          await expectReported(watchers.actual, linkPath);
+          await watchers.actual.observe(heldPath, nsfw.actions.DELETED, async () => {
+            await stopWatchingSymlink();
+            await fse.remove(heldPath);
+          });
+          await watchers.barrier();
+          assert.deepStrictEqual(eventsNamed(watchers.actual.events, 'held.file').map(event => event.action),
+            [nsfw.actions.DELETED]);
+          await expectWatchedAtOwnPathOnly(watchers, watchedPath);
+        }
+
+        const excludable = [['the directory the symlink is in', holderPath], ['the symlink', linkPath]];
+        for (const [what, excludedPath] of excludable) {
+          it(`is watched at its own path once an update excludes ${what}`, async function() {
+            await withWatchers(inPath, [], watchers => expectMovedToOwnPath(watchers,
+              () => watchers.watch.updateExcludedPaths([excludedPath])));
+          });
+
+          it(`is watched at its own path when ${what} is excluded from the start`, async function() {
+            await withWatchers(inPath, [excludedPath], watchers => expectWatchedAtOwnPathOnly(watchers));
+          });
+        }
+
+        const gone = [
+          ['the directory the symlink is in moves out of the watched one',
+            () => fse.rename(holderPath, path.join(workDir, 'test5', 'node_modules'))],
+          ['the directory the symlink is in moves where the symlink leads nowhere',
+            () => fse.move(holderPath, path.join(inPath, 'deeper', 'node_modules'))],
+          ['the symlink is removed', () => fse.remove(linkPath)],
+          ['the symlink is renamed', () => fse.rename(linkPath, path.join(holderPath, 'renamed'))],
+          ['the symlink is repointed', async () => {
+            await fse.symlink(path.join('..', 'packages'), path.join(holderPath, 'repointed'));
+            await fse.rename(path.join(holderPath, 'repointed'), linkPath);
+          }],
+          ['its rename leaves the symlink dangling',
+            () => fse.rename(ownPath, path.join(inPath, 'packages', 'renamed')),
+            path.join(inPath, 'packages', 'renamed')],
+          ['a rename above it leaves the symlink dangling',
+            () => fse.rename(path.join(inPath, 'packages'), path.join(inPath, 'renamed')),
+            path.join(inPath, 'renamed', 'pkg')]
+        ];
+        for (const [when, stopWatchingSymlink, watchedPath] of gone) {
+          it(`is watched at its own path once ${when}`, async function() {
+            await withWatchers(inPath, [],
+              watchers => expectMovedToOwnPath(watchers, stopWatchingSymlink, watchedPath));
+          });
+        }
+
+        it('is watched at its own path once the directory the symlink is in moves into an excluded one',
+          async function() {
+            const excludedPath = path.join(inPath, 'trash');
+            await fse.ensureDir(excludedPath);
+
+            await withWatchers(inPath, [excludedPath], watchers => expectMovedToOwnPath(watchers,
+              () => fse.rename(holderPath, path.join(excludedPath, 'node_modules'))));
+          });
+
+        it('stays watched at its own path once the directory the symlink was in is removed and made again',
+          async function() {
+            await withWatchers(inPath, [], async watchers => {
+              await expectMovedToOwnPath(watchers, () => fse.remove(holderPath));
+              await fse.ensureDir(holderPath);
+              await fse.symlink(path.join('..', 'packages', 'pkg'), linkPath);
+              await watchers.barrier();
+              await expectWatchedAtOwnPathOnly(watchers, ownPath, 'again.file');
+            });
+          });
+
+        it('keeps watching the directory the symlink is in once it moves into the directory itself', async function() {
+          const movedPath = path.join(ownPath, 'moved');
+
+          await withWatchers(inPath, [], async watchers => {
+            await expectMovedToOwnPath(watchers, () => fse.rename(holderPath, movedPath));
+            await expectReported(watchers.actual, movedPath);
+          });
+        });
+
+        it('keeps what the path of the symlink excludes once the symlink is removed and made again', async function() {
+          await withWatchers(inPath, [path.join(linkPath, 'sub')], async ({ actual, barrier, excluded }) => {
+            await fse.remove(linkPath);
+            await barrier();
+            await fse.symlink(path.join('..', 'packages', 'pkg'), linkPath);
+            await barrier();
+            await exerciseExcludedFile(path.join(ownPath, 'sub', 'excluded.file'), excluded);
+            assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+            await expectReported(actual, ownPath);
+          });
+        });
+
+        it('stays unwatched where its own path is excluded, leaves with the symlink or is outside the watched one',
+          async function() {
+            await fse.ensureDir(path.join(holderPath, 'z-inside'));
+            await fse.symlink('z-inside', path.join(holderPath, 'inside'));
+            await fse.symlink(path.join('..', '..', 'test5', 'folder5'), path.join(holderPath, 'outside'));
+
+            await withWatchers(inPath, [], async ({ watch, actual, excluded }) => {
+              await watch.updateExcludedPaths([holderPath, ownPath]);
+              for (const link of ['pkg', 'inside', 'outside']) {
+                await exerciseExcludedFile(path.join(holderPath, link, 'excluded.file'), excluded);
+              }
+              assert.deepStrictEqual(eventsNamed(actual.events, 'excluded.file'), []);
+            });
+          });
       });
 
       it('removes the watches of directories that move away, including one deleted right after', async function() {

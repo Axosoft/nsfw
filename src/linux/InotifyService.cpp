@@ -71,6 +71,10 @@ void InotifyService::dispatch(EventType action, int wd, std::string name) {
   }
 
   if (!mTree->isRootExcluded()) mQueue->enqueue(action, path, name);
+  // Reported first: the tree change may report creations, see renameDirectory().
+  if (action != MODIFIED) {
+    mTree->entryChanged(wd, name, emitCreated());
+  }
 }
 
 void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName) {
@@ -80,6 +84,8 @@ void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, 
   }
 
   if (!mTree->isRootExcluded()) mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName);
+  mTree->entryChanged(fromWd, fromName, emitCreated());
+  mTree->entryChanged(toWd, toName, emitCreated());
 }
 
 std::string InotifyService::getError() {

@@ -83,6 +83,9 @@ stops with an error instead of losing events silently.
   watched once it moves, and what it holds is reported as `CREATED`.
   These checks use the path recorded by the Linux watcher. For example, if it watches `a-link` as an alias for
   `z-real`, excluding `z-real/hidden` can still allow events under `a-link/hidden` after a rename or recreation (#222).
+- On Linux, a directory watched under a symlink stays watched, at its own path from then on, once the symlink no
+  longer leads to it or stops being watched (#223). Before, the directory was no longer watched until the watcher
+  was restarted, or its events kept the path of the symlink.
 - On Linux, a directory moved out of the watched path, or into an excluded directory, is no longer watched. Before, its
   events kept being reported under its old path, and it wasn't watched again when moved back in under another path.
   Moved back, whether its old watches were removed already or not, it is watched like a directory that moves in for the

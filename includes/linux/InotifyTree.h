@@ -51,6 +51,7 @@ public:
   void resumeFound();
   void cancelFound();
   bool needsEntryRetry() const { return !mChangedEntries.empty(); }
+  void entryChanged(int wd, const std::string &name, EmitCreatedEvent emitCreatedEvent);
   void retryChangedEntry();
   std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths, EmitCreatedEvent emitCreatedEvent);
 
@@ -73,7 +74,13 @@ private:
       EmitCreatedEvent emitCreatedEvent = nullptr
     );
 
-    void collectSightedBelow(std::vector<int> &holders);
+    // Calls visit with each node below this one, a parent before its children. It mustn't change the tree.
+    template <typename Visit> void forEachBelow(const Visit &visit) {
+      for (const auto &child : *mChildren) {
+        visit(child.second);
+        child.second->forEachBelow(visit);
+      }
+    }
     bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr, bool reportEntry = false);
     InotifyNode *findDescendant(const std::string &relativePath);
     void fixPaths();
@@ -99,6 +106,8 @@ private:
     bool foundByExclusionUpdate() const;
     bool registrationChanged() const { return mRegistrationChanged; }
     bool awaitsScan() const { return mFoundAgain; }
+    bool isThroughSymlink() const { return mThroughSymlink; }
+    void setThroughSymlink(bool throughSymlink) { mThroughSymlink = throughSymlink; }
     uint64_t adoption = 0;
     bool rewatch(uint64_t marker, int &replaced);
 
@@ -123,7 +132,7 @@ private:
     // Took a dropped watch back, and isn't scanned until the marker of its pass is queued, see settleFound().
     bool mFoundAgain = false;
     bool mFoundByExclusionUpdate = false;
-    // Created at a symlink to a directory (or the watched path), which only changes when the symlink does.
+    // At a symlink to a directory (or the watched path), which only changes when the symlink does.
     bool mThroughSymlink;
     std::map<std::string, InotifyNode *> *mChildren;
     const std::string &mDirectory;
@@ -143,6 +152,7 @@ private:
   bool addInode(ino_t inodeNumber, InotifyNode *node);
   void removeInode(ino_t inodeNumber);
   InotifyNode * findNodeByInode(ino_t inodeNumber);
+  InotifyNode * findNodeOf(const struct stat &file);
   InotifyNode * findNodeByPath(const std::string path);
   InotifyNode * findNodeAtTreePath(const std::string &path);
   InotifyNode * findAttachedAlias(const std::string &path);
@@ -159,10 +169,23 @@ private:
   InotifyNode *findNodeByWatchDescriptor(int watchDescriptor);
   static bool isAncestorOrSelf(InotifyNode *ancestor, InotifyNode *node);
   void sight(InotifyNode *scanning, const std::string &name, const struct stat &file, bool throughSymlink);
-  // What discard() watches once the leaving node is deleted: the sightings of it and of what it holds.
+  void setSighting(int holder, const Sighting &sighting);
+  void eraseSighting(int holder);
+  // What is left to do once a node is deleted, for the directories that it or the nodes below it held and that stay:
+  // the ones that took their own place have the excluded paths applied there, the others are watched where a scan saw
+  // them.
   struct DiscardSteps {
+    std::vector<int> rehomed;
     std::vector<Sighting> reborn;
   };
+  enum class OwnPlace { NONE, EXCLUDED, TAKEN };
+  OwnPlace takeOwnPlace(InotifyNode *holder, InotifyNode *leaving);
+  OwnPlace moveToOwnPlace(InotifyNode *holder, EmitCreatedEvent emitCreatedEvent);
+  void settleAtOwnPlace(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
+  void settleLink(InotifyNode *holder, EmitCreatedEvent emitCreatedEvent);
+  void settleLinksTo(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);
+  void keepSightedBelow(InotifyNode *node, DiscardSteps &steps);
+  void settleKept(const DiscardSteps &steps, EmitCreatedEvent emitCreatedEvent);
   void rebornSighted(int watchDescriptor, InotifyNode *leaving, DiscardSteps &steps);
   void watchSighted(const Sighting &sighting, EmitCreatedEvent emitCreatedEvent);
   bool removeWatch(int wd, uint64_t marker);
@@ -298,8 +321,9 @@ private:
   std::map<InotifyNode *, IncompleteScan> mIncompleteScans;
   static constexpr std::chrono::seconds STALE_SCAN_MARK_LIFETIME = std::chrono::seconds(1);
   // Where a scan saw the directory of a node that is elsewhere in the tree, by the node's watch descriptor, see
-  // sight().
+  // sight(). And the nodes sighted in each node's directory, by watch descriptors too.
   std::map<int, Sighting> mSightings;
+  std::map<int, std::set<int>> mSightedIn;
   std::vector<std::string> mExcludedPaths;
   bool mRootExcluded;
   std::string mWatchedPath;

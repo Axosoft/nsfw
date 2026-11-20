@@ -10,7 +10,7 @@ describe('inotify aliases (slow)', function() {
   this.timeout(120000);
   const {
     watchedPath, outsidePath, touch, watchWhile, waitFor,
-    checkReturnState, waitingPath, whileHeld, barrier, reportedIn,
+    checkReturnState, waitingPath, untilLoopWaits, whileHeld, barrier, reportedIn,
     whileScanning, expectWatched
   } = fixture();
 
@@ -87,6 +87,56 @@ describe('inotify aliases (slow)', function() {
         );
       }, [path.join(linkPath, 'inner')]);
     });
+
+  describe('a directory watched at a symlink scanned before its own path', function() {
+    // What a read holds of the directory when its node takes its own path: nothing of it is dropped, and nothing it
+    // holds is reported as created.
+    async function expectReportedAtOwnPath(events, ownPath, linkPath) {
+      await barrier(events);
+      const reported = events.filter(event => ['held.file', 'written.file'].includes(event.file))
+        .filter(event => event.action !== nsfw.actions.MODIFIED)
+        .map(event => [event.action, path.join(event.directory, event.file)]);
+      assert.deepStrictEqual(reported, [
+        [nsfw.actions.DELETED, path.join(ownPath, 'sub', 'held.file')],
+        [nsfw.actions.CREATED, path.join(ownPath, 'written.file')]
+      ]);
+      assert.deepStrictEqual(events.filter(event => event.directory.startsWith(linkPath)), []);
+    }
+
+    it('reports at its own path what was queued for it when an update excluded the symlink', async function() {
+      const holderPath = path.join(watchedPath, 'node_modules');
+      const ownPath = path.join(watchedPath, 'packages', 'pkg');
+      await fse.outputFile(path.join(ownPath, 'sub', 'held.file'), 'Held');
+      await fse.ensureDir(holderPath);
+      await fse.symlink(path.join('..', 'packages', 'pkg'), path.join(holderPath, 'pkg'));
+
+      await watchWhile(async (events, watch) => {
+        // The read is held without the lock, so the update goes first.
+        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await fse.remove(path.join(ownPath, 'sub', 'held.file'));
+        await fse.writeFile(path.join(ownPath, 'written.file'), 'Written');
+        await watch.updateExcludedPaths([holderPath]);
+        touch('nsfw-test-resume-event-loop');
+        await expectReportedAtOwnPath(events, ownPath, holderPath);
+      });
+    });
+
+    it('reports at its own path what the read of a rename that left the symlink dangling holds', async function() {
+      const linkPath = path.join(watchedPath, 'a-link');
+      const ownPath = path.join(watchedPath, 'moved', 'real');
+      await fse.outputFile(path.join(watchedPath, 'deep', 'real', 'sub', 'held.file'), 'Held');
+      await fse.symlink(path.join('deep', 'real'), linkPath);
+
+      await watchWhile(async events => {
+        await whileHeld(async () => {
+          await fse.rename(path.join(watchedPath, 'deep'), path.join(watchedPath, 'moved'));
+          await fse.remove(path.join(ownPath, 'sub', 'held.file'));
+          await fse.writeFile(path.join(ownPath, 'written.file'), 'Written');
+        });
+        await expectReportedAtOwnPath(events, ownPath, linkPath);
+      });
+    });
+  });
 
   for (const [description, operation] of [
     ['before', async () => {

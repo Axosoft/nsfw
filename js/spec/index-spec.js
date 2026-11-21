@@ -958,9 +958,12 @@ describe('Node Sentinel File Watcher', function() {
     }
 
     async function appendFile(filePath, contents) {
+      // FSEvents demangles combined flags using birth/mtime seconds, so the append itself must land in a later
+      // second than the birth: a utimes() after it races the callback, which can stat the file in between.
+      const { birthtimeMs } = await fse.stat(filePath);
+      const nextSecondMS = (Math.floor(birthtimeMs / 1000) + 1) * 1000;
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, nextSecondMS - Date.now() + 50)));
       await fse.appendFile(filePath, contents);
-      // FSEvents demangles combined flags using birth/mtime seconds, so keep those seconds distinct.
-      await fse.utimes(filePath, new Date(), new Date(Date.now() + 60000));
     }
 
     async function expectReported(actual, directory, file = 'included.file') {

@@ -13,6 +13,7 @@
 #include <map>
 #include <set>
 #include <cstdint>
+#include <unordered_map>
 #include <unordered_set>
 #include <functional>
 #include <atomic>
@@ -26,6 +27,10 @@
 using EmitCreatedEvent = std::function<void(std::string, std::string)>;
 
 class InotifyTree {
+  // The last names of excluded paths.
+  using ExcludedNames = std::unordered_set<std::string>;
+  // A directory, wherever a path to it is.
+  using Directory = std::pair<dev_t, ino_t>;
 public:
   InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths);
 
@@ -51,6 +56,9 @@ public:
   void resumeFound();
   void cancelFound();
   bool needsEntryRetry() const { return !mChangedEntries.empty(); }
+  void entryChanged(int wd, const std::string &name, EmitCreatedEvent emitCreatedEvent);
+  void entryDropped(int wd, const std::string &name);
+  void revalidateRejected(EmitCreatedEvent emitCreatedEvent);
   void retryChangedEntry();
   std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths, EmitCreatedEvent emitCreatedEvent);
 
@@ -73,13 +81,19 @@ private:
       EmitCreatedEvent emitCreatedEvent = nullptr
     );
 
-    void collectSightedBelow(std::vector<int> &holders);
+    // Calls visit with each node below this one, a parent before its children. It mustn't change the tree.
+    template <typename Visit> void forEachBelow(const Visit &visit) {
+      for (const auto &child : *mChildren) {
+        visit(child.second);
+        child.second->forEachBelow(visit);
+      }
+    }
     bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr, bool reportEntry = false);
     InotifyNode *findDescendant(const std::string &relativePath);
     void fixPaths();
     dev_t getDevice();
     std::string getFullPath();
-    std::string getName();
+    const std::string &getName() const;
     InotifyNode *getParent();
     int getWatchDescriptor();
     int addWatch(int attributes);
@@ -99,6 +113,8 @@ private:
     bool foundByExclusionUpdate() const;
     bool registrationChanged() const { return mRegistrationChanged; }
     bool awaitsScan() const { return mFoundAgain; }
+    bool isThroughSymlink() const { return mThroughSymlink; }
+    void setThroughSymlink(bool throughSymlink) { mThroughSymlink = throughSymlink; }
     uint64_t adoption = 0;
     bool rewatch(uint64_t marker, int &replaced);
 
@@ -123,7 +139,7 @@ private:
     // Took a dropped watch back, and isn't scanned until the marker of its pass is queued, see settleFound().
     bool mFoundAgain = false;
     bool mFoundByExclusionUpdate = false;
-    // Created at a symlink to a directory (or the watched path), which only changes when the symlink does.
+    // At a symlink to a directory (or the watched path), which only changes when the symlink does.
     bool mThroughSymlink;
     std::map<std::string, InotifyNode *> *mChildren;
     const std::string &mDirectory;
@@ -143,6 +159,7 @@ private:
   bool addInode(ino_t inodeNumber, InotifyNode *node);
   void removeInode(ino_t inodeNumber);
   InotifyNode * findNodeByInode(ino_t inodeNumber);
+  InotifyNode * findNodeOf(const struct stat &file);
   InotifyNode * findNodeByPath(const std::string path);
   InotifyNode * findNodeAtTreePath(const std::string &path);
   InotifyNode * findAttachedAlias(const std::string &path);
@@ -159,10 +176,23 @@ private:
   InotifyNode *findNodeByWatchDescriptor(int watchDescriptor);
   static bool isAncestorOrSelf(InotifyNode *ancestor, InotifyNode *node);
   void sight(InotifyNode *scanning, const std::string &name, const struct stat &file, bool throughSymlink);
-  // What discard() watches once the leaving node is deleted: the sightings of it and of what it holds.
+  void setSighting(int holder, const Sighting &sighting);
+  void eraseSighting(int holder);
+  // What is left to do once a node is deleted, for the directories that it or the nodes below it held and that stay:
+  // the ones that took their own place have the excluded paths applied there, the others are watched where a scan saw
+  // them.
   struct DiscardSteps {
+    std::vector<int> rehomed;
     std::vector<Sighting> reborn;
   };
+  enum class OwnPlace { NONE, EXCLUDED, TAKEN };
+  OwnPlace takeOwnPlace(InotifyNode *holder, InotifyNode *leaving);
+  OwnPlace moveToOwnPlace(InotifyNode *holder, EmitCreatedEvent emitCreatedEvent);
+  void settleAtOwnPlace(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
+  void settleLink(InotifyNode *holder, EmitCreatedEvent emitCreatedEvent);
+  void settleLinksTo(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);
+  void keepSightedBelow(InotifyNode *node, DiscardSteps &steps);
+  void settleKept(const DiscardSteps &steps, EmitCreatedEvent emitCreatedEvent);
   void rebornSighted(int watchDescriptor, InotifyNode *leaving, DiscardSteps &steps);
   void watchSighted(const Sighting &sighting, EmitCreatedEvent emitCreatedEvent);
   bool removeWatch(int wd, uint64_t marker);
@@ -173,9 +203,22 @@ private:
   void markScanIncomplete(InotifyNode *node, bool unreported = false);
   void rescanIncomplete(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);
   bool isExcluded(const std::string &path) const;
-  bool isExcludedThroughAlias(InotifyNode *parent, const std::string &name);
-  std::vector<int> applyExclusionsAfterMove(InotifyNode *node, const std::string &oldPath);
-  void includeAgain(InotifyNode *parent, const std::string &name);
+  void setExcludedPaths(const std::vector<std::string> &excludedPaths);
+  size_t findNamesBelowWatchedPath(const std::string &path) const;
+  InotifyNode *findRoot(InotifyNode *node);
+  struct Way;
+  void followWay(Way &way, InotifyNode *root);
+  void indexWay(Way &way, bool indexed);
+  void lookupChanged(InotifyNode *directory, const std::string &name);
+  void directoryChanged(const Directory &directory, InotifyNode *node);
+  bool namesThroughAlias(InotifyNode *parent, const std::string &name);
+  bool rejectsChild(InotifyNode *parent, const std::string &name);
+  bool isRejected(InotifyNode *parent, const std::string &name) const;
+  enum class Rejected { NO, BY_PATH, BY_ALIAS };
+  void setRejected(InotifyNode *parent, const std::string &name, Rejected rejected);
+  void applyExclusions(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
+  void includeRejected(InotifyNode *node, bool throughAliasOnly, EmitCreatedEvent emitCreatedEvent = nullptr);
+  bool excludeNamed(InotifyNode *node, const ExcludedNames &names, EmitCreatedEvent emitCreatedEvent);
   bool existWatchedPath();
   bool isWatchedPathGone();
 
@@ -294,11 +337,39 @@ private:
   std::map<InotifyNode *, IncompleteScan> mIncompleteScans;
   static constexpr std::chrono::seconds STALE_SCAN_MARK_LIFETIME = std::chrono::seconds(1);
   // Where a scan saw the directory of a node that is elsewhere in the tree, by the node's watch descriptor, see
-  // sight().
+  // sight(). And the nodes sighted in each node's directory, by watch descriptors too.
   std::map<int, Sighting> mSightings;
+  std::map<int, std::set<int>> mSightedIn;
   std::vector<std::string> mExcludedPaths;
-  bool mRootExcluded;
+  std::unordered_set<std::string> mExcluded;
+  ExcludedNames mExcludedNames;
+  // A directory that excluded paths go through, as they spell it: the watched path or one below it. Followed on disk
+  // name by name, see followWay(): whether it leads to a directory by watched directories only, to which one, and
+  // the names it looked up on the way with the directory each was in.
+  struct Way {
+    std::string path;
+    bool leads;
+    Directory directory;
+    std::vector<std::pair<Directory, std::string>> lookups;
+  };
+  // By their path. Followed once, and again when one of their lookups may give another answer, see lookupChanged():
+  // asking which excluded paths lead to a directory takes no lookup on disk for each of them.
+  std::unordered_map<std::string, Way> mWays;
+  std::map<Directory, std::set<Way *>> mWaysTo;
+  std::map<std::pair<Directory, std::string>, std::set<Way *>> mWaysByLookup;
+  // A way leads elsewhere, or the tree's own names changed, since revalidateRejected() last asked.
+  bool mWaysChanged = false;
+  // As many as the kernel follows in one path.
+  static constexpr int MAX_LINKS_FOLLOWED = 40;
+  // The names an excluded path names in each node's directory, directories or not as far as a scan could tell, to ask
+  // about again once the answer may be another, see rejectsChild(). By the tree's own path, which only changes with
+  // the tree.
+  std::map<InotifyNode *, std::set<std::string>> mRejectedByPath;
+  // Or by another path, which can stop leading there wherever something changes, see revalidateRejected().
+  std::map<InotifyNode *, std::set<std::string>> mRejectedByAlias;
+  bool mRootExcluded = false;
   std::string mWatchedPath;
+  Directory mWatchedDirectory;
 
   friend class InotifyNode;
 };

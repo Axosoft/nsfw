@@ -71,6 +71,10 @@ void InotifyService::dispatch(EventType action, int wd, std::string name) {
   }
 
   if (!mTree->isRootExcluded()) mQueue->enqueue(action, path, name);
+  // Reported first: the tree change may report creations, see renameDirectory().
+  if (action != MODIFIED) {
+    mTree->entryChanged(wd, name, emitCreated());
+  }
 }
 
 void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName) {
@@ -80,6 +84,8 @@ void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, 
   }
 
   if (!mTree->isRootExcluded()) mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName);
+  mTree->entryChanged(fromWd, fromName, emitCreated());
+  mTree->entryChanged(toWd, toName, emitCreated());
 }
 
 std::string InotifyService::getError() {
@@ -151,6 +157,10 @@ bool InotifyService::isQuarantined(int wd, uint32_t mask) {
   return mTree->isQuarantined(wd, mask);
 }
 
+void InotifyService::entryDropped(int wd, std::string name) {
+  mTree->entryDropped(wd, name);
+}
+
 void InotifyService::finishRead(int eventsRead, size_t bytesRead) {
   mTree->finishRead(eventsRead, bytesRead);
 }
@@ -169,6 +179,10 @@ void InotifyService::removeDroppedWatches(int eventsRead) {
 
 void InotifyService::retryWatches() {
   mTree->retryWatches(emitCreated());
+}
+
+void InotifyService::revalidateRejected() {
+  mTree->revalidateRejected(emitCreated());
 }
 
 void InotifyService::forgetIncompleteScans() {

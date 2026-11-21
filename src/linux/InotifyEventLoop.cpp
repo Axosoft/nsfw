@@ -128,6 +128,18 @@ void InotifyEventLoop::work() {
     }
   };
 
+  // Whether the event is one of a watch taken back behind a marker not read yet, which is dropped: what it tells
+  // about the entries of its directory goes with it, and the tree has to know that much.
+  auto dropQuarantined = [&event, &inotifyService]() {
+    if (!inotifyService->isQuarantined(event->wd, event->mask)) {
+      return false;
+    }
+    if (event->mask & (uint32_t)(IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO)) {
+      inotifyService->entryDropped(event->wd, event->len > 0 ? event->name : "");
+    }
+    return true;
+  };
+
   mLoopingSemaphore.signal();
   std::string error;
   auto nextRetry = std::chrono::steady_clock::now();
@@ -195,7 +207,7 @@ void InotifyEventLoop::work() {
       }
 
       // Events queued before the watch was found again cannot end a pending move.
-      if (inotifyService->isQuarantined(event->wd, event->mask)) {
+      if (dropQuarantined()) {
         continue;
       }
 
@@ -209,7 +221,7 @@ void InotifyEventLoop::work() {
       }
 
       // Also when the steps above just found its directory again.
-      if (inotifyService->isQuarantined(event->wd, event->mask)) {
+      if (dropQuarantined()) {
         continue;
       }
 
@@ -268,6 +280,7 @@ void InotifyEventLoop::work() {
       // Not with a move pending: its other half may put the directory a retry is for where it has a node, see
       // InotifyTree::retryWatches().
       inotifyService->mTree->resumeFound();
+      inotifyService->revalidateRejected();
       inotifyService->removeDroppedWatches(eventsRead);
       inotifyService->retryWatches();
       // With nothing queued, see InotifyTree::forgetIncompleteScans().

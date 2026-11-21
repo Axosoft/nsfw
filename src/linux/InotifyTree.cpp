@@ -382,6 +382,7 @@ void InotifyTree::renameDirectory(
     return;
   }
 
+  int childWatchDescriptor = child->getWatchDescriptor();
   if (isAncestorOrSelf(child, toNode)) {
     // It moved into a directory the tree only has below it, at a symlink it holds: that one takes its own place
     // first, since nothing can hang from itself. With none to take, the directory left for a place that isn't watched.
@@ -393,7 +394,7 @@ void InotifyTree::renameDirectory(
     fromNode = findNodeByWatchDescriptor(fromWd);
     toNode = findNodeByWatchDescriptor(toWd);
     child = fromNode == NULL ? NULL : fromNode->findDescendant(fromName);
-    if (child == NULL) {
+    if (child == NULL || child->getWatchDescriptor() != childWatchDescriptor) {
       return;
     }
     if (!untangled || toNode == NULL || isAncestorOrSelf(child, toNode)) {
@@ -408,7 +409,6 @@ void InotifyTree::renameDirectory(
   }
 
   // A scan saw it where this takes it, or where it was: its events tell the rest.
-  int childWatchDescriptor = child->getWatchDescriptor();
   auto sighting = mSightings.find(childWatchDescriptor);
   if (sighting != mSightings.end() && (
     (sighting->second.parentWatchDescriptor == fromWd && sighting->second.name == fromName) ||
@@ -417,8 +417,19 @@ void InotifyTree::renameDirectory(
     eraseSighting(childWatchDescriptor);
   }
 
+  // What it replaces may still exist (exchanged, or what a symlink there led to), so its watch is removed, not assumed
+  // dropped. It's discarded after the child takes the place, so that directories a scan saw below the child can take
+  // theirs.
   fromNode->pullChild(fromName);
+  InotifyNode *replaced = toNode->pullChild(toName);
   toNode->takeChildAsName(child, toName);
+  if (replaced != NULL) {
+    discardNode(replaced, emitCreatedEvent);
+  }
+  child = findNodeByWatchDescriptor(childWatchDescriptor);
+  if (child == NULL) {
+    return;
+  }
   applyExclusions(child, emitCreatedEvent);
   child = findNodeByWatchDescriptor(childWatchDescriptor);
   if (child != NULL) {
@@ -871,7 +882,8 @@ void InotifyTree::eraseSighting(int holder) {
 InotifyTree::OwnPlace InotifyTree::takeOwnPlace(InotifyNode *holder, InotifyNode *leaving) {
   int watchDescriptor = holder->getWatchDescriptor();
   auto seen = mSightings.find(watchDescriptor);
-  if (!holder->isThroughSymlink() || holder->getParent() == NULL || seen == mSightings.end() ||
+  // The root, not any node without a parent: one a rename replaced is out of the tree when it's discarded.
+  if (!holder->isThroughSymlink() || holder == mRoot.load() || seen == mSightings.end() ||
     seen->second.throughSymlink) {
     return OwnPlace::NONE;
   }
@@ -897,7 +909,9 @@ InotifyTree::OwnPlace InotifyTree::takeOwnPlace(InotifyNode *holder, InotifyNode
   }
   place->removeChild(name);
   eraseSighting(watchDescriptor);
-  holder->getParent()->pullChild(holder->getName());
+  if (holder->getParent() != NULL) {
+    holder->getParent()->pullChild(holder->getName());
+  }
   place->takeChildAsName(holder, name);
   holder->setThroughSymlink(false);
   mWaysChanged = true;
@@ -1045,7 +1059,7 @@ void InotifyTree::rebornSighted(int watchDescriptor, InotifyNode *leaving, Disca
   InotifyNode *holder = findNodeByWatchDescriptor(watchDescriptor);
   InotifyNode *place = findNodeByWatchDescriptor(sighting.parentWatchDescriptor);
   if (
-    holder == NULL || place == NULL || holder->getParent() == NULL ||
+    holder == NULL || place == NULL || holder == mRoot.load() ||
     (place == holder->getParent() && sighting.name == holder->getName()) ||
     // Not into itself, nor into what leaves with it, nor into a subtree already dropped.
     isAncestorOrSelf(holder, place) || isAncestorOrSelf(leaving, place) ||
@@ -1092,22 +1106,30 @@ void InotifyTree::watchSighted(const Sighting &sighting, EmitCreatedEvent emitCr
 }
 
 // node left, as far as its events tell, for a place that can't be watched: outside the watched path, or into an
-// excluded directory, or an excluded path names it now. Its node is deleted, with its subtree. Where a scan saw its
-// directory, or one of the directories below it, at a place that still holds it, that directory stays: at a symlink
-// until now, its node takes its own place, see takeOwnPlace(); moved there, it is watched like one found there for the
-// first time, see rebornSighted().
+// excluded directory, or an excluded path names it now. Unless it's no longer the tree's node of its directory, or is
+// the root.
 void InotifyTree::discard(InotifyNode *node, EmitCreatedEvent emitCreatedEvent) {
-  int watchDescriptor = node->getWatchDescriptor();
-  if (findNodeByWatchDescriptor(watchDescriptor) != node || node->getParent() == NULL) {
+  if (findNodeByWatchDescriptor(node->getWatchDescriptor()) != node || node->getParent() == NULL) {
     return;
   }
+  discardNode(node, emitCreatedEvent);
+}
+
+// node goes, with its subtree: one that left, see discard(), or one a rename replaced, already out of the tree, see
+// renameDirectory(). Where a scan saw its directory, or one of the directories below it, at a place that still holds
+// it, that directory stays: at a symlink until now, its node takes its own place, see takeOwnPlace(); moved there, it
+// is watched like one found there for the first time, see rebornSighted().
+void InotifyTree::discardNode(InotifyNode *node, EmitCreatedEvent emitCreatedEvent) {
   if (moveToOwnPlace(node, emitCreatedEvent) == OwnPlace::TAKEN) {
     return;
   }
   DiscardSteps steps;
   keepSightedBelow(node, steps);
-  rebornSighted(watchDescriptor, node, steps);
-  delete node->getParent()->pullChild(node->getName());
+  rebornSighted(node->getWatchDescriptor(), node, steps);
+  if (node->getParent() != NULL) {
+    node->getParent()->pullChild(node->getName());
+  }
+  delete node;
   settleKept(steps, emitCreatedEvent);
 }
 

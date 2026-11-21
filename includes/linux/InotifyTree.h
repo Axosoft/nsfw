@@ -103,6 +103,8 @@ private:
     bool registrationMatchesPath();
     bool isAlive();
     bool leadsToItself();
+    // At a symlink that no longer leads to its directory.
+    bool isAtStaleLink();
     InotifyNode *pullChild(std::string name);
     void removeChild(std::string name);
     void setName(std::string name);
@@ -176,30 +178,45 @@ private:
   InotifyNode *findNodeByWatchDescriptor(int watchDescriptor);
   static bool isAncestorOrSelf(InotifyNode *ancestor, InotifyNode *node);
   void sight(InotifyNode *scanning, const std::string &name, const struct stat &file, bool throughSymlink);
+  InotifyNode *findSightedAt(int wd, const std::string &name);
+  InotifyNode *findPlace(const Sighting &sighting);
   void setSighting(int holder, const Sighting &sighting);
+  void moveSighting(int holder, int toWd, const std::string &toName);
+  void moveSightingsIn(int fromWd, int toWd);
   void eraseSighting(int holder);
+  struct SightedBelow {
+    std::vector<int> held;
+    std::vector<int> seenIn;
+  };
+  SightedBelow findSightedBelow(InotifyNode *node);
   // What is left to do once a node is deleted, for the directories that it or the nodes below it held and that stay:
   // the ones that took their own place have the excluded paths applied there, the others are watched where a scan saw
   // them.
   struct DiscardSteps {
     std::vector<int> rehomed;
     std::vector<Sighting> reborn;
+    // Nodes held at symlinks elsewhere whose directories a scan saw in it, see settleStranded().
+    std::vector<int> stranded;
   };
   enum class OwnPlace { NONE, EXCLUDED, TAKEN };
   OwnPlace takeOwnPlace(InotifyNode *holder, InotifyNode *leaving);
   OwnPlace moveToOwnPlace(InotifyNode *holder, EmitCreatedEvent emitCreatedEvent);
   void settleAtOwnPlace(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
   void settleLink(InotifyNode *holder, EmitCreatedEvent emitCreatedEvent);
+  void settleLinkOf(int watchDescriptor, EmitCreatedEvent emitCreatedEvent);
   void settleLinksTo(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);
-  void keepSightedBelow(InotifyNode *node, DiscardSteps &steps);
+  // Why a node goes: its directory left the watched path (or was deleted), or a rename replaced it there.
+  enum class Departure { LEFT, REPLACED };
+  void keepSightedBelow(InotifyNode *node, Departure departure, DiscardSteps &steps);
   void settleKept(const DiscardSteps &steps, EmitCreatedEvent emitCreatedEvent);
+  void settleStranded(const std::vector<int> &stranded, EmitCreatedEvent emitCreatedEvent);
   void rebornSighted(int watchDescriptor, InotifyNode *leaving, DiscardSteps &steps);
   void watchSighted(const Sighting &sighting, EmitCreatedEvent emitCreatedEvent);
   bool removeWatch(int wd, uint64_t marker);
   bool freeDroppedWatch();
   int roomInQueue(int queuedBytes);
   void discard(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
-  void discardNode(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
+  void discardNode(InotifyNode *node, Departure departure, EmitCreatedEvent emitCreatedEvent);
   int getQueuedBytes();
   void markScanIncomplete(InotifyNode *node, bool unreported = false);
   void rescanIncomplete(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);

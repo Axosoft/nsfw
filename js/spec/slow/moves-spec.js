@@ -165,6 +165,31 @@ describe('inotify moves (slow)', function() {
     });
   });
 
+  for (const [departure, destination] of [
+    ['moved out', path.join(outsidePath, 'z-gone')],
+    ['renamed onto an excluded path', path.join(watchedPath, 'z-new')]
+  ]) {
+    it(`stops watching a directory held at a symlink once it is renamed and ${departure} in the same read`,
+      async function() {
+        await fse.ensureDir(path.join(watchedPath, 'z-real'));
+        await fse.symlink('z-real', path.join(watchedPath, 'a-link'));
+        const otherWatches = countInotifyWatches();
+
+        await watchWhile(async events => {
+          assert.strictEqual(countInotifyWatches(), otherWatches + 2);
+          await whileHeld(async () => {
+            await fse.rename(path.join(watchedPath, 'z-real'), path.join(watchedPath, 'z-other'));
+            await fse.rename(path.join(watchedPath, 'z-other'), destination);
+          });
+          await barrier(events);
+          await fse.writeFile(path.join(destination, 'left.file'), 'Left');
+          await barrier(events);
+          assert.deepStrictEqual(events.filter(event => event.file === 'left.file'), []);
+          await watchCountReaches(otherWatches + 1);
+        }, [path.join(watchedPath, 'z-new')]);
+      });
+  }
+
   // Node has no renameat2(): mv --exchange (coreutils 9.5), or Python's ctypes.
   const exchange = (from, to) => [
     ['mv', ['--exchange', '--no-target-directory', from, to]],
@@ -172,6 +197,26 @@ describe('inotify moves (slow)', function() {
       'libc = ctypes.CDLL(None, use_errno=True); sys.exit(libc.renameat2(' +
       'AT_FDCWD, sys.argv[1].encode(), AT_FDCWD, sys.argv[2].encode(), RENAME_EXCHANGE) != 0)', from, to]]
   ].some(([command, args]) => cp.spawnSync(command, args).status === 0);
+
+  // Where it's reported isn't checked: what the tree reports after an exchange is known to be misattributed.
+  it('keeps reporting a directory held at a symlink below one exchanged with another', async function() {
+    const probe = [path.join(outsidePath, 'probe-a'), path.join(outsidePath, 'probe-b')];
+    await Promise.all(probe.map(directory => fse.ensureDir(directory)));
+    if (!exchange(...probe)) {
+      this.skip();
+    }
+    await fse.ensureDir(path.join(watchedPath, 'z-real', 'z'));
+    await fse.ensureDir(path.join(watchedPath, 'w'));
+    await fse.symlink(path.join('z-real', 'z'), path.join(watchedPath, 'a-link'));
+
+    await watchWhile(async events => {
+      assert.ok(exchange(path.join(watchedPath, 'w'), path.join(watchedPath, 'z-real')));
+      await barrier(events);
+      await fse.writeFile(path.join(watchedPath, 'w', 'z', 'held.file'), 'Held');
+      await waitFor(events, event => event.action === nsfw.actions.CREATED && event.file === 'held.file',
+        'creation in the held directory');
+    });
+  });
 
   // Only that no watch is left behind: what the tree reports after an exchange is known to be misattributed.
   it('frees the watches of directories exchanged with each other', async function() {

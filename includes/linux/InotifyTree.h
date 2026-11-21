@@ -199,6 +199,7 @@ private:
   bool freeDroppedWatch();
   int roomInQueue(int queuedBytes);
   void discard(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
+  void discardNode(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
   int getQueuedBytes();
   void markScanIncomplete(InotifyNode *node, bool unreported = false);
   void rescanIncomplete(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);

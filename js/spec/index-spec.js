@@ -958,9 +958,12 @@ describe('Node Sentinel File Watcher', function() {
     }
 
     async function appendFile(filePath, contents) {
+      // FSEvents demangles combined flags using birth/mtime seconds, so the append itself must land in a later
+      // second than the birth: a utimes() after it races the callback, which can stat the file in between.
+      const { birthtimeMs } = await fse.stat(filePath);
+      const nextSecondMS = (Math.floor(birthtimeMs / 1000) + 1) * 1000;
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, nextSecondMS - Date.now() + 50)));
       await fse.appendFile(filePath, contents);
-      // FSEvents demangles combined flags using birth/mtime seconds, so keep those seconds distinct.
-      await fse.utimes(filePath, new Date(), new Date(Date.now() + 60000));
     }
 
     async function expectReported(actual, directory, file = 'included.file') {
@@ -1791,7 +1794,60 @@ describe('Node Sentinel File Watcher', function() {
           await actual.observe(includedFile, nsfw.actions.CREATED, () => fse.writeFile(includedFile, 'Included'));
         });
       });
+
+      for (const crossParent of [false, true]) {
+        it(`keeps watching a directory renamed over an empty watched directory ${crossParent ?
+          'in another parent' : 'in its parent'}, and renamed back`, async function() {
+          const inPath = path.join(workDir, 'test4');
+          const source = path.join(inPath, 'source');
+          const target = path.join(inPath, crossParent ? 'parent' : '', 'target');
+          await Promise.all([fse.ensureDir(path.join(source, 'child')), fse.ensureDir(target)]);
+
+          await withWatchers(inPath, [], async ({ actual, barrier }) => {
+            await actual.observe(source, undefined, () => fse.rename(source, target));
+            await barrier();
+            const targetFile = path.join(target, 'target.file');
+            await actual.observe(targetFile, nsfw.actions.CREATED, () => fse.writeFile(targetFile, 'Target'));
+            const childFile = path.join(target, 'child', 'child.file');
+            await actual.observe(childFile, nsfw.actions.CREATED, () => fse.writeFile(childFile, 'Child'));
+
+            await fse.mkdir(source);
+            await barrier();
+            await actual.observe(target, undefined, () => fse.rename(target, source));
+            await barrier();
+            const sourceFile = path.join(source, 'child', 'source.file');
+            await actual.observe(sourceFile, nsfw.actions.CREATED, () => fse.writeFile(sourceFile, 'Source'));
+          });
+        });
+      }
     }
+
+    // Only a scan watches through a symlink created after start(), so the one to real comes in a directory moved in.
+    it('keeps watching a directory seen below one renamed over a removed symlink whose node held it', async function() {
+      if (process.platform !== 'linux') this.skip();
+      const inPath = path.join(workDir, 'test4');
+      const outsidePath = path.join(workDir, 'test5');
+      const source = path.join(inPath, 'source');
+      const target = path.join(inPath, 'target');
+      const linked = path.join(outsidePath, 'linked');
+      const incoming = path.join(outsidePath, 'incoming');
+      const real = path.join(outsidePath, 'real');
+      await Promise.all([source, linked, incoming, real].map(directory => fse.ensureDir(directory)));
+      await fse.symlink(real, path.join(incoming, 'held'));
+      await fse.symlink(linked, target);
+
+      await withWatchers(inPath, [], async ({ actual, barrier }) => {
+        await actual.observe(path.join(target, 'incoming', 'held'), nsfw.actions.CREATED,
+          () => fse.rename(incoming, path.join(linked, 'incoming')));
+        await actual.observe(path.join(source, 'real'), nsfw.actions.CREATED,
+          () => fse.rename(real, path.join(source, 'real')));
+        await actual.observe(target, nsfw.actions.DELETED, () => fse.unlink(target));
+        await actual.observe(source, undefined, () => fse.rename(source, target));
+        await barrier();
+        const realFile = path.join(target, 'real', 'real.file');
+        await actual.observe(realFile, nsfw.actions.CREATED, () => fse.writeFile(realFile, 'Real'));
+      });
+    });
 
     it('stops watching a directory moved into an excluded directory', async function() {
       const inPath = path.join(workDir, 'test4');

@@ -1,4 +1,5 @@
 const assert = require('assert');
+const cp = require('child_process');
 const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
@@ -99,6 +100,99 @@ describe('inotify moves (slow)', function() {
       // The removal of the watches it had when it left doesn't remove the ones it has now.
       await barrier(events);
       assert.strictEqual(countInotifyWatches(), otherWatches + 3);
+    });
+  });
+
+  it('watches a directory renamed over an empty watched one in the read that emptied it', async function() {
+    await fse.ensureDir(path.join(watchedPath, 'source', 'inner'));
+    await fse.ensureDir(path.join(watchedPath, 'target', 'sub'));
+    const otherWatches = countInotifyWatches();
+
+    await watchWhile(async events => {
+      assert.strictEqual(countInotifyWatches(), otherWatches + 5);
+      await whileHeld(async () => {
+        await fse.rename(path.join(watchedPath, 'target', 'sub'), path.join(watchedPath, 'sub'));
+        await fse.rename(path.join(watchedPath, 'source'), path.join(watchedPath, 'target'));
+      });
+      await expectWatched(events, ['target'], ['target', 'inner'], ['sub']);
+      await barrier(events);
+      assert.strictEqual(countInotifyWatches(), otherWatches + 4);
+    });
+  });
+
+  it('stops watching what a symlink led to once a directory is renamed over it in the same read', async function() {
+    await fse.ensureDir(path.join(outsidePath, 'linked', 'below'));
+    await fse.ensureDir(path.join(watchedPath, 'source', 'inner'));
+    await fse.symlink(path.join(outsidePath, 'linked'), path.join(watchedPath, 'target'));
+    const otherWatches = countInotifyWatches();
+
+    await watchWhile(async events => {
+      assert.strictEqual(countInotifyWatches(), otherWatches + 5);
+      await whileHeld(async () => {
+        await fse.unlink(path.join(watchedPath, 'target'));
+        await fse.mkdir(path.join(watchedPath, 'target'));
+        await fse.rename(path.join(watchedPath, 'source'), path.join(watchedPath, 'target'));
+      });
+      await expectWatched(events, ['target'], ['target', 'inner']);
+      await fse.writeFile(path.join(outsidePath, 'linked', 'outside.file'), 'Outside');
+      await barrier(events);
+      assert.deepStrictEqual(events.filter(event => event.file === 'outside.file'), []);
+      // The directory the symlink led to still exists, so the kernel won't drop its watch: the tree has to.
+      await watchCountReaches(otherWatches + 3);
+    });
+  });
+
+  it('watches a directory moved out of the one a removed symlink led to, once that one is deleted', async function() {
+    await fse.ensureDir(path.join(outsidePath, 'linked', 'inner', 'below'));
+    await fse.symlink(path.join(outsidePath, 'linked'), path.join(watchedPath, 'target'));
+    const otherWatches = countInotifyWatches();
+
+    await watchWhile(async events => {
+      assert.strictEqual(countInotifyWatches(), otherWatches + 4);
+      await fse.unlink(path.join(watchedPath, 'target'));
+      await barrier(events);
+      await fse.rename(path.join(outsidePath, 'linked', 'inner'), path.join(watchedPath, 'target'));
+      await expectWatched(events, ['target'], ['target', 'below']);
+      await fse.writeFile(path.join(outsidePath, 'linked', 'outside.file'), 'Outside');
+      await fse.remove(path.join(outsidePath, 'linked'));
+      await barrier(events);
+      assert.deepStrictEqual(events.filter(event => event.file === 'outside.file'), []);
+      const afterPath = path.join(watchedPath, 'target', 'below', 'after.file');
+      await fse.writeFile(afterPath, 'After');
+      await waitFor(events, event => event.action === nsfw.actions.CREATED &&
+        event.directory === path.dirname(afterPath) && event.file === 'after.file', 'creation after the deletion');
+      await watchCountReaches(otherWatches + 3);
+    });
+  });
+
+  // Node has no renameat2(): mv --exchange (coreutils 9.5), or Python's ctypes.
+  const exchange = (from, to) => [
+    ['mv', ['--exchange', '--no-target-directory', from, to]],
+    ['python3', ['-c', 'import ctypes, sys; AT_FDCWD, RENAME_EXCHANGE = -100, 2; ' +
+      'libc = ctypes.CDLL(None, use_errno=True); sys.exit(libc.renameat2(' +
+      'AT_FDCWD, sys.argv[1].encode(), AT_FDCWD, sys.argv[2].encode(), RENAME_EXCHANGE) != 0)', from, to]]
+  ].some(([command, args]) => cp.spawnSync(command, args).status === 0);
+
+  // Only that no watch is left behind: what the tree reports after an exchange is known to be misattributed.
+  it('frees the watches of directories exchanged with each other', async function() {
+    const probe = [path.join(outsidePath, 'probe-a'), path.join(outsidePath, 'probe-b')];
+    await Promise.all(probe.map(directory => fse.ensureDir(directory)));
+    if (!exchange(...probe)) {
+      this.skip();
+    }
+    await fse.ensureDir(path.join(watchedPath, 'first', 'below-first'));
+    await fse.ensureDir(path.join(watchedPath, 'second', 'below-second'));
+    const otherWatches = countInotifyWatches();
+
+    await watchWhile(async events => {
+      assert.strictEqual(countInotifyWatches(), otherWatches + 5);
+      assert.ok(exchange(path.join(watchedPath, 'first'), path.join(watchedPath, 'second')));
+      await barrier(events);
+      // Moved out, neither is watched anymore.
+      await fse.rename(path.join(watchedPath, 'first'), path.join(outsidePath, 'first'));
+      await fse.rename(path.join(watchedPath, 'second'), path.join(outsidePath, 'second'));
+      await barrier(events);
+      await watchCountReaches(otherWatches + 1);
     });
   });
 

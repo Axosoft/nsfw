@@ -56,9 +56,10 @@ public:
   void resumeFound();
   void cancelFound();
   bool needsEntryRetry() const { return !mChangedEntries.empty(); }
-  void entryChanged(int wd, const std::string &name, EmitCreatedEvent emitCreatedEvent);
+  void entryChanged(int wd, const std::string &name, bool removed, EmitCreatedEvent emitCreatedEvent);
   void entryDropped(int wd, const std::string &name);
   void revalidateRejected(EmitCreatedEvent emitCreatedEvent);
+  void revalidateLinks(bool unknownMoveDestination, EmitCreatedEvent emitCreatedEvent);
   void retryChangedEntry();
   std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths, EmitCreatedEvent emitCreatedEvent);
 
@@ -227,16 +228,35 @@ private:
   struct Way;
   void followWay(Way &way, InotifyNode *root);
   void indexWay(Way &way, bool indexed);
-  void lookupChanged(InotifyNode *directory, const std::string &name);
+  bool lookupChanged(InotifyNode *directory, const std::string &name);
+  void refreshEntryLookups(InotifyNode *directory, const std::string &name);
+  void excludedEntryFound(const std::string &excludedPath);
   void directoryChanged(const Directory &directory, InotifyNode *node);
   bool namesThroughAlias(InotifyNode *parent, const std::string &name);
+  enum class Rejected { NO, BY_PATH, BY_ALIAS };
+  Rejected exclusionOfChild(InotifyNode *parent, const std::string &name);
   bool rejectsChild(InotifyNode *parent, const std::string &name);
   bool isRejected(InotifyNode *parent, const std::string &name) const;
-  enum class Rejected { NO, BY_PATH, BY_ALIAS };
   void setRejected(InotifyNode *parent, const std::string &name, Rejected rejected);
   void applyExclusions(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
   void includeRejected(InotifyNode *node, bool throughAliasOnly, EmitCreatedEvent emitCreatedEvent = nullptr);
+  void restoreRejectedChild(InotifyNode *parent, const std::string &name, EmitCreatedEvent emitCreatedEvent);
   bool excludeNamed(InotifyNode *node, const ExcludedNames &names, EmitCreatedEvent emitCreatedEvent);
+  bool excludesLink(const std::string &path, const Directory &directory, std::string *target = nullptr);
+  void loadPhysicalExclusions();
+  bool excludeLink(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
+  bool excludeLinks(EmitCreatedEvent emitCreatedEvent, bool reconcileStale, const std::set<std::string> &changedRoots);
+  void includeLinks(EmitCreatedEvent emitCreatedEvent);
+  struct PhysicalExclusion {
+    std::string path;
+    std::string physical;
+    Directory directory;
+  };
+  bool findStaleLinkTargets(const PhysicalExclusion &excluded, std::map<Directory, int> &stale,
+    EmitCreatedEvent emitCreatedEvent);
+  void findStaleLinksByTarget(std::map<Directory, int> &stale, EmitCreatedEvent emitCreatedEvent);
+  bool discardStaleLinkAt(const PhysicalExclusion &excluded, const std::string &path, const Directory &identity,
+    int watchDescriptor, EmitCreatedEvent emitCreatedEvent);
   bool existWatchedPath();
   bool isWatchedPathGone();
 
@@ -336,6 +356,7 @@ private:
     explicit Creating(InotifyTree *tree): tree(tree) { ++tree->mCreating; }
     ~Creating() {
       if (--tree->mCreating == 0) {
+        tree->mPhysicalExclusionsLoaded = false;
         tree->settleFound();
       }
     }
@@ -385,6 +406,30 @@ private:
   std::map<InotifyNode *, std::set<std::string>> mRejectedByPath;
   // Or by another path, which can stop leading there wherever something changes, see revalidateRejected().
   std::map<InotifyNode *, std::set<std::string>> mRejectedByAlias;
+  // Nodes held at symlinks, each with the physical path its directory was last found at (empty if never resolved):
+  // only a hint of where it is once the symlink dangles, see findStaleLinksByTarget(). searched once every excluded
+  // directory was read for it at a dangling symlink, without finding it: only the ones that change are read for it
+  // again, see excludeLinks().
+  struct LinkNode {
+    std::string target;
+    bool searched = false;
+  };
+  std::map<InotifyNode *, LinkNode> mLinkNodes;
+  // Symlink entries skipped because of their physical targets.
+  std::map<InotifyNode *, std::set<std::string>> mRejectedLinks;
+  // Resolved lazily and shared by the scans in a creation pass. Complete unless resolving an excluded path failed
+  // for another reason than it not being there, or not being allowed.
+  std::vector<PhysicalExclusion> mPhysicalExclusions;
+  bool mPhysicalExclusionsLoaded = false;
+  bool mPhysicalExclusionsComplete = true;
+  bool mLinksChanged = false;
+  // A filesystem event may have moved a directory below an excluded root: the excluded paths it may have arrived at,
+  // or any of them, which the paths don't matter with. Both come with mLinksChanged, see revalidateLinks().
+  std::set<std::string> mChangedLinkRoots;
+  bool mAllLinkRootsChanged = false;
+  // The skipped symlinks wait for the scans still pending, see includeLinks(), with the update that waits for them.
+  bool mLinksAwaitScans = false;
+  std::shared_ptr<UpdateCompletion> mLinkUpdate;
   bool mRootExcluded = false;
   std::string mWatchedPath;
   Directory mWatchedDirectory;

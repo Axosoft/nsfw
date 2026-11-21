@@ -39,6 +39,7 @@ private:
   void removeDroppedWatches(int eventsRead);
   void retryWatches();
   void revalidateRejected();
+  void revalidateLinks(bool unknownMoveDestination = false);
   void removeMovedDirectory(int wd, std::string name);
   void rename(int fromWd, std::string fromName, int toWd, std::string toName);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);

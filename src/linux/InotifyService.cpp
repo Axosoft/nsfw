@@ -73,7 +73,7 @@ void InotifyService::dispatch(EventType action, int wd, std::string name) {
   if (!mTree->isRootExcluded()) mQueue->enqueue(action, path, name);
   // Reported first: the tree change may report creations, see renameDirectory().
   if (action != MODIFIED) {
-    mTree->entryChanged(wd, name, emitCreated());
+    mTree->entryChanged(wd, name, action == DELETED, emitCreated());
   }
 }
 
@@ -84,8 +84,8 @@ void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, 
   }
 
   if (!mTree->isRootExcluded()) mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName);
-  mTree->entryChanged(fromWd, fromName, emitCreated());
-  mTree->entryChanged(toWd, toName, emitCreated());
+  mTree->entryChanged(fromWd, fromName, true, emitCreated());
+  mTree->entryChanged(toWd, toName, false, emitCreated());
 }
 
 std::string InotifyService::getError() {
@@ -185,6 +185,10 @@ void InotifyService::revalidateRejected() {
   mTree->revalidateRejected(emitCreated());
 }
 
+void InotifyService::revalidateLinks(bool unknownMoveDestination) {
+  mTree->revalidateLinks(unknownMoveDestination, emitCreated());
+}
+
 void InotifyService::forgetIncompleteScans() {
   mTree->forgetIncompleteScans();
 }
@@ -192,16 +196,17 @@ void InotifyService::forgetIncompleteScans() {
 void InotifyService::removeMovedDirectory(int wd, std::string name) {
   dispatch(DELETED, wd, name);
   mTree->removeMovedDirectory(wd, name, emitCreated());
+  revalidateLinks(true);
 }
 
 // See rename() for a side that isn't in the tree.
 void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName) {
-  if (!mTree->nodeExists(fromWd)) {
-    createDirectory(toWd, toName);
-    return;
-  }
   if (!mTree->nodeExists(toWd)) {
     removeMovedDirectory(fromWd, fromName);
+    return;
+  }
+  if (!mTree->nodeExists(fromWd)) {
+    createDirectory(toWd, toName);
     return;
   }
 

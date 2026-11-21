@@ -11,9 +11,45 @@ describe('inotify restoration (slow)', function() {
   const {
     watchedPath, outsidePath, markerSignal, touch, watchWhile,
     waitFor, checkReturnState, waitingPath, untilLoopWaits, whileHeld,
-    barrier, expectWatched
+    barrier, expectWatched, reportedIn
   } = fixture();
 
+  it('restores the real entries after excluding link-held directories and keeps a linked subtree outside',
+    async function() {
+      const blocked = path.join(watchedPath, 'z-blocked');
+      const deep = path.join(blocked, 'deep');
+      const kept = path.join(watchedPath, 'zz-kept');
+      await fse.ensureDir(deep);
+      await fse.ensureDir(kept);
+      await fse.symlink(deep, path.join(watchedPath, 'a-deep'));
+      await fse.symlink(blocked, path.join(watchedPath, 'b-whole'));
+      await fse.symlink(kept, path.join(blocked, 'keep-link'));
+
+      await watchWhile(async (events, watch) => {
+        assert.deepStrictEqual(await reportedIn(events, deep, ['before.file']), ['a-deep/before.file']);
+        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        fs.writeFileSync(path.join(deep, 'hidden-queued.file'), '');
+        fs.writeFileSync(path.join(kept, 'kept-queued.file'), '');
+        await watch.updateExcludedPaths([blocked]);
+        touch('nsfw-test-resume-event-loop');
+        await barrier(events);
+        assert.deepStrictEqual(events.filter(event => event.file === 'hidden-queued.file'), []);
+        const keptCreations = events.filter(event => event.action === nsfw.actions.CREATED &&
+          event.file === 'kept-queued.file');
+        assert.deepStrictEqual(keptCreations.map(event => event.directory), [kept]);
+        assert.deepStrictEqual(await reportedIn(events, blocked, ['hidden.file', 'deep/hidden-deep.file']), []);
+
+        await watch.updateExcludedPaths([]);
+        assert.deepStrictEqual(await reportedIn(events, blocked, ['restored.file', 'deep/restored-deep.file']),
+          ['z-blocked/restored.file', 'z-blocked/deep/restored-deep.file']);
+      });
+    });
+
+  // Resolves once a pass of directories found again had to wait for the marker of a later read.
+  async function untilOneMarker() {
+    for (let i = 0; i < 100 && !fs.statSync(markerSignal).size; ++i) await sleep(50);
+    assert.strictEqual(fs.readFileSync(markerSignal, 'utf8'), '1');
+  }
 
   // Each pass of directories found again gets a marker queued after its last find, and is scanned after it: what a
   // scan finds is the next pass, with a marker of its own, since the one before was queued before that find.
@@ -216,8 +252,7 @@ describe('inotify restoration (slow)', function() {
           resolved = true;
           return paths;
         });
-        for (let i = 0; i < 100 && !fs.statSync(markerSignal).size; ++i) await sleep(50);
-        assert.strictEqual(fs.readFileSync(markerSignal, 'utf8'), '1');
+        await untilOneMarker();
         assert.strictEqual(resolved, false);
       } finally {
         touch('nsfw-test-resume-event-loop');
@@ -230,6 +265,155 @@ describe('inotify restoration (slow)', function() {
       }
       assert.deepStrictEqual(events.filter(event => event.file === 'existing.file'), []);
     });
+  });
+
+  it('finishes restoring a link with no watched real entry before a re-inclusion resolves', async function() {
+    fs.writeFileSync(markerSignal, '');
+    const portal = path.join(watchedPath, 'portal');
+    const blocked = path.join(portal, 'blocked');
+    const alias = path.join(watchedPath, 'alias');
+    const target = path.join(outsidePath, 'blocked');
+    const parent = path.join(watchedPath, 'P');
+    await fse.ensureDir(target);
+    await fse.writeFile(path.join(target, 'existing.file'), '');
+    await fse.symlink(outsidePath, portal);
+    await fse.symlink(target, alias);
+    await fse.ensureDir(path.join(parent, 'first'));
+    await fse.ensureDir(path.join(parent, 'second'));
+
+    await watchWhile(async (events, watch) => {
+      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      touch('before.file');
+      let update;
+      try {
+        await watch.updateExcludedPaths([portal, blocked, parent]);
+        update = watch.updateExcludedPaths([portal]);
+        await untilOneMarker();
+      } finally {
+        touch('nsfw-test-resume-event-loop');
+      }
+      await update;
+      fs.writeFileSync(path.join(target, 'after.file'), '');
+      await waitFor(events, event => event.action === nsfw.actions.CREATED && event.directory === alias &&
+        event.file === 'after.file', 'creation immediately after re-inclusion');
+      assert.deepStrictEqual(events.filter(event => event.file === 'existing.file'), []);
+    }, [portal, blocked]);
+  });
+
+  // Each read gives one pass its marker, so the directories found again below parent take a read each: the one that
+  // removes the directory of the only skipped link comes while they are still pending, and leaves no link to restore.
+  it('resolves a re-inclusion whose skipped links went while their restoration waited', async function() {
+    fs.writeFileSync(markerSignal, '');
+    const portal = path.join(watchedPath, 'portal');
+    const blocked = path.join(portal, 'blocked');
+    const holder = path.join(watchedPath, 'holder');
+    const target = path.join(outsidePath, 'blocked');
+    const parent = path.join(watchedPath, 'P');
+    await fse.ensureDir(target);
+    await fse.ensureDir(holder);
+    await fse.symlink(outsidePath, portal);
+    await fse.symlink(target, path.join(holder, 'alias'));
+    await fse.ensureDir(path.join(parent, 'a', 'b', 'c', 'd'));
+
+    await watchWhile(async (events, watch) => {
+      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      touch('before.file');
+      let update;
+      try {
+        await watch.updateExcludedPaths([portal, blocked, parent]);
+        update = watch.updateExcludedPaths([portal]);
+        await untilOneMarker();
+        fs.rmSync(holder, { recursive: true });
+      } finally {
+        touch('nsfw-test-resume-event-loop');
+      }
+      const resolved = await Promise.race([update.then(() => true), sleep(20000).then(() => false)]);
+      assert.ok(resolved, 'The update never resolved');
+      await expectWatched(events, ['P', 'a', 'b', 'c', 'd']);
+    }, [portal, blocked]);
+  });
+
+  // parent is found again with its dropped watch, and the one marker of the pass goes to first: second, found again
+  // by parent's scan, waits for the next read with its events dropped. Resolves once it does, with the update still
+  // pending in a list: awaiting it here would wait for the event loop that the caller has yet to resume.
+  async function untilSecondAwaitsMarker(watch, parent, blocked) {
+    await watch.updateExcludedPaths([blocked, parent]);
+    const update = watch.updateExcludedPaths([blocked]);
+    await untilOneMarker();
+    return [update];
+  }
+
+  for (const dropped of [true, false]) {
+    const arrival = dropped ? 'is dropped with its quarantined watch' : 'is left to the scan after its marker';
+    it(`drops a link into an excluded directory whose arrival ${arrival}`, async function() {
+      fs.writeFileSync(markerSignal, '');
+      const parent = path.join(watchedPath, 'parent');
+      const blocked = path.join(parent, 'second', 'blocked');
+      const original = path.join(outsidePath, 'original');
+      const moving = path.join(watchedPath, 'moving.file');
+      await fse.ensureDir(path.join(parent, 'first'));
+      await fse.ensureDir(path.join(parent, 'second'));
+      await fse.ensureDir(path.join(original, 'deep'));
+      await fse.symlink(path.join(original, 'deep'), path.join(watchedPath, 'a-link'));
+      await fse.writeFile(moving, '');
+
+      await watchWhile(async (events, watch) => {
+        assert.deepStrictEqual(await reportedIn(events, original, ['deep/before.file']), ['a-link/before.file']);
+        if (dropped) {
+          // The read that pauses ends with half of a move, so second isn't given its marker after it: the arrival
+          // and the write at the link are read while its events are still dropped.
+          await untilLoopWaits('nsfw-test-hold-event-loop', 'nsfw-test-release-event-loop');
+          await fse.remove(waitingPath);
+          touch('nsfw-test-pause-before-lock');
+          touch('nsfw-test-release-event-loop');
+          fs.renameSync(moving, path.join(outsidePath, 'moved.file'));
+          for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) await sleep(50);
+          assert.ok(fs.existsSync(waitingPath), 'The event loop never paused');
+        } else {
+          await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        }
+        touch('before.file');
+        let update;
+        try {
+          [update] = await untilSecondAwaitsMarker(watch, parent, blocked);
+          fs.renameSync(original, blocked);
+          fs.writeFileSync(path.join(blocked, 'deep', 'queued.file'), '');
+        } finally {
+          touch('nsfw-test-resume-event-loop');
+        }
+        await update;
+        await barrier(events);
+        assert.deepStrictEqual(events.filter(event => event.file === 'queued.file'), []);
+        assert.deepStrictEqual(await reportedIn(events, blocked, ['deep/later.file']), []);
+        await expectWatched(events, ['parent', 'second']);
+      }, [blocked]);
+    });
+  }
+
+  it('restores a link once its pending parent rename is handled', async function() {
+    const portal = path.join(watchedPath, 'portal');
+    const blocked = path.join(portal, 'blocked');
+    const target = path.join(outsidePath, 'blocked');
+    const parent = path.join(watchedPath, 'container');
+    const moved = path.join(watchedPath, 'moved');
+    await fse.ensureDir(parent);
+    await fse.ensureDir(target);
+    await fse.symlink(outsidePath, portal);
+    await fse.symlink(target, path.join(parent, 'link'));
+
+    await watchWhile(async (events, watch) => {
+      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      try {
+        fs.renameSync(parent, moved);
+        await watch.updateExcludedPaths([portal]);
+      } finally {
+        touch('nsfw-test-resume-event-loop');
+      }
+      await barrier(events);
+      fs.writeFileSync(path.join(target, 'after.file'), '');
+      await waitFor(events, event => event.action === nsfw.actions.CREATED &&
+        event.directory === path.join(moved, 'link') && event.file === 'after.file', 'creation after parent rename');
+    }, [portal, blocked]);
   });
 
   it('stops a watcher with an unfinished re-inclusion and can restart with a later update', async function() {
@@ -248,8 +432,7 @@ describe('inotify restoration (slow)', function() {
         return paths;
       });
       try {
-        for (let i = 0; i < 100 && !fs.statSync(markerSignal).size; ++i) await sleep(50);
-        assert.strictEqual(fs.readFileSync(markerSignal, 'utf8'), '1');
+        await untilOneMarker();
         assert.strictEqual(resolved, false);
         const stop = watch.stop();
         const start = watch.start();

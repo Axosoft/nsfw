@@ -2373,6 +2373,109 @@ describe('Node Sentinel File Watcher', function() {
             ({ actual }) => expectReported(actual, path.join(linkPath, 'hidden')));
         });
 
+        const departures = [
+          ['renamed onto an excluded path', 'z-new'],
+          ['moved out of the watched path', path.join(workDir, 'test5', 'z-real')],
+          ['moved into an excluded directory', path.join('excluded', 'z-real')]
+        ];
+        for (const nested of [false, true]) {
+          for (const [departure, destination] of departures) {
+            const what = nested ? 'a directory below the one' : 'the directory';
+            it(`stops reporting ${what} the symlink leads to once that one is ${departure}`, async function() {
+              const excludedPaths = [path.join(inPath, 'z-new'), path.join(inPath, 'excluded')];
+              const leftPath = path.resolve(inPath, destination);
+              const backPath = path.join(inPath, 'back');
+              const held = directory => nested ? path.join(directory, 'sub') : directory;
+              await fse.ensureDir(path.join(inPath, 'excluded'));
+              await fse.ensureDir(path.join(realPath, 'sub'));
+              if (nested) {
+                await fse.remove(linkPath);
+                await fse.symlink(path.join('z-real', 'sub'), linkPath);
+              }
+              const actual = recordEvents();
+              const barrier = markerBarrier(inPath, actual);
+              const otherWatches = countInotifyWatches();
+              const watchesReachTree = () =>
+                watchCountReaches(otherWatches + countDirectories(inPath, excludedPaths), 200);
+              const watch = await nsfw(inPath, actual.callback, { debounceMS, excludedPaths });
+              try {
+                await watch.start();
+                await actual.observe(path.join(linkPath, 'held.file'), nsfw.actions.CREATED,
+                  () => fse.writeFile(path.join(held(realPath), 'held.file'), 'Held'));
+
+                await fse.rename(realPath, leftPath);
+                await barrier();
+                await fse.writeFile(path.join(held(leftPath), 'left.file'), 'Left');
+                // Nor once the symlink is gone.
+                await fse.remove(linkPath);
+                await fse.writeFile(path.join(held(leftPath), 'unlinked.file'), 'Unlinked');
+                await barrier();
+                await sleep(absenceWindowMS);
+                assert.deepStrictEqual(eventsNamed(actual.events, 'left.file'), []);
+                assert.deepStrictEqual(eventsNamed(actual.events, 'unlinked.file'), []);
+                await watchesReachTree();
+
+                await fse.rename(leftPath, backPath);
+                await barrier();
+                await expectReported(actual, held(backPath));
+                await watchesReachTree();
+              } finally {
+                await watch.stop();
+              }
+            });
+          }
+        }
+
+        // Where the symlink at linkPath leads through another one, or below the directory another one holds.
+        const link = path.basename(linkPath);
+        const real = path.basename(realPath);
+        const relinked = [{
+          title: 'a directory below the one another symlink leads to once that one is renamed',
+          // b-link holds z-real, and a-link holds sub below it, by the path b-link has.
+          directories: [path.join(real, 'sub')],
+          links: [[path.join(real, 'sub'), link], [real, 'b-link']],
+          held: path.join(real, 'sub'),
+          change: () => fse.rename(realPath, path.join(inPath, 'z-other')),
+          reported: path.join('z-other', 'sub')
+        }, {
+          title: 'a directory below the one another symlink leads to once that one is removed',
+          // b-link holds z-real, and a-link holds sub below it, by way of b-link.
+          directories: [path.join(real, 'sub')],
+          links: [[path.join('b-link', 'sub'), link], [real, 'b-link']],
+          held: path.join(real, 'sub'),
+          change: () => fse.remove(path.join(inPath, 'b-link')),
+          reported: path.join(real, 'sub')
+        }, {
+          title: 'a directory a symlink leads to through a symlink that moved out',
+          // n/x-link holds q, and a-link holds sub below it, by way of n/x-link.
+          directories: [path.join('q', 'sub'), 'n'],
+          links: [[path.join('..', 'q'), path.join('n', 'x-link')], [path.join('n', 'x-link', 'sub'), link]],
+          held: path.join('q', 'sub'),
+          change: () => fse.rename(path.join(inPath, 'n'), path.join(workDir, 'test5', 'n')),
+          reported: path.join('q', 'sub')
+        }];
+        for (const { title, directories, links, held, change, reported } of relinked) {
+          it(`reports at its own path ${title}`, async function() {
+            await fse.remove(linkPath);
+            for (const directory of directories) {
+              await fse.ensureDir(path.join(inPath, directory));
+            }
+            for (const [target, link] of links) {
+              await fse.symlink(target, path.join(inPath, link));
+            }
+
+            await withWatchers(inPath, [], async ({ actual, barrier }) => {
+              await actual.observe(path.join(linkPath, 'held.file'), nsfw.actions.CREATED,
+                () => fse.writeFile(path.join(inPath, held, 'held.file'), 'Held'));
+              await change();
+              await barrier();
+              await expectReported(actual, path.join(inPath, reported));
+              assert.deepStrictEqual(
+                eventsNamed(actual.events, 'included.file').filter(event => event.directory.startsWith(linkPath)), []);
+            });
+          });
+        }
+
         // Nothing tells what changes in a directory that isn't watched.
         describe('by a path through a directory that is excluded itself', function() {
           const unwatchedPath = path.join(inPath, 'b-unwatched');

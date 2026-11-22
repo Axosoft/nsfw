@@ -159,9 +159,6 @@ private:
 
   void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
   void removeNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
-  bool addInode(ino_t inodeNumber, InotifyNode *node);
-  void removeInode(ino_t inodeNumber);
-  InotifyNode * findNodeByInode(ino_t inodeNumber);
   InotifyNode * findNodeOf(const struct stat &file);
   InotifyNode * findNodeByPath(const std::string path);
   InotifyNode * findNodeAtTreePath(const std::string &path);
@@ -268,7 +265,8 @@ private:
   std::mutex mErrorMutex;
   const int mInotifyInstance;
   std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
-  std::map<ino_t, InotifyNode *> inodes;
+  // A null value reserves a directory while its node is being constructed.
+  std::map<Directory, InotifyNode *> mNodesByDirectory;
   // The watches of directories dropped from the tree, not removed yet. None is in mInotifyNodeByWatchDescriptor:
   // their events may be from where the directory couldn't be watched. removeDroppedWatches() removes them a few at a
   // time, removeDroppedWatch() an excluded one at its next event, and freeDroppedWatch() some when the limit of watches

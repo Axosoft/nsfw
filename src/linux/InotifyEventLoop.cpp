@@ -54,15 +54,15 @@ void InotifyEventLoop::work() {
   InotifyRenameEvent renameEvent;
   renameEvent.isStarted = false;
 
-  auto create = [&event, &isDirectoryEvent, &inotifyService]() {
+  auto create = [&event, &isDirectoryEvent, &inotifyService](bool fromInCreate) {
     if (event == NULL) {
       return;
     }
 
     if (isDirectoryEvent) {
-      inotifyService->createDirectory(event->wd, event->len > 0 ? event->name : "");
+      inotifyService->createDirectory(event->wd, event->len > 0 ? event->name : "", fromInCreate);
     } else {
-      inotifyService->create(event->wd, event->len > 0 ? event->name : "");
+      inotifyService->create(event->wd, event->len > 0 ? event->name : "", fromInCreate);
     }
   };
 
@@ -117,7 +117,7 @@ void InotifyEventLoop::work() {
   auto renameEnd = [&create, &event, &inotifyService, &renameEvent]() {
     if (!renameEvent.isStarted) {
       // From a directory that isn't watched.
-      create();
+      create(false);
       return;
     }
 
@@ -186,6 +186,7 @@ void InotifyEventLoop::work() {
     #endif
 
     std::unique_lock<std::mutex> syncWithDestructor(mMutex);
+    inotifyService->startRead(bytesRead);
     ssize_t position = 0;
     // What this read takes from the queue, less what removeDroppedWatch() puts back.
     int eventsRead = 0;
@@ -241,14 +242,14 @@ void InotifyEventLoop::work() {
       if (event->mask & (uint32_t)(IN_ATTRIB | IN_MODIFY)) {
         modify();
       } else if (event->mask & (uint32_t)IN_CREATE) {
-        create();
+        create(true);
         inotifyService->revalidateLinks();
       } else if (event->mask & (uint32_t)(IN_DELETE | IN_DELETE_SELF)) {
         remove();
         inotifyService->revalidateLinks();
       } else if (event->mask & (uint32_t)IN_MOVED_TO) {
         if (event->cookie == 0) {
-          create();
+          create(false);
         } else {
           renameEnd();
         }

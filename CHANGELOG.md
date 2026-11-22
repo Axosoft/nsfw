@@ -142,6 +142,9 @@ stops with an error instead of losing events silently.
   that run has ended.
 - On Linux, a directory that was not watched (excluded, for instance) renamed over an empty watched directory is
   watched.
+- On Linux, a file created in a directory right after the directory itself is reported as `CREATED` once (#229).
+  Before, when it was created between the directory being watched and being scanned, both the scan and its own event
+  reported it.
 
 ## 2.3.0
 

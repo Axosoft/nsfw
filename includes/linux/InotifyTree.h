@@ -47,6 +47,8 @@ public:
   bool isRootExcluded() const;
   void removeDirectory(int wd, EmitCreatedEvent emitCreatedEvent);
   void forgetIncompleteScans();
+  bool isReportedByScan(int wd, const std::string &name) const;
+  void startRead(size_t bytesRead);
   bool removeDroppedWatch(int wd);
   void removeDroppedWatches(int eventsRead);
   void retryWatches(EmitCreatedEvent emitCreatedEvent);
@@ -93,7 +95,8 @@ private:
         child.second->forEachBelow(visit);
       }
     }
-    bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr, bool reportEntry = false);
+    bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr, bool reportEntry = false,
+      uint64_t reportedUntil = 0);
     InotifyNode *findDescendant(const std::string &relativePath);
     void fixPaths();
     dev_t getDevice();
@@ -345,6 +348,8 @@ private:
   };
   std::deque<ChangedEntry> mChangedEntries;
   uint64_t mBytesHandled = 0;
+  // mBytesHandled once the read being handled is: what FIONREAD counts from, see scanReportsUntil().
+  uint64_t mBytesTaken = 0;
   uint64_t mLastRemoval = 0;
   uint64_t mReadRemoval = 0;
   void deferChangedEntry(ChangedEntry entry);
@@ -389,6 +394,17 @@ private:
   };
   std::map<InotifyNode *, IncompleteScan> mIncompleteScans;
   static constexpr std::chrono::seconds STALE_SCAN_MARK_LIFETIME = std::chrono::seconds(1);
+  // The entries a scan reported as created in the directory with this watch descriptor, which already watched it: one
+  // created after the watch was added and before the scan listed it has its IN_CREATE queued, see isReportedByScan().
+  // untilBytes: the mBytesHandled once every event queued when they were listed is handled, see scanReportsUntil().
+  struct ScanReports {
+    std::unordered_set<std::string> names;
+    uint64_t untilBytes = 0;
+  };
+  std::unordered_map<int, ScanReports> mScanReports;
+  uint64_t scanReportsUntil();
+  void forgetScanReport(int wd, const std::string &name);
+  void expireScanReports();
   // Where a scan saw the directory of a node that is elsewhere in the tree, by the node's watch descriptor, see
   // sight(). And the nodes sighted in each node's directory, by watch descriptors too.
   std::map<int, Sighting> mSightings;

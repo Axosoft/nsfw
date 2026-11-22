@@ -3,6 +3,7 @@ const cp = require('child_process');
 const exec = require('executive');
 const fse = require('fs-extra');
 const path = require('path');
+const { isDeepStrictEqual } = require('util');
 
 const {
   DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, countInotifyWatches, sleep, watchCountReaches
@@ -507,6 +508,52 @@ describe('Node Sentinel File Watcher', function() {
         watch = null;
       }
     });
+
+    if (process.platform === 'linux') {
+      // The scan of a new directory races with what is created in it right after it is watched.
+      it('reports a file created right after its new directory once', async function() {
+        const runs = 50;
+        const events = [];
+        let watch = await nsfw(
+          workDir,
+          batch => events.push(...batch),
+          { debounceMS: DEBOUNCE }
+        );
+
+        try {
+          await watch.start();
+          await sleep(TIMEOUT_PER_STEP);
+          for (let i = 0; i < runs; ++i) {
+            const created = path.join(workDir, `created${i}`);
+            fse.mkdirSync(created);
+            fse.writeFileSync(path.join(created, 'f.txt'), 'x');
+            const recreated = path.join(workDir, `recreated${i}`);
+            fse.mkdirSync(recreated);
+            fse.writeFileSync(path.join(recreated, 'f.txt'), 'x');
+            fse.removeSync(path.join(recreated, 'f.txt'));
+            fse.writeFileSync(path.join(recreated, 'f.txt'), 'y');
+          }
+          await sleep(TIMEOUT_PER_STEP);
+
+          const { CREATED, DELETED, MODIFIED } = nsfw.actions;
+          const actions = directory => events.filter(event =>
+            event.directory === path.join(workDir, directory) && event.file === 'f.txt' && event.action !== MODIFIED
+          ).map(event => event.action);
+          for (let i = 0; i < runs; ++i) {
+            assert.deepEqual(actions(`created${i}`), [CREATED], `created${i}`);
+            // What happened before the directory was watched and is gone by its scan goes unseen.
+            const recreated = actions(`recreated${i}`);
+            assert.ok([[CREATED, DELETED, CREATED], [DELETED, CREATED], [CREATED]].some(expected =>
+              isDeepStrictEqual(expected, recreated)
+            ), `recreated${i}: ${recreated}`);
+          }
+        } finally {
+          await watch.stop();
+          watch = null;
+        }
+      });
+
+    }
 
     it('does not loop endlessly when watching directories with recursive symlinks', async function () {
       await fse.mkdir(path.join(workDir, 'test'));

@@ -375,6 +375,7 @@ void InotifyTree::removeNodeReferenceByWD(int wd, InotifyNode *node) {
     mDroppedWatches[wd] = { mExcluding };
     eraseSighting(wd);
     mQuarantined.erase(wd);
+    mScanReports.erase(wd);
     directoryChanged({ node->getDevice(), node->getInodeNumber() }, NULL);
   }
 }
@@ -616,6 +617,9 @@ void InotifyTree::releaseSighted(uint64_t marker) {
 // IN_IGNORED events still expected lost them (an overflow ends the watcher anyway): what they would end, ends.
 void InotifyTree::finishRead(int eventsRead, size_t bytesRead) {
   mBytesHandled += bytesRead;
+  if (!mScanReports.empty()) {
+    expireScanReports();
+  }
   // Most reads have no maintenance to do. Check headroom when a pass actually asks to queue a marker.
   if (mRemovedWatches.empty() && mDroppedWatches.empty() && !mDeferred) {
     mMarkerCredit = mMarkerBatch;
@@ -850,6 +854,47 @@ void InotifyTree::forgetIncompleteScans() {
         since = now;
       }
       ++mark;
+    }
+  }
+}
+
+// Whether a scan reported `name` in the directory with wd as created since the last creation, removal or move of it
+// handled, which its IN_CREATE doesn't need to again: the kernel queues it before a scan can list the entry, and a
+// creation after the scan comes after the event that told the name went. Not a move in, which can replace the entry the
+// scan reported without one.
+bool InotifyTree::isReportedByScan(int wd, const std::string &name) const {
+  auto reports = mScanReports.find(wd);
+  return reports != mScanReports.end() && reports->second.untilBytes > mBytesHandled &&
+    reports->second.names.count(name) > 0;
+}
+
+// The event loop took a read from the queue and handles it now.
+void InotifyTree::startRead(size_t bytesRead) {
+  mBytesTaken = mBytesHandled + bytesRead;
+}
+
+// For what a scan that just listed its directory reports: the mBytesHandled once the events queued by then are, 0 if
+// none are left to handle or it can't be told. A scan on another thread between a read and its handling misses that
+// read, which ends its reports early: a creation is reported twice then, never lost.
+uint64_t InotifyTree::scanReportsUntil() {
+  int queued = getQueuedBytes();
+  uint64_t until = mBytesTaken + queued;
+  return queued == INT_MAX || until <= mBytesHandled ? 0 : until;
+}
+
+void InotifyTree::forgetScanReport(int wd, const std::string &name) {
+  auto reports = mScanReports.find(wd);
+  if (reports != mScanReports.end() && reports->second.names.erase(name) > 0 && reports->second.names.empty()) {
+    mScanReports.erase(reports);
+  }
+}
+
+void InotifyTree::expireScanReports() {
+  for (auto reports = mScanReports.begin(); reports != mScanReports.end();) {
+    if (reports->second.untilBytes <= mBytesHandled) {
+      reports = mScanReports.erase(reports);
+    } else {
+      ++reports;
     }
   }
 }
@@ -1290,6 +1335,7 @@ void InotifyTree::settleLinksTo(InotifyNode *moved, EmitCreatedEvent emitCreated
 // directory's own place. With none to take it stays, also where that place is excluded: a symlink made again finds its
 // directory watched.
 void InotifyTree::entryChanged(int wd, const std::string &name, bool removed, EmitCreatedEvent emitCreatedEvent) {
+  forgetScanReport(wd, name);
   InotifyNode *parent = findNodeByWatchDescriptor(wd);
   if (parent == NULL) {
     return;
@@ -1311,6 +1357,7 @@ void InotifyTree::entryChanged(int wd, const std::string &name, bool removed, Em
 }
 
 // An event about `name` in the directory with wd was dropped, see isQuarantined(): what it told a way is not.
+// A scan report outlives it, since the scans of a directory found again come after its marker.
 void InotifyTree::entryDropped(int wd, const std::string &name) {
   InotifyNode *directory = findNodeByWatchDescriptor(wd);
   if (directory != NULL) {
@@ -2488,6 +2535,14 @@ bool InotifyTree::InotifyNode::scan(EmitCreatedEvent emitCreatedEvent, bool resc
     return false;
   }
 
+  // What it reports can't be told from its IN_CREATE where a rename may have put another directory at its path.
+  const bool reportEntry = !rescan || reportEntries;
+  uint64_t reportedUntil = 0;
+  if (emitCreatedEvent && reportEntry && resultCountOrError > 2 && mWatchDescriptorInitialized &&
+    !mTree->isRootExcluded() && leadsToItself()) {
+    reportedUntil = mTree->scanReportsUntil();
+  }
+
   for (int i = 0; i < resultCountOrError; ++i) {
     std::string fileName = directoryContents[i]->d_name;
 
@@ -2510,7 +2565,7 @@ bool InotifyTree::InotifyNode::scan(EmitCreatedEvent emitCreatedEvent, bool resc
       continue;
     }
 
-    if (createChild(fileName, emitCreatedEvent, !rescan || reportEntries) &&
+    if (createChild(fileName, emitCreatedEvent, reportEntry, reportedUntil) &&
       (type == DT_DIR || type == DT_LNK || type == DT_UNKNOWN)) {
       // It went away since it was listed, see InotifyTree::rescanIncomplete().
       mTree->markScanIncomplete(this);
@@ -2554,7 +2609,8 @@ InotifyTree::InotifyNode::~InotifyNode() {
 // a path updateExcludedPaths() includes again. Excluded paths, files and directories already watched (through a
 // symlink) are skipped.
 // Returns whether name went away before a node could watch it.
-bool InotifyTree::InotifyNode::createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent, bool reportEntry) {
+bool InotifyTree::InotifyNode::createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent, bool reportEntry,
+  uint64_t reportedUntil) {
   if (mFoundAgain) {
     // Not scanned until the marker of its pass, see InotifyTree::settleFound(): that scan finds name. A child found
     // again before it would share its pass, and the events of this node's old watch that tell where the child went
@@ -2575,6 +2631,11 @@ bool InotifyTree::InotifyNode::createChild(const std::string &name, EmitCreatedE
   }
   if (emitCreatedEvent && reportEntry) {
     emitCreatedEvent(mFullPath, name);
+    if (reportedUntil != 0) {
+      ScanReports &reports = mTree->mScanReports[mWatchDescriptor];
+      reports.names.insert(name);
+      reports.untilBytes = std::max(reports.untilBytes, reportedUntil);
+    }
   }
   std::string linkTarget;
   if (directory && throughSymlink && mTree->excludesLink(path, { file.st_dev, file.st_ino }, &linkTarget)) {
@@ -2718,6 +2779,7 @@ bool InotifyTree::InotifyNode::rewatch(uint64_t marker, int &replaced) {
   auto byWatchDescriptor = mTree->mInotifyNodeByWatchDescriptor;
   byWatchDescriptor->erase(old);
   mTree->mQuarantined.erase(old);
+  mTree->mScanReports.erase(old);
   replaced = 0;
   if (inotify_rm_watch(mInotifyInstance, old) == 0) {
     mTree->mRemovedWatches[old] = { ++mTree->mLastRemoval, marker };

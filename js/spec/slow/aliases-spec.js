@@ -14,6 +14,307 @@ describe('inotify aliases (slow)', function() {
     whileScanning, expectWatched
   } = fixture();
 
+  describe('with a real directory excluded', function() {
+    it('skips links before or after the excluded entry and links to its descendants', async function() {
+      const early = path.join(watchedPath, 'a-blocked');
+      const late = path.join(watchedPath, 'z-blocked');
+      const sibling = late + '-tools';
+      const links = path.join(watchedPath, 'links');
+      await Promise.all([early, path.join(late, 'deep'), sibling, links].map(directory => fse.ensureDir(directory)));
+      await fse.symlink(late, path.join(watchedPath, 'b-whole'));
+      await fse.symlink(path.join(late, 'deep'), path.join(watchedPath, 'c-deep'));
+      await fse.symlink(sibling, path.join(watchedPath, 'd-sibling'));
+      await fse.symlink(early, path.join(links, 'late-link'));
+
+      await watchWhile(async events => {
+        assert.deepStrictEqual(await reportedIn(events, early, ['early.file']), []);
+        assert.deepStrictEqual(await reportedIn(events, late, ['late.file', 'deep/descendant.file']), []);
+        assert.deepStrictEqual(await reportedIn(events, sibling, ['sibling.file']), ['d-sibling/sibling.file']);
+      }, [early, late]);
+    });
+
+    it('keeps the target watched when the excluded entry is itself a symlink', async function() {
+      const real = path.join(watchedPath, 'z-real');
+      const link = path.join(watchedPath, 'a-link');
+      await fse.ensureDir(real);
+      await fse.symlink(real, link);
+
+      await watchWhile(async events => {
+        assert.deepStrictEqual(await reportedIn(events, real, ['visible.file']), ['z-real/visible.file']);
+      }, [link]);
+    });
+
+    it('skips a link to a newly created excluded directory when scanning an arriving subtree', async function() {
+      const blocked = path.join(watchedPath, 'blocked');
+      const incoming = path.join(outsidePath, 'incoming');
+      await fse.ensureDir(incoming);
+      await fse.symlink(path.join(blocked, 'deep'), path.join(incoming, 'link'));
+
+      await watchWhile(async events => {
+        await whileHeld(() => {
+          fs.mkdirSync(path.join(blocked, 'deep'), { recursive: true });
+          fs.renameSync(incoming, path.join(watchedPath, 'incoming'));
+        });
+        await expectWatched(events, ['incoming']);
+        assert.deepStrictEqual(await reportedIn(events, blocked, ['deep/hidden.file']), []);
+      }, [blocked]);
+    });
+
+    it('drops a link-held destination when a rename gives it the excluded name', async function() {
+      const original = path.join(watchedPath, 'z-original');
+      const blocked = path.join(watchedPath, 'blocked');
+      const hop = path.join(outsidePath, 'hop');
+      await fse.ensureDir(path.join(original, 'deep'));
+      await fse.symlink(original, hop);
+      await fse.symlink(hop, path.join(watchedPath, 'a-link'));
+
+      await watchWhile(async (events, watch) => {
+        await whileHeld(() => {
+          fs.renameSync(original, blocked);
+          fs.unlinkSync(hop);
+          fs.symlinkSync(blocked, hop);
+          fs.writeFileSync(path.join(blocked, 'deep', 'queued.file'), '');
+        });
+        await barrier(events);
+        assert.deepStrictEqual(events.filter(event => event.file === 'queued.file'), []);
+        assert.deepStrictEqual(await reportedIn(events, blocked, ['after-move.file']), []);
+
+        await watch.updateExcludedPaths([]);
+        assert.deepStrictEqual(await reportedIn(events, blocked, ['restored.file']), ['blocked/restored.file']);
+      }, [blocked]);
+    });
+
+    for (const nested of [false, true]) {
+      const arrivingEntry = nested ? 'the parent of an excluded path' : 'an excluded path';
+      it(`drops a stale link to a physical descendant that arrives at ${arrivingEntry}`, async function() {
+        const original = path.join(outsidePath, 'original');
+        const incoming = path.join(watchedPath, 'incoming');
+        const blocked = nested ? path.join(incoming, 'blocked') : incoming;
+        const originalBlocked = nested ? path.join(original, 'blocked') : original;
+        const kept = path.join(watchedPath, 'z-kept');
+        await fse.ensureDir(path.join(originalBlocked, 'inner', 'deep'));
+        await fse.ensureDir(kept);
+        await fse.symlink(path.join(originalBlocked, 'inner', 'deep'), path.join(watchedPath, 'a-link'));
+        await fse.symlink(kept, path.join(originalBlocked, 'inner', 'deep', 'kept-link'));
+
+        await watchWhile(async events => {
+          await whileHeld(() => {
+            fs.renameSync(original, incoming);
+            fs.writeFileSync(path.join(blocked, 'inner', 'deep', 'queued.file'), '');
+            fs.writeFileSync(path.join(kept, 'kept.file'), '');
+          });
+          await barrier(events);
+          assert.deepStrictEqual(events.filter(event => event.file === 'queued.file'), []);
+          const keptCreations = events.filter(event => event.action === nsfw.actions.CREATED &&
+            event.file === 'kept.file');
+          assert.deepStrictEqual(keptCreations.map(event => event.directory), [kept]);
+          assert.deepStrictEqual(await reportedIn(events, blocked, ['inner/deep/later.file']), []);
+        }, [blocked]);
+      });
+    }
+
+    // The move into the excluded directory is between places that aren't watched: the symlink repointed after it is
+    // what tells where the directories went, also for the link that leads through it.
+    it('drops the links that lead through a symlink repointed into an excluded directory', async function() {
+      const blocked = path.join(watchedPath, 'blocked');
+      const hop = path.join(watchedPath, 's-hop');
+      await fse.ensureDir(path.join(outsidePath, 'A', 'D'));
+      await fse.ensureDir(path.join(blocked, 'inner'));
+      await fse.symlink(path.join(hop, 'D'), path.join(watchedPath, 'a-link'));
+      await fse.symlink(path.join(outsidePath, 'A'), hop);
+
+      await watchWhile(async events => {
+        assert.deepStrictEqual(await reportedIn(events, path.join(outsidePath, 'A'), ['D/before.file', 'top.file']),
+          ['a-link/before.file', 's-hop/top.file']);
+        fs.renameSync(path.join(outsidePath, 'A'), path.join(blocked, 'A'));
+        fs.symlinkSync(path.join(blocked, 'A'), hop + '.new');
+        fs.renameSync(hop + '.new', hop);
+        assert.deepStrictEqual(await reportedIn(events, path.join(blocked, 'A'), ['D/later.file', 'later-top.file']),
+          []);
+      }, [blocked]);
+    });
+
+    it('watches a skipped link once a symlink it leads through is repointed out of the excluded directory',
+      async function() {
+        const blocked = path.join(watchedPath, 'blocked');
+        const hop = path.join(watchedPath, 's-hop');
+        await fse.ensureDir(path.join(blocked, 'q'));
+        await fse.ensureDir(path.join(outsidePath, 'A'));
+        await fse.ensureDir(path.join(outsidePath, 'B', 'sub'));
+        await fse.symlink(path.join(blocked, 'q'), path.join(outsidePath, 'A', 'sub'));
+        await fse.symlink(path.join(hop, 'sub'), path.join(watchedPath, 'a-link'));
+        await fse.symlink(path.join(blocked, 'q'), path.join(watchedPath, 'b-direct'));
+        await fse.symlink(path.join(outsidePath, 'A'), hop);
+
+        await watchWhile(async events => {
+          assert.deepStrictEqual(await reportedIn(events, path.join(blocked, 'q'), ['hidden.file']), []);
+          fs.symlinkSync(path.join(outsidePath, 'B'), hop + '.new');
+          fs.renameSync(hop + '.new', hop);
+          assert.deepStrictEqual(await reportedIn(events, path.join(outsidePath, 'B', 'sub'), ['restored.file']),
+            ['a-link/restored.file']);
+
+          // Removed and made again, in two steps, it is looked up again as well.
+          const direct = path.join(watchedPath, 'b-direct');
+          fs.unlinkSync(direct);
+          await barrier(events);
+          fs.symlinkSync(path.join(outsidePath, 'B'), direct);
+          assert.deepStrictEqual(await reportedIn(events, path.join(outsidePath, 'B'), ['again.file']),
+            ['b-direct/again.file']);
+        }, [blocked]);
+      });
+
+    // Every excluded directory is read once for a directory held at a dangling link, when a directory leaves for a
+    // place that isn't watched. After that, only the excluded path something arrives at is read for it again.
+    it('drops a stale link looked for before once its directory arrives at an excluded path', async function() {
+      const top = path.join(outsidePath, 'top');
+      const blocked = path.join(watchedPath, 'blocked');
+      const other = path.join(watchedPath, 'z-other');
+      const leaving = path.join(watchedPath, 'leaving');
+      await fse.ensureDir(path.join(top, 'first', 'deep'));
+      await fse.ensureDir(path.join(other, 'inner'));
+      await fse.ensureDir(leaving);
+      await fse.symlink(path.join(top, 'first', 'deep'), path.join(watchedPath, 'a-link'));
+
+      await watchWhile(async events => {
+        assert.deepStrictEqual(await reportedIn(events, path.join(top, 'first', 'deep'), ['before.file']),
+          ['a-link/before.file']);
+        // No name the link led by is left to look its directory up with.
+        fs.renameSync(path.join(top, 'first'), path.join(top, 'second'));
+        fs.renameSync(leaving, path.join(outsidePath, 'left'));
+        await waitFor(events, event => event.action === nsfw.actions.DELETED && event.file === 'leaving',
+          'deletion of the directory that left');
+        await barrier(events);
+        await whileHeld(() => {
+          fs.renameSync(top, blocked);
+          fs.writeFileSync(path.join(blocked, 'second', 'deep', 'queued.file'), '');
+        });
+        await barrier(events);
+        assert.deepStrictEqual(events.filter(event => event.file === 'queued.file'), []);
+        assert.deepStrictEqual(await reportedIn(events, blocked, ['second/deep/later.file']), []);
+      }, [blocked, other]);
+    });
+
+    // Searching the arriving directory is enough to hold watches below it, but listing it isn't possible.
+    for (const [mode, restricted] of [[0o300, 'before'], [0o111, 'after']]) {
+      it(`drops a stale link into an excluded directory made unreadable ${restricted} it arrives`, async function() {
+        if (process.getuid() === 0) {
+          this.skip();
+        }
+        const original = path.join(outsidePath, 'original');
+        const blocked = path.join(watchedPath, 'blocked');
+        await fse.ensureDir(path.join(original, 'inner', 'deep'));
+        await fse.symlink(path.join(original, 'inner', 'deep'), path.join(watchedPath, 'a-link'));
+
+        try {
+          await watchWhile(async events => {
+            await whileHeld(() => {
+              if (restricted === 'before') fs.chmodSync(original, mode);
+              fs.renameSync(original, blocked);
+              if (restricted === 'after') fs.chmodSync(blocked, mode);
+              fs.writeFileSync(path.join(blocked, 'inner', 'deep', 'queued.file'), '');
+            });
+            await barrier(events);
+            assert.deepStrictEqual(events.filter(event => event.file === 'queued.file'), []);
+            assert.deepStrictEqual(await reportedIn(events, blocked, ['inner/deep/later.file']), []);
+          }, [blocked]);
+        } finally {
+          for (const directory of [original, blocked]) {
+            if (fs.existsSync(directory)) fs.chmodSync(directory, 0o700);
+          }
+        }
+      });
+    }
+
+    it('drops a stale link into an unreadable directory that an update excludes after it arrived', async function() {
+      if (process.getuid() === 0) {
+        this.skip();
+      }
+      const original = path.join(outsidePath, 'original');
+      const blocked = path.join(watchedPath, 'blocked');
+      await fse.ensureDir(path.join(original, 'inner', 'deep'));
+      await fse.symlink(path.join(original, 'inner', 'deep'), path.join(watchedPath, 'a-link'));
+
+      try {
+        await watchWhile(async (events, watch) => {
+          await whileHeld(() => {
+            fs.chmodSync(original, 0o300);
+            fs.renameSync(original, blocked);
+          });
+          await barrier(events);
+          await watch.updateExcludedPaths([blocked]);
+          assert.deepStrictEqual(await reportedIn(events, blocked, ['inner/deep/later.file']), []);
+        });
+      } finally {
+        for (const directory of [original, blocked]) {
+          if (fs.existsSync(directory)) fs.chmodSync(directory, 0o700);
+        }
+      }
+    });
+
+    for (const startsExcluded of [true, false]) {
+      const destinationParent = startsExcluded ? 'an unwatched parent' : 'a recently excluded parent';
+      it(`drops a link that still leads to a directory moved under ${destinationParent}`, async function() {
+        const original = path.join(watchedPath, 'original');
+        const blocked = path.join(watchedPath, 'blocked');
+        const destination = path.join(blocked, 'original');
+        const hop = path.join(outsidePath, 'hop');
+        await fse.ensureDir(path.join(original, 'deep'));
+        await fse.ensureDir(blocked);
+        await fse.symlink(path.join(original, 'deep'), hop);
+        await fse.symlink(hop, path.join(watchedPath, 'a-link'));
+
+        await watchWhile(async (events, watch) => {
+          const move = () => {
+            fs.renameSync(original, destination);
+            fs.unlinkSync(hop);
+            fs.symlinkSync(path.join(destination, 'deep'), hop);
+            fs.writeFileSync(path.join(destination, 'deep', 'queued.file'), '');
+          };
+          if (startsExcluded) {
+            await whileHeld(move);
+          } else {
+            await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+            try {
+              // Leave the destination's dropped watch in the kernel so it still queues MOVED_TO.
+              touch('before.file');
+              await watch.updateExcludedPaths([blocked]);
+              move();
+            } finally {
+              touch('nsfw-test-resume-event-loop');
+            }
+          }
+          await barrier(events);
+          assert.deepStrictEqual(events.filter(event => event.file === 'queued.file'), []);
+          assert.deepStrictEqual(await reportedIn(events, destination, ['deep/later.file']), []);
+        }, startsExcluded ? [blocked] : []);
+      });
+    }
+
+    it('checks the current target when an exclusion goes through a repointed link', async function() {
+      const first = path.join(watchedPath, 'first', 'blocked');
+      const second = path.join(watchedPath, 'second', 'blocked');
+      const route = path.join(watchedPath, 'route');
+      await fse.ensureDir(first);
+      await fse.ensureDir(second);
+      await fse.symlink('first', route);
+      await fse.symlink(first, path.join(watchedPath, 'a-first'));
+      await fse.symlink(second, path.join(watchedPath, 'b-second'));
+
+      await watchWhile(async events => {
+        assert.deepStrictEqual(await reportedIn(events, first, ['initial.file']), []);
+        assert.deepStrictEqual(await reportedIn(events, second, ['visible.file']), ['b-second/visible.file']);
+        await whileHeld(() => {
+          fs.symlinkSync('second', route + '-replacement');
+          fs.renameSync(route + '-replacement', route);
+          fs.writeFileSync(path.join(second, 'queued.file'), '');
+        });
+        await barrier(events);
+        assert.deepStrictEqual(events.filter(event => event.file === 'queued.file'), []);
+        assert.deepStrictEqual(await reportedIn(events, second, ['now-blocked.file']), []);
+        assert.deepStrictEqual(await reportedIn(events, first, ['unblocked.file']), ['first/blocked/unblocked.file']);
+      }, [path.join(route, 'blocked')]);
+    });
+  });
 
   async function waitForRegistration(signal, attempt) {
     for (let i = 0; i < 500 && fs.statSync(signal).size < attempt; ++i) await sleep(10);

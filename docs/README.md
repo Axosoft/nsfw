@@ -69,12 +69,30 @@ const nsfw = require('nsfw');
   - On Linux, a directory that two paths inside the watched path lead to (through a symlink, say) is reported at the
     one scanned first, and an excluded path through either excludes what is below it: with a symlink `a-link` to
     `z-real`, excluding `z-real/build` also excludes `a-link/build`. `z-real` is reported at its own path once
-    `a-link` no longer leads to it or stops being watched. Not covered:
-    - Excluding `z-real` itself does not stop its events under `a-link`.
-    - An excluded path does not apply through an excluded directory, nor through a symlink that leads outside the
-      watched path (an absolute one has to give the watched path with its symlinks resolved).
-    - A symlink that gets on an excluded path later (created, repointed or moved there) does not exclude what is
-      already watched until the next **updateExcludedPaths()**, or until that directory or one above it is renamed.
+    `a-link` no longer leads to it or stops being watched.
+  - On Linux, excluding a directory by its own path also stops the events reported through symlinks to it or to
+    directories below it, wherever they are in the watched path: excluding `z-real` stops the events of `a-link`,
+    and those of a symlink to `z-real/build`. This holds at start, after **updateExcludedPaths()** and when
+    directories or symlinks are created, moved or repointed later. Only that direction: an excluded path whose
+    last name is a symlink excludes that path alone, so excluding `a-link` leaves `z-real` watched and reported at
+    its own path. Once the exclusion is removed, the directory is reported at its own path when that is inside the
+    watched path, and at the symlink otherwise. Not covered:
+    - A directory outside the watched path excluded by its own path: such a path is ignored, see above, and the
+      directory is only excluded by a path through the symlink that leads to it.
+    - An excluded directory whose path cannot be resolved (one of its parent directories cannot be searched, say)
+      is not excluded through symlinks.
+    - A directory moved into an excluded directory from a place that is not watched, which no event tells, is still
+      reported through a symlink that led to it until the next **updateExcludedPaths()**. A directory moved out of
+      the watched path can stop it earlier.
+    - An excluded path does not apply through an excluded directory.
+    - An excluded path spelled through a symlink that leads outside the watched path (an absolute one has to give
+      the watched path with its symlinks resolved) stops the symlinks that lead to its directory or below it, but
+      not the same name under another symlink to the directory above it (#222): with `portal` and `b-portal` both
+      leading to one directory outside, excluding `portal/build` stops a symlink to that `build`, while
+      `b-portal/build` can still be reported.
+    - A symlink that gets on an excluded path later (created, repointed or moved there) does not exclude a
+      directory already watched at its own path until the next **updateExcludedPaths()**, or until that directory
+      or one above it is renamed.
     - An excluded path written through `a-link` keeps applying once `a-link` is removed, until then as well.
   - Excluding the watched root suppresses every event detected from then on, on every platform. Removing it with
     **updateExcludedPaths()** resumes reporting. This also applies when watching a single file, including its deletion and recreation;

@@ -108,6 +108,7 @@ void InotifyEventLoop::work() {
       inotifyService->removeMovedDirectory(renameEvent.wd, renameEvent.name);
     } else {
       inotifyService->remove(renameEvent.wd, renameEvent.name);
+      inotifyService->revalidateLinks();
     }
   };
 
@@ -151,6 +152,8 @@ void InotifyEventLoop::work() {
         auto now = std::chrono::steady_clock::now();
         if (now >= nextRetry) {
           inotifyService->mTree->retryChangedEntry();
+          // The symlinks that waited for the last of these entries, see InotifyTree::includeLinks().
+          inotifyService->revalidateLinks();
           nextRetry = now + std::chrono::milliseconds(50);
         }
         timeout = 50;
@@ -220,6 +223,13 @@ void InotifyEventLoop::work() {
         --eventsRead;
       }
 
+      // An event dropped above, see dropQuarantined(), may have been the arrival of a directory at an excluded path:
+      // the links that lead into it go before this event is reported at one of them, not only once the read is
+      // handled. Not between the halves of a move, like the other maintenance.
+      if (!renameEvent.isStarted) {
+        inotifyService->revalidateLinks();
+      }
+
       // Also when the steps above just found its directory again.
       if (dropQuarantined()) {
         continue;
@@ -232,22 +242,24 @@ void InotifyEventLoop::work() {
         modify();
       } else if (event->mask & (uint32_t)IN_CREATE) {
         create();
+        inotifyService->revalidateLinks();
       } else if (event->mask & (uint32_t)(IN_DELETE | IN_DELETE_SELF)) {
         remove();
+        inotifyService->revalidateLinks();
       } else if (event->mask & (uint32_t)IN_MOVED_TO) {
         if (event->cookie == 0) {
           create();
-          continue;
+        } else {
+          renameEnd();
         }
-
-        renameEnd();
+        inotifyService->revalidateLinks();
       } else if (event->mask & (uint32_t)IN_MOVED_FROM) {
         if (event->cookie == 0) {
           remove();
-          continue;
+          inotifyService->revalidateLinks(isDirectoryEvent);
+        } else {
+          renameStart();
         }
-
-        renameStart();
       } else if (event->mask & (uint32_t)IN_MOVE_SELF) {
         inotifyService->removeDirectory(event->wd);
       }
@@ -281,6 +293,7 @@ void InotifyEventLoop::work() {
       // InotifyTree::retryWatches().
       inotifyService->mTree->resumeFound();
       inotifyService->revalidateRejected();
+      inotifyService->revalidateLinks();
       inotifyService->removeDroppedWatches(eventsRead);
       inotifyService->retryWatches();
       // With nothing queued, see InotifyTree::forgetIncompleteScans().

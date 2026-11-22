@@ -87,6 +87,10 @@ stops with an error instead of losing events silently.
 - On Linux, a directory watched under a symlink stays watched, at its own path from then on, once the symlink no
   longer leads to it or stops being watched (#223). Before, the directory was no longer watched until the watcher
   was restarted, or its events kept the path of the symlink.
+  This also holds when the symlink leads through another one that is removed, repointed or moved, such as
+  `a-link -> b-link` with `b-link -> real` (#228), also by a path that leaves the watched directory and comes back.
+  Before, the directory's events kept the path of the outer symlink. A symlink on the way inside an excluded
+  directory is only looked at again once an update includes that directory.
 - On Linux, a directory moved out of the watched path, or into an excluded directory, is no longer watched. Before, its
   events kept being reported under its old path, and it wasn't watched again when moved back in under another path.
   Moved back, whether its old watches were removed already or not, it is watched like a directory that moves in for the

@@ -14,6 +14,34 @@ describe('inotify mounts (slow)', function() {
     whileHeld, barrier, reportedIn, withMount, expectWatched
   } = fixture();
 
+  it('watches btrfs subvolumes with the same inode numbers', async function() {
+    // Some 32-bit platforms sign-extend the filesystem magic.
+    const btrfsMagic = global.BigInt(0x9123683e);
+    if (!fs.statfsSync ||
+      global.BigInt.asUintN(32, fs.statfsSync(watchedPath, { bigint: true }).type) !== btrfsMagic ||
+      cp.spawnSync('btrfs', ['version'], { stdio: 'ignore' }).error) {
+      this.skip();
+    }
+
+    const first = path.join(watchedPath, 'sv1');
+    const second = path.join(watchedPath, 'sv2');
+    for (const subvolume of [first, second]) {
+      cp.execFileSync('btrfs', ['subvolume', 'create', subvolume]);
+      await fse.mkdir(path.join(subvolume, 'd'));
+    }
+
+    for (const name of ['.', 'd']) {
+      const a = fs.statSync(path.join(first, name));
+      const b = fs.statSync(path.join(second, name));
+      assert.strictEqual(a.ino, b.ino);
+      assert.notStrictEqual(a.dev, b.dev);
+    }
+    await fse.symlink(watchedPath, path.join(first, 'd', 'loop'));
+
+    await watchWhile(async events => {
+      await expectWatched(events, ['sv1'], ['sv1', 'd'], ['sv2'], ['sv2', 'd']);
+    });
+  });
 
   describe('mounts', function() {
     // Mounts need privileges: as root, outside a container.

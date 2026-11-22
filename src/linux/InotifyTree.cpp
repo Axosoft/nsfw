@@ -72,6 +72,7 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
   setExcludedPaths(excludedPaths);
   mRootExcluded = std::find(mExcludedPaths.begin(), mExcludedPaths.end(), mWatchedPath) != mExcludedPaths.end();
 
+  auto rootEntry = mNodesByDirectory.emplace(mWatchedDirectory, nullptr).first;
   InotifyNode *root = new InotifyNode(
     this,
     mInotifyInstance,
@@ -82,12 +83,11 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
     file.st_ino,
     true
   );
-  addInode(file.st_ino, root);
-
   if (!root->isAlive()) {
     delete root;
     return;
   }
+  rootEntry->second = root;
   // Nothing moved during the initial scan has events coming: a directory seen twice is seen through a symlink or a
   // mount. Where the tree has it at the symlink, its own place is kept, for its node to take once the symlink no longer
   // has it, see takeOwnPlace().
@@ -788,27 +788,13 @@ void InotifyTree::setError(const std::string &error) {
   }
 }
 
-bool InotifyTree::addInode(ino_t inodeNumber, InotifyNode *node) {
-  return inodes.insert(std::pair<ino_t, InotifyNode *>(inodeNumber,node)).second;
-}
-
-void InotifyTree::removeInode(ino_t inodeNumber) {
-  inodes.erase(inodeNumber);
-}
-
-InotifyTree::InotifyNode * InotifyTree::findNodeByInode(ino_t inodeNumber) {
-  auto nodeIterator = inodes.find(inodeNumber);
-  if (nodeIterator == inodes.end()) {
-    return NULL;
-  }
-
-  return nodeIterator->second;
-}
-
 // The node that has the directory `file` is of, at whatever path, NULL if none has it.
 InotifyTree::InotifyNode * InotifyTree::findNodeOf(const struct stat &file) {
-  InotifyNode *node = S_ISDIR(file.st_mode) ? findNodeByInode(file.st_ino) : NULL;
-  return node != NULL && node->getDevice() == file.st_dev && node->getInodeNumber() == file.st_ino ? node : NULL;
+  if (!S_ISDIR(file.st_mode)) {
+    return nullptr;
+  }
+  auto entry = mNodesByDirectory.find({ file.st_dev, file.st_ino });
+  return entry == mNodesByDirectory.end() ? nullptr : entry->second;
 }
 
 InotifyTree::InotifyNode * InotifyTree::findNodeByPath(const std::string path) {
@@ -847,7 +833,7 @@ InotifyTree::InotifyNode *InotifyTree::findNodeByWatchDescriptor(int watchDescri
   return nodeIterator == mInotifyNodeByWatchDescriptor->end() ? NULL : nodeIterator->second;
 }
 
-// A scan found, at `name` in `scanning`, a directory whose inode another node holds. Either the directory moved here
+// A scan found, at `name` in `scanning`, a directory another node holds. Either the directory moved here
 // and the events of that move aren't handled yet, or it's seen twice (through a symlink or a bind mount). Nothing is
 // decided now: the place is remembered, and the directory is watched there if the holder's own events say it left for a
 // place that can't be watched, see discard().
@@ -2241,7 +2227,7 @@ InotifyTree::InotifyNode::~InotifyNode() {
       return entry.parent == this;
     }), entries.end());
   }
-  mTree->removeInode(mInodeNumber);
+  mTree->mNodesByDirectory.erase({ mDevice, mInodeNumber });
   mTree->mIncompleteScans.erase(this);
   mTree->mRejectedByPath.erase(this);
   mTree->mRejectedByAlias.erase(this);
@@ -2300,15 +2286,17 @@ bool InotifyTree::InotifyNode::createChild(const std::string &name, EmitCreatedE
     return false;
   }
 
-  // The inode is claimed before the child scans its contents, so a symlink back to it is not watched again. A
+  // The directory is reserved before the child scans its contents, so a symlink back to it is not watched again. A
   // directory another node holds may have moved here, see InotifyTree::sight().
-  if (!mTree->addInode(file.st_ino, this)) {
+  const Directory identity = { file.st_dev, file.st_ino };
+  auto entry = mTree->mNodesByDirectory.emplace(identity, nullptr);
+  if (!entry.second) {
     mTree->sight(this, name, file, throughSymlink);
     return false;
   }
 
   // A directory renamed over an empty one replaces it. The replaced one's node would be left behind with its inode
-  // claimed, and its IN_DELETE_SELF would remove the new child by name.
+  // indexed, and its IN_DELETE_SELF would remove the new child by name.
   removeChild(name);
 
   InotifyNode *child = new InotifyNode(
@@ -2324,8 +2312,7 @@ bool InotifyTree::InotifyNode::createChild(const std::string &name, EmitCreatedE
   );
 
   if (child->isAlive()) {
-    // Points the inode at the child, as the constructor does, so findNodeByPath finds the child and not this node.
-    mTree->inodes[file.st_ino] = child;
+    entry.first->second = child;
     (*mChildren)[name] = child;
     if (PHYSICAL_DIRECTORY_EXCLUSIONS && throughSymlink) {
       // Also with no excluded path yet: once the symlink dangles, where it led can't be asked anymore, and a later
@@ -2337,7 +2324,7 @@ bool InotifyTree::InotifyNode::createChild(const std::string &name, EmitCreatedE
       }
       mTree->mLinkNodes[child] = { std::move(linkTarget), false };
     }
-    mTree->directoryChanged({ file.st_dev, file.st_ino }, this);
+    mTree->directoryChanged(identity, this);
     return false;
   }
 
@@ -2345,7 +2332,7 @@ bool InotifyTree::InotifyNode::createChild(const std::string &name, EmitCreatedE
     mTree->deferChangedEntry({ this, name, emitCreatedEvent, mTree->mRestoringExclusions, mTree->mCurrentUpdate,
       mTree->mLastRemoval, 0 });
   }
-  // Its destructor releases the inode.
+  // Its destructor releases the reservation.
   delete child;
   return lstat(path.c_str(), &file) < 0 && (errno == ENOENT || errno == ENOTDIR);
 }

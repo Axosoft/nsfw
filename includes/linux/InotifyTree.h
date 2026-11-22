@@ -179,9 +179,19 @@ private:
   InotifyNode *findSightedAt(int wd, const std::string &name);
   InotifyNode *findPlace(const Sighting &sighting);
   void setSighting(int holder, const Sighting &sighting);
+  void placeSighting(int holder, const Sighting &sighting);
+  void unlinkSighting(int holder);
   void moveSighting(int holder, int toWd, const std::string &toName);
   void moveSightingsIn(int fromWd, int toWd);
   void eraseSighting(int holder);
+  using Lookup = std::pair<Directory, std::string>;
+  bool knowsOwnPlace(int holder);
+  void traceLinkWay(int holder);
+  void untraceLinkWay(int holder);
+  std::vector<Lookup> traceLinkLookups(const std::string &from, const Directory &directory, const std::string &path);
+  void queueLinksLookingUp(InotifyNode *directory, const std::string &name);
+  void settleChangedLinks(EmitCreatedEvent emitCreatedEvent);
+  bool awaitsMoveAbove(InotifyNode *holder);
   struct SightedBelow {
     std::vector<int> held;
     std::vector<int> seenIn;
@@ -394,10 +404,17 @@ private:
   std::unordered_map<std::string, Way> mWays;
   std::map<Directory, std::set<Way *>> mWaysTo;
   std::map<std::pair<Directory, std::string>, std::set<Way *>> mWaysByLookup;
+  // What the paths of the nodes held at symlinks that know their own place look up, by their watch descriptors, see
+  // traceLinkWay(). And the directories of the holders whose ways looked up an entry that changed, not settled yet.
+  std::map<int, std::vector<Lookup>> mLinkWays;
+  std::map<Lookup, std::set<int>> mLinkWaysByLookup;
+  std::set<Directory> mLinksToSettle;
   // A way leads elsewhere, or the tree's own names changed, since revalidateRejected() last asked.
   bool mWaysChanged = false;
   // As many as the kernel follows in one path.
   static constexpr int MAX_LINKS_FOLLOWED = 40;
+  // Plenty for a real path, few enough that a symlink spelling `a/../a/../` over and over costs little.
+  static constexpr size_t MAX_LINK_LOOKUPS = 1024;
   // The names an excluded path names in each node's directory, directories or not as far as a scan could tell, to ask
   // about again once the answer may be another, see rejectsChild(). By the tree's own path, which only changes with
   // the tree.

@@ -2734,6 +2734,130 @@ describe('Node Sentinel File Watcher', function() {
           });
       });
 
+      describe('a directory watched at a symlink that leads through another symlink', function() {
+        const inPath = path.join(workDir, 'test4');
+        const outerPath = path.join(inPath, 'a-outer');
+        const innerPath = path.join(inPath, 'b-inner');
+        const ownPath = path.join(inPath, 'z-real');
+
+        beforeEach(function() {
+          return fse.ensureDir(ownPath);
+        });
+
+        async function expectLeftOuterSymlink(
+          stopLeading, { watchedPath = ownPath, excludedPaths = [], linkPath = outerPath } = {}
+        ) {
+          await withWatchers(inPath, excludedPaths, async watchers => {
+            const { actual, barrier } = watchers;
+            await expectReported(actual, linkPath);
+            await stopLeading(watchers);
+            await barrier();
+            const offset = actual.events.length;
+            await expectReported(actual, watchedPath, 'own.file');
+            await barrier();
+            assert.deepStrictEqual(
+              actual.events.slice(offset).filter(event => event.directory.startsWith(linkPath)), []);
+          });
+        }
+
+        const ways = [
+          ['', () => 'b-inner'],
+          [', reached out of the watched directory and back', () => path.join('..', 'test4', 'b-inner')],
+          [', reached by an absolute path through a symlink to the watched directory', async () => {
+            await fse.symlink('test4', path.join(workDir, 'test4-alias'));
+            return path.join(workDir, 'test4-alias', 'b-inner');
+          }]
+        ];
+        for (const [way, outerTarget] of ways) {
+          it(`is watched at its own path once the inner symlink is removed${way}`, async function() {
+            await fse.symlink('z-real', innerPath);
+            await fse.symlink(await outerTarget(), outerPath);
+
+            await expectLeftOuterSymlink(() => fse.remove(innerPath));
+          });
+        }
+
+        it('is watched at its own path once the inner symlink is repointed', async function() {
+          await fse.symlink('z-real', innerPath);
+          await fse.symlink('b-inner', outerPath);
+          await fse.ensureDir(path.join(inPath, 'other'));
+
+          await expectLeftOuterSymlink(async () => {
+            await fse.symlink('other', path.join(inPath, 'repointed'));
+            await fse.rename(path.join(inPath, 'repointed'), innerPath);
+          });
+        });
+
+        it('is watched at its own path once a symlink the inner one is repointed through is removed', async function() {
+          await fse.symlink('z-real', innerPath);
+          await fse.symlink('b-inner', outerPath);
+          await fse.ensureDir(path.join(inPath, 'c-links'));
+          await fse.symlink(path.join('..', 'z-real'), path.join(inPath, 'c-links', 'z-link'));
+
+          await expectLeftOuterSymlink(async ({ barrier }) => {
+            await fse.symlink(path.join('c-links', 'z-link'), path.join(inPath, 'repointed'));
+            await fse.rename(path.join(inPath, 'repointed'), innerPath);
+            await barrier();
+            await fse.remove(path.join(inPath, 'c-links', 'z-link'));
+          });
+        });
+
+        it('is watched at its own path once an update includes again the directory an inner symlink was removed from',
+          async function() {
+            const excludedPath = path.join(inPath, 'c-links');
+            await fse.ensureDir(excludedPath);
+            await fse.symlink(path.join('..', 'z-real'), path.join(excludedPath, 'b-inner'));
+            await fse.symlink(path.join('c-links', 'b-inner'), outerPath);
+
+            await expectLeftOuterSymlink(async ({ watch }) => {
+              await fse.remove(path.join(excludedPath, 'b-inner'));
+              await watch.updateExcludedPaths([]);
+            }, { excludedPaths: [excludedPath] });
+          });
+
+        it('is watched at its own path once the directory the inner symlink is in is renamed', async function() {
+          await fse.ensureDir(path.join(inPath, 'c-links'));
+          await fse.symlink(path.join('..', 'z-real'), path.join(inPath, 'c-links', 'b-inner'));
+          await fse.symlink(path.join('c-links', 'b-inner'), outerPath);
+
+          await expectLeftOuterSymlink(() => fse.rename(path.join(inPath, 'c-links'), path.join(inPath, 'd-links')));
+        });
+
+        it('is watched at its own path once an inner symlink to the directory it is in is removed', async function() {
+          const targetPath = path.join(inPath, 'sub', 'target');
+          await fse.ensureDir(targetPath);
+          await fse.symlink('sub', innerPath);
+          await fse.symlink(path.join('b-inner', 'target'), outerPath);
+
+          await expectLeftOuterSymlink(() => fse.remove(innerPath), { watchedPath: targetPath });
+        });
+
+        it('is watched at its own path once an inner symlink outside the watched one is removed', async function() {
+          const outsidePath = path.join(workDir, 'test5', 'outside');
+          await fse.ensureDir(outsidePath);
+          await fse.symlink(ownPath, path.join(outsidePath, 'b-inner'));
+          await fse.symlink(path.join('..', 'test5', 'outside'), path.join(inPath, 'a-upper'));
+          await fse.symlink(path.join('a-upper', 'b-inner'), outerPath);
+
+          await expectLeftOuterSymlink(() => fse.remove(path.join(outsidePath, 'b-inner')));
+        });
+
+        it('is watched at its own path once the symlink above it and then the inner one are removed', async function() {
+          const outsidePath = path.join(workDir, 'test5', 'outside');
+          const upperPath = path.join(inPath, 'a-upper');
+          await fse.ensureDir(outsidePath);
+          await fse.symlink(innerPath, path.join(outsidePath, 'a-outer'));
+          await fse.symlink(path.join('..', 'test5', 'outside'), upperPath);
+          await fse.symlink('z-real', innerPath);
+
+          await expectLeftOuterSymlink(async ({ barrier }) => {
+            await fse.remove(upperPath);
+            await barrier();
+            await fse.remove(innerPath);
+          }, { linkPath: path.join(upperPath, 'a-outer') });
+        });
+      });
+
       it('removes the watches of directories that move away, including one deleted right after', async function() {
         const inPath = path.join(workDir, 'test4');
         const outsidePath = path.join(workDir, 'test5');

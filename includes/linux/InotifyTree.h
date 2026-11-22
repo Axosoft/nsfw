@@ -25,6 +25,10 @@
  * void EmitCreatedEvent(std::string directory, std::string file);
  */
 using EmitCreatedEvent = std::function<void(std::string, std::string)>;
+/**
+ * void ReportMove(bool renamed); false: the moved directory left for a place that isn't watched.
+ */
+using ReportMove = std::function<void(bool)>;
 
 class InotifyTree {
   // The last names of excluded paths.
@@ -47,8 +51,8 @@ public:
   void removeDroppedWatches(int eventsRead);
   void retryWatches(EmitCreatedEvent emitCreatedEvent);
   void removeMovedDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent);
-  void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName,
-    EmitCreatedEvent emitCreatedEvent);
+  bool renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName,
+    EmitCreatedEvent emitCreatedEvent, const ReportMove &reportMove);
   void setError(const std::string &error);
   void watchIgnored(int wd);
   bool isQuarantined(int wd, uint32_t mask);
@@ -177,6 +181,8 @@ private:
   static bool isAncestorOrSelf(InotifyNode *ancestor, InotifyNode *node);
   void sight(InotifyNode *scanning, const std::string &name, const struct stat &file, bool throughSymlink);
   InotifyNode *findSightedAt(int wd, const std::string &name);
+  InotifyNode *findMovedNode(int wd, const std::string &name);
+  bool untangleMove(int fromWd, const std::string &fromName, int toWd, EmitCreatedEvent emitCreatedEvent);
   InotifyNode *findPlace(const Sighting &sighting);
   void setSighting(int holder, const Sighting &sighting);
   void placeSighting(int holder, const Sighting &sighting);

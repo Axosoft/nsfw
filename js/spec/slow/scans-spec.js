@@ -1,4 +1,5 @@
 const assert = require('assert');
+const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
 const nsfw = require('../../src');
@@ -9,7 +10,7 @@ describe('inotify scans (slow)', function() {
   this.timeout(120000);
   const {
     watchedPath, outsidePath, touch, watchWhile, waitFor,
-    untilLoopWaits, whileHeld, barrier, expectWatched
+    waitingPath, untilLoopWaits, whileHeld, barrier, expectWatched
   } = fixture();
 
 
@@ -315,4 +316,37 @@ describe('inotify scans (slow)', function() {
       assert.deepStrictEqual(events.filter(event => event.directory === path.join(watchedPath, 'moving')), []);
     });
   });
+
+  it('reports a file moved in over one a scan reported while the events queued before that scan are read',
+    async function() {
+      await fse.ensureDir(path.join(outsidePath, 'moved'));
+      await fse.writeFile(path.join(outsidePath, 'moved', 'f.file'), 'Listed');
+      await fse.writeFile(path.join(outsidePath, 'g.file'), 'Moved in');
+      await fse.ensureDir(path.join(watchedPath, 'held'));
+      const movedPath = path.join(watchedPath, 'moved');
+
+      await watchWhile(async events => {
+        await whileHeld(async () => {
+          await fse.rename(path.join(outsidePath, 'moved'), movedPath);
+          await fse.remove(waitingPath);
+          touch(path.join('held', 'nsfw-test-hold-event-loop'));
+          // More than one read takes, 48 bytes each: the scan of moved leaves some queued, which its report outlives.
+          for (let i = 0; i < 250; ++i) {
+            touch(`padding-${String(i).padStart(3, '0')}.file`);
+          }
+        });
+        for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
+          await sleep(50);
+        }
+        assert.ok(fs.existsSync(waitingPath), 'The event loop never waited in held');
+        // Read with the rest of the padding, while what the scan of moved reported still holds.
+        await fse.rename(path.join(outsidePath, 'g.file'), path.join(movedPath, 'f.file'));
+        touch(path.join('held', 'nsfw-test-release-event-loop'));
+        await barrier(events);
+
+        const created = events.filter(event => event.action === nsfw.actions.CREATED &&
+          event.directory === movedPath && event.file === 'f.file');
+        assert.strictEqual(created.length, 2, JSON.stringify(events.filter(event => event.directory === movedPath)));
+      });
+    });
 });

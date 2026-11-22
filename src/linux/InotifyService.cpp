@@ -60,17 +60,19 @@ InotifyService::~InotifyService() {
   close(mInotifyInstance);
 }
 
-void InotifyService::create(int wd, std::string name) {
-  dispatch(CREATED, wd, name);
+void InotifyService::create(int wd, std::string name, bool fromInCreate) {
+  dispatch(CREATED, wd, name, fromInCreate);
 }
 
-void InotifyService::dispatch(EventType action, int wd, std::string name) {
+// fromInCreate: a creation that is an IN_CREATE, not a move in, see InotifyTree::isReportedByScan().
+void InotifyService::dispatch(EventType action, int wd, std::string name, bool fromInCreate) {
   std::string path;
   if (!mTree->getPath(path, wd)) {
     return;
   }
 
-  if (!mTree->isRootExcluded()) mQueue->enqueue(action, path, name);
+  bool reportedByScan = fromInCreate && mTree->isReportedByScan(wd, name);
+  if (!mTree->isRootExcluded() && !reportedByScan) mQueue->enqueue(action, path, name);
   // Reported first: the tree change may report creations, see renameDirectory().
   if (action != MODIFIED) {
     mTree->entryChanged(wd, name, action == DELETED, emitCreated());
@@ -125,7 +127,7 @@ void InotifyService::remove(int wd, std::string name) {
 // InotifyTree::removeDroppedWatches()). The move is then only a move in or out.
 void InotifyService::rename(int fromWd, std::string fromName, int toWd, std::string toName) {
   if (!mTree->nodeExists(fromWd)) {
-    create(toWd, toName);
+    create(toWd, toName, false);
   } else if (!mTree->nodeExists(toWd)) {
     remove(fromWd, fromName);
   } else {
@@ -133,12 +135,12 @@ void InotifyService::rename(int fromWd, std::string fromName, int toWd, std::str
   }
 }
 
-void InotifyService::createDirectory(int wd, std::string name) {
+void InotifyService::createDirectory(int wd, std::string name, bool fromInCreate) {
   if (!mTree->nodeExists(wd)) {
     return;
   }
 
-  dispatch(CREATED, wd, name);
+  dispatch(CREATED, wd, name, fromInCreate);
   mTree->addDirectory(wd, name, emitCreated());
 }
 
@@ -159,6 +161,10 @@ bool InotifyService::isQuarantined(int wd, uint32_t mask) {
 
 void InotifyService::entryDropped(int wd, std::string name) {
   mTree->entryDropped(wd, name);
+}
+
+void InotifyService::startRead(size_t bytesRead) {
+  mTree->startRead(bytesRead);
 }
 
 void InotifyService::finishRead(int eventsRead, size_t bytesRead) {
@@ -206,7 +212,7 @@ void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd,
     return;
   }
   if (!mTree->nodeExists(fromWd)) {
-    createDirectory(toWd, toName);
+    createDirectory(toWd, toName, false);
     return;
   }
 

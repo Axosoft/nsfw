@@ -21,15 +21,16 @@ public:
 
   ~InotifyService();
 private:
-  void create(int wd, std::string name);
-  void createDirectory(int wd, std::string name);
+  void create(int wd, std::string name, bool fromInCreate);
+  void createDirectory(int wd, std::string name, bool fromInCreate);
   void createDirectoryTree(std::string directoryTreePath);
-  void dispatch(EventType action, int wd, std::string name);
+  void dispatch(EventType action, int wd, std::string name, bool fromInCreate = false);
   void dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName);
   EmitCreatedEvent emitCreated();
   void watchIgnored(int wd);
   bool isQuarantined(int wd, uint32_t mask);
   void entryDropped(int wd, std::string name);
+  void startRead(size_t bytesRead);
   void finishRead(int eventsRead, size_t bytesRead);
   void modify(int wd, std::string name);
   void remove(int wd, std::string name);

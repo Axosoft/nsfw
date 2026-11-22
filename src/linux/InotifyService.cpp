@@ -210,10 +210,23 @@ void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd,
     return;
   }
 
-  // Reported first: the tree change may drop the node of the directory it left (see InotifyTree::discard()),
-  // and report creations under the new path, which the rename has to come before.
-  dispatchRename(fromWd, fromName, toWd, toName);
-  mTree->renameDirectory(fromWd, fromName, toWd, toName, emitCreated());
+  // Reported once the tree has the destination at its own path (see InotifyTree::untangleMove()), and before it drops
+  // the node of the directory it left (see InotifyTree::discard()) or reports creations under the new path.
+  bool kept = mTree->renameDirectory(fromWd, fromName, toWd, toName, emitCreated(),
+    [this, fromWd, &fromName, toWd, &toName](bool renamed) {
+      std::string fromPath, toPath;
+      if (mTree->isRootExcluded() || !mTree->getPath(fromPath, fromWd)) {
+        return;
+      }
+      if (!renamed) {
+        mQueue->enqueue(DELETED, fromPath, fromName);
+      } else if (mTree->getPath(toPath, toWd)) {
+        mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName);
+      }
+    });
+  if (!kept) {
+    revalidateLinks(true);
+  }
 }
 
 void InotifyService::setError(const std::string &error) {

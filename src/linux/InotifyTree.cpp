@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <memory>
 
 // Whether a failed lookup or read of a directory tells that it isn't there, or may not be read.
 static bool isLastingError(int error) {
@@ -236,21 +237,25 @@ void InotifyTree::removeDirectory(int wd, EmitCreatedEvent emitCreatedEvent) {
 // watched path, or into an excluded directory. Its nodes would keep reporting its events under the old path, and keep
 // its inode claimed, so a directory moved back in later would not be watched.
 void InotifyTree::removeMovedDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent) {
-  auto nodeIterator = mInotifyNodeByWatchDescriptor->find(wd);
-  if (nodeIterator == mInotifyNodeByWatchDescriptor->end()) {
-    return;
+  InotifyNode *moved = findMovedNode(wd, name);
+  if (moved != NULL) {
+    discard(moved, emitCreatedEvent);
   }
+}
 
-  InotifyNode *child = nodeIterator->second->findDescendant(name);
+// The node of the directory that moved from `name` in the directory with wd: there, or at a symlink scanned before
+// it, which led to it by that path and leads nowhere now.
+InotifyTree::InotifyNode *InotifyTree::findMovedNode(int wd, const std::string &name) {
+  InotifyNode *directory = findNodeByWatchDescriptor(wd);
+  if (directory == NULL) {
+    return NULL;
+  }
+  InotifyNode *child = directory->findDescendant(name);
   if (child != NULL) {
-    discard(child, emitCreatedEvent);
-    return;
+    return child;
   }
-  // The tree may have it at a symlink scanned before it, which led to it by this path and leads nowhere now.
   InotifyNode *holder = findSightedAt(wd, name);
-  if (holder != NULL && holder->isAtStaleLink()) {
-    discard(holder, emitCreatedEvent);
-  }
+  return holder != NULL && holder->isAtStaleLink() ? holder : NULL;
 }
 
 // How many bytes of events are waiting to be read, INT_MAX if some are but it can't be told how many.
@@ -374,17 +379,59 @@ void InotifyTree::removeNodeReferenceByWD(int wd, InotifyNode *node) {
   }
 }
 
-void InotifyTree::renameDirectory(
+namespace {
+// Creations held back until what has to be reported before them is, then emitted in order. Shared with the callback
+// that holds them, which the tree may keep for scans that run later: it emits directly once they are released.
+struct HeldCreations {
+  bool holding = true;
+  std::vector<std::pair<std::string, std::string>> created;
+
+  static EmitCreatedEvent hold(const std::shared_ptr<HeldCreations> &held, EmitCreatedEvent emitCreatedEvent) {
+    return [held, emitCreatedEvent](std::string directory, std::string file) {
+      if (held->holding) {
+        held->created.emplace_back(std::move(directory), std::move(file));
+      } else {
+        emitCreatedEvent(directory, file);
+      }
+    };
+  }
+
+  void release(const EmitCreatedEvent &emitCreatedEvent) {
+    holding = false;
+    for (auto &entry : created) {
+      emitCreatedEvent(entry.first, entry.second);
+    }
+    created.clear();
+  }
+};
+}
+
+// The directory moved from fromName in fromWd to toName in toWd, both in the tree. reportMove is told whether it is
+// still watched there, once the tree has the destination at its own path, before anything is reported below it. False
+// if it left for a place that isn't watched, see untangleMove(): it's dropped.
+bool InotifyTree::renameDirectory(
   int fromWd,
   std::string fromName,
   int toWd,
   std::string toName,
-  EmitCreatedEvent emitCreatedEvent
+  EmitCreatedEvent emitCreatedEvent,
+  const ReportMove &reportMove
 ) {
+  auto held = std::make_shared<HeldCreations>();
+  bool untangled = untangleMove(fromWd, fromName, toWd, HeldCreations::hold(held, emitCreatedEvent));
+  reportMove(untangled);
+  held->release(emitCreatedEvent);
+  entryChanged(fromWd, fromName, true, emitCreatedEvent);
+  if (!untangled) {
+    removeMovedDirectory(fromWd, fromName, emitCreatedEvent);
+    return false;
+  }
+  entryChanged(toWd, toName, false, emitCreatedEvent);
+
   auto fromNodeIterator = mInotifyNodeByWatchDescriptor->find(fromWd);
   auto toNodeIterator = mInotifyNodeByWatchDescriptor->find(toWd);
   if (fromNodeIterator == mInotifyNodeByWatchDescriptor->end() || toNodeIterator == mInotifyNodeByWatchDescriptor->end()) {
-    return;
+    return true;
   }
 
   InotifyNode *fromNode = fromNodeIterator->second;
@@ -415,7 +462,7 @@ void InotifyTree::renameDirectory(
       holder = findNodeOf(file);
     }
     if (holder == NULL || holder->getParent() == NULL) {
-      return;
+      return true;
     }
     if (!holder->isThroughSymlink()) {
       settleLinksTo(holder, emitCreatedEvent);
@@ -424,33 +471,18 @@ void InotifyTree::renameDirectory(
     } else {
       settleLink(holder, emitCreatedEvent);
     }
-    return;
+    return true;
   }
 
   int childWatchDescriptor = child->getWatchDescriptor();
+  // Nothing can hang from itself: untangleMove() made sure of that, and this keeps a tangle it missed from looping.
   if (isAncestorOrSelf(child, toNode)) {
-    // It moved into a directory the tree only has below it, at a symlink it holds: that one takes its own place
-    // first, since nothing can hang from itself. With none to take, the directory left for a place that isn't watched.
-    InotifyNode *holder = toNode;
-    while (holder != child && !holder->isThroughSymlink()) {
-      holder = holder->getParent();
-    }
-    bool untangled = holder != child && moveToOwnPlace(holder, emitCreatedEvent) == OwnPlace::TAKEN;
-    fromNode = findNodeByWatchDescriptor(fromWd);
-    toNode = findNodeByWatchDescriptor(toWd);
-    child = fromNode == NULL ? NULL : fromNode->findDescendant(fromName);
-    if (child == NULL || child->getWatchDescriptor() != childWatchDescriptor) {
-      return;
-    }
-    if (!untangled || toNode == NULL || isAncestorOrSelf(child, toNode)) {
-      discard(child, emitCreatedEvent);
-      return;
-    }
+    discard(child, emitCreatedEvent);
+    return false;
   }
-
   if (rejectsChild(toNode, toName)) {
     discard(child, emitCreatedEvent);
-    return;
+    return true;
   }
 
   // A scan saw it where this takes it, or where it was: its events tell the rest.
@@ -473,7 +505,7 @@ void InotifyTree::renameDirectory(
   }
   child = findNodeByWatchDescriptor(childWatchDescriptor);
   if (child == NULL) {
-    return;
+    return true;
   }
   applyExclusions(child, emitCreatedEvent);
   child = findNodeByWatchDescriptor(childWatchDescriptor);
@@ -485,6 +517,61 @@ void InotifyTree::renameDirectory(
   if (child != NULL && !mIncompleteScans.empty()) {
     rescanIncomplete(child, emitCreatedEvent);
   }
+  return true;
+}
+
+// A directory that moves into one the tree only has below it, at a symlink it holds, can't hang from there: the holder
+// on the way takes its own place first. When that place is below the moved directory too, at another symlink, the
+// holder of that one goes first, and so on. Done before the rename is reported, so that its destination is the
+// directory's own path. False if the destination stays below the moved directory: no holder on the way has a place to
+// take outside it, so the directory left for a place that isn't watched.
+bool InotifyTree::untangleMove(int fromWd, const std::string &fromName, int toWd, EmitCreatedEvent emitCreatedEvent) {
+  InotifyNode *child = findMovedNode(fromWd, fromName);
+  InotifyNode *toNode = findNodeByWatchDescriptor(toWd);
+  if (child == NULL || toNode == NULL || !isAncestorOrSelf(child, toNode)) {
+    return true;
+  }
+  const int movedWatchDescriptor = child->getWatchDescriptor();
+  // The nodes to get out of the moved directory, the last one first. Each place waited for once: one asked for again
+  // is below a holder that waits for it, a loop that only a holder further up can untangle.
+  std::vector<int> tangled = { toWd };
+  std::set<int> waitedFor = { toWd };
+  while (!tangled.empty()) {
+    InotifyNode *moved = findNodeByWatchDescriptor(movedWatchDescriptor);
+    InotifyNode *below = findNodeByWatchDescriptor(tangled.back());
+    if (moved == NULL || below == NULL) {
+      return false;
+    }
+    if (!isAncestorOrSelf(moved, below)) {
+      tangled.pop_back();
+      continue;
+    }
+    // The nearest holder first. One with no place to take (its symlink leads out of the watched path, say) may be
+    // carried out by one further up that has: taking no place changes nothing in the tree.
+    bool untangling = false;
+    for (InotifyNode *holder = below; holder != moved; holder = holder->getParent()) {
+      if (!holder->isThroughSymlink()) {
+        continue;
+      }
+      auto seen = mSightings.find(holder->getWatchDescriptor());
+      InotifyNode *place = seen == mSightings.end() || seen->second.throughSymlink ? NULL : findPlace(seen->second);
+      if (place != NULL && isAncestorOrSelf(moved, place)) {
+        if (waitedFor.insert(place->getWatchDescriptor()).second) {
+          tangled.push_back(place->getWatchDescriptor());
+          untangling = true;
+          break;
+        }
+      } else if (moveToOwnPlace(holder, emitCreatedEvent) == OwnPlace::TAKEN) {
+        // Settling it may have changed the tree: the next pass looks again.
+        untangling = true;
+        break;
+      }
+    }
+    if (!untangling) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Whether the event loop drops an event for wd, taken back behind a marker not read yet. Events about the kernel watch

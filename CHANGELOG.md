@@ -91,6 +91,12 @@ stops with an error instead of losing events silently.
   `a-link -> b-link` with `b-link -> real` (#228), also by a path that leaves the watched directory and comes back.
   Before, the directory's events kept the path of the outer symlink. A symlink on the way inside an excluded
   directory is only looked at again once an update includes that directory.
+- On Linux, moving a directory into the one a symlink inside it leads to, such as `a/x -> ../z-real` and then
+  `mv a z-real/moved`, no longer crashes the watcher (#230). The `RENAMED` event reports the destination's own path,
+  `z-real/moved`, instead of one through the symlink, and the directories it held at symlinks stay watched at their
+  own paths, also when one is below another, such as `a/b -> ../zz/z-real` with `a/c -> ../zz`. When no symlink on
+  the way has a place of its own to take, as when it leads out of the watched directory, the move is reported as
+  `DELETED`, since the directory is no longer watched.
 - On Linux, a directory moved out of the watched path, or into an excluded directory, is no longer watched. Before, its
   events kept being reported under its old path, and it wasn't watched again when moved back in under another path.
   Moved back, whether its old watches were removed already or not, it is watched like a directory that moves in for the

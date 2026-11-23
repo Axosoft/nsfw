@@ -35,6 +35,11 @@ class InotifyTree {
   using ExcludedNames = std::unordered_set<std::string>;
   // A directory, wherever a path to it is.
   using Directory = std::pair<dev_t, ino_t>;
+  struct DirectoryHash {
+    size_t operator()(const Directory &directory) const {
+      return std::hash<ino_t>()(directory.second) ^ (std::hash<dev_t>()(directory.first) * 0x9e3779b97f4a7c15ULL);
+    }
+  };
 public:
   InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths);
 
@@ -76,11 +81,11 @@ public:
 private:
   class InotifyNode {
   public:
+    // fullPath: this node's, stored only for a node with no parent: a child's is derived from its parent's.
     InotifyNode(
       InotifyTree *tree,
-      int inotifyInstance,
       InotifyNode *parent,
-      const std::string &directory,
+      const std::string &fullPath,
       std::string name,
       dev_t device,
       ino_t inodeNumber,
@@ -90,35 +95,35 @@ private:
 
     // Calls visit with each node below this one, a parent before its children. It mustn't change the tree.
     template <typename Visit> void forEachBelow(const Visit &visit) {
-      for (const auto &child : *mChildren) {
-        visit(child.second);
-        child.second->forEachBelow(visit);
+      for (InotifyNode *child : mChildren) {
+        visit(child);
+        child->forEachBelow(visit);
       }
     }
-    bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr, bool reportEntry = false,
-      uint64_t reportedUntil = 0);
+    // fullPath: this node's, which the caller builds once for what it does with the node.
+    bool createChild(const std::string &fullPath, const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr,
+      bool reportEntry = false, uint64_t reportedUntil = 0, unsigned char type = DT_UNKNOWN);
     InotifyNode *findDescendant(const std::string &relativePath);
-    void fixPaths();
     dev_t getDevice();
     std::string getFullPath();
     const std::string &getName() const;
     InotifyNode *getParent();
     int getWatchDescriptor();
-    int addWatch(int attributes);
+    int addWatch(int attributes, const std::string &fullPath);
     void handleWatchFailure(int error);
     ino_t getInodeNumber();
-    bool inotifyInit();
-    bool registrationMatchesPath();
+    bool inotifyInit(const std::string &fullPath);
+    bool registrationMatchesPath(const std::string &fullPath);
     bool isAlive();
     bool leadsToItself();
+    bool leadsToItself(const std::string &fullPath);
     // At a symlink that no longer leads to its directory.
     bool isAtStaleLink();
     InotifyNode *pullChild(std::string name);
     void removeChild(std::string name);
-    void setName(std::string name);
-    void setParent(InotifyNode *newParent);
     void takeChildAsName(InotifyNode *child, std::string name);
-    bool scan(EmitCreatedEvent emitCreatedEvent, bool rescan = false, bool reportEntries = false);
+    bool scan(const std::string &fullPath, EmitCreatedEvent emitCreatedEvent, bool rescan = false,
+      bool reportEntries = false);
     bool takeFoundAgain(bool &fromExclusionUpdate);
     bool foundByExclusionUpdate() const;
     bool registrationChanged() const { return mRegistrationChanged; }
@@ -128,7 +133,7 @@ private:
     uint64_t adoption = 0;
     bool rewatch(uint64_t marker, int &replaced);
 
-    static std::string createFullPath(std::string parentPath, std::string name);
+    static std::string createFullPath(const std::string &parentPath, const std::string &name);
 
     ~InotifyNode();
   private:
@@ -144,6 +149,26 @@ private:
                                 | IN_DELETE_SELF
                                 | IN_ONLYDIR;
 
+    // Orders the children by name, which can be looked up without a node: the name is only kept in the child.
+    struct ByName {
+      using is_transparent = void;
+      bool operator()(const InotifyNode *a, const InotifyNode *b) const { return a->mName < b->mName; }
+      bool operator()(const InotifyNode *a, const std::string &b) const { return a->mName < b; }
+      bool operator()(const std::string &a, const InotifyNode *b) const { return a < b->mName; }
+    };
+    void adopt(InotifyNode *child);
+    // Keeps the path of a node without a parent: leaving one, it keeps the path it had there until another takes it.
+    void setParent(InotifyNode *newParent);
+
+    // The path isn't kept: it is the parent's and the name, see getFullPath(), so a rename changes no path below it.
+    std::set<InotifyNode *, ByName> mChildren;
+    std::string mName;
+    InotifyNode *mParent;
+    InotifyTree *mTree;
+    dev_t mDevice;
+    ino_t mInodeNumber;
+    int mWatchDescriptor;
+    bool mWatchDescriptorInitialized;
     bool mAlive;
     bool mRegistrationChanged = false;
     // Took a dropped watch back, and isn't scanned until the marker of its pass is queued, see settleFound().
@@ -151,17 +176,6 @@ private:
     bool mFoundByExclusionUpdate = false;
     // At a symlink to a directory (or the watched path), which only changes when the symlink does.
     bool mThroughSymlink;
-    std::map<std::string, InotifyNode *> *mChildren;
-    const std::string &mDirectory;
-    std::string mFullPath;
-    dev_t mDevice;
-    ino_t mInodeNumber;
-    const int mInotifyInstance;
-    std::string mName;
-    InotifyNode *mParent;
-    InotifyTree *mTree;
-    int mWatchDescriptor;
-    bool mWatchDescriptorInitialized;
   };
 
   void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
@@ -182,7 +196,8 @@ private:
   };
   InotifyNode *findNodeByWatchDescriptor(int watchDescriptor);
   static bool isAncestorOrSelf(InotifyNode *ancestor, InotifyNode *node);
-  void sight(InotifyNode *scanning, const std::string &name, const struct stat &file, bool throughSymlink);
+  void sight(InotifyNode *scanning, const std::string &scanningPath, const std::string &name, const struct stat &file,
+    bool throughSymlink);
   InotifyNode *findSightedAt(int wd, const std::string &name);
   InotifyNode *findMovedNode(int wd, const std::string &name);
   bool untangleMove(int fromWd, const std::string &fromName, int toWd, EmitCreatedEvent emitCreatedEvent);
@@ -283,9 +298,12 @@ private:
   std::string mError;
   std::mutex mErrorMutex;
   const int mInotifyInstance;
-  std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
+  std::unordered_map<int, InotifyNode *> mInotifyNodeByWatchDescriptor;
   // A null value reserves a directory while its node is being constructed.
-  std::map<Directory, InotifyNode *> mNodesByDirectory;
+  std::unordered_map<Directory, InotifyNode *, DirectoryHash> mNodesByDirectory;
+  // The path of each node with no parent: the root, and a node pulled from its parent until another one takes it,
+  // whose path (and the paths below it) stays where it was, see InotifyNode::getFullPath().
+  std::unordered_map<const InotifyNode *, std::string> mPathsOfTopNodes;
   // The watches of directories dropped from the tree, not removed yet. None is in mInotifyNodeByWatchDescriptor:
   // their events may be from where the directory couldn't be watched. removeDroppedWatches() removes them a few at a
   // time, removeDroppedWatch() an excluded one at its next event, and freeDroppedWatch() some when the limit of watches

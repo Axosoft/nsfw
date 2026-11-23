@@ -55,6 +55,13 @@ stops with an error instead of losing events silently.
   It can also be deleted right after an overflow is reported (say, by the `rm -rf` that overflowed the queue), so if
   `start()` then rejects, check that the directory still exists.
 
+### Performance
+- Linux: `start()` on a large tree takes about half the time, and the watcher holds about 40% less memory. Measure it
+  with `node --expose-gc js/scripts/benchmark-start.js <path>`. The scan now trusts the type a directory listing gives
+  each entry, which changes two cases: an entry listed as a file that a symlink to a directory replaces before the scan
+  gets to it isn't watched through it (as one created right after the scan never was), and neither is a directory that
+  the filesystem lists as something else, which only a faulty FUSE daemon or a corrupted directory entry does.
+
 ### Fixed
 - A fresh `npm install nsfw` compiles again (#212). `node-addon-api` 8.9.2 headers need C++17, but the build forced
   C++11 on macOS.

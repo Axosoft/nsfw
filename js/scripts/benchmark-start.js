@@ -28,6 +28,9 @@ async function main() {
   }
   const targetPath = path.resolve(targetArg);
   const runs = Number.parseInt(runsArg, 10);
+  if (!(runs >= 1)) {
+    throw new Error('runs must be a positive integer');
+  }
   // The first run is the only one whose memory the process hadn't taken already. Its time counts a cold page cache.
   const { rssDelta } = await measure(targetPath);
   const results = [];

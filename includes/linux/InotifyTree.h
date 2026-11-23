@@ -81,11 +81,11 @@ public:
 private:
   class InotifyNode {
   public:
-    // directory: where a node with no parent (the root) is. A child's path is its parent's and its name.
+    // fullPath: its own, kept only for a node with no parent (the root). A child's is its parent's and its name.
     InotifyNode(
       InotifyTree *tree,
       InotifyNode *parent,
-      const std::string &directory,
+      const std::string &fullPath,
       std::string name,
       dev_t device,
       ino_t inodeNumber,
@@ -100,21 +100,21 @@ private:
         child->forEachBelow(visit);
       }
     }
-    bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr, bool reportEntry = false,
-      uint64_t reportedUntil = 0, unsigned char type = DT_UNKNOWN);
+    bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr);
     InotifyNode *findDescendant(const std::string &relativePath);
     dev_t getDevice();
     std::string getFullPath();
     const std::string &getName() const;
     InotifyNode *getParent();
     int getWatchDescriptor();
-    int addWatch(int attributes);
+    int addWatch(int attributes, const std::string &fullPath);
     void handleWatchFailure(int error);
     ino_t getInodeNumber();
-    bool inotifyInit();
-    bool registrationMatchesPath();
+    bool inotifyInit(const std::string &fullPath);
+    bool registrationMatchesPath(const std::string &fullPath);
     bool isAlive();
     bool leadsToItself();
+    bool leadsToItself(const std::string &fullPath);
     // At a symlink that no longer leads to its directory.
     bool isAtStaleLink();
     InotifyNode *pullChild(std::string name);
@@ -155,6 +155,7 @@ private:
     };
     bool createChildIn(const std::string &fullPath, const std::string &name, EmitCreatedEvent emitCreatedEvent,
       bool reportEntry, uint64_t reportedUntil, unsigned char type);
+    bool scanAt(const std::string &fullPath, EmitCreatedEvent emitCreatedEvent, bool rescan, bool reportEntries);
     void adopt(InotifyNode *child);
     void setParent(InotifyNode *newParent);
 

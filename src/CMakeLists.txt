@@ -2,6 +2,10 @@
 set (NSFW_LIBRARY_SOURCES
     Queue.cpp
     NativeInterface.cpp
+    FilterPaths.cpp
+    GitRepository.cpp
+    GitignoreRules.cpp
+    PathFilter.cpp
 )
 
 if (WIN32)

@@ -20,6 +20,12 @@ function validateExcludedPaths(excludedPaths) {
   }
 }
 
+function validateExcludedPatterns(excludedPatterns) {
+  if (!Array.isArray(excludedPatterns) || excludedPatterns.some(pattern => typeof pattern !== 'string')) {
+    throw new TypeError('excludedPatterns must be an array of strings.');
+  }
+}
+
 const isExtendedUnc = value => value.slice(0, 8).toLowerCase() === '\\\\?\\unc\\';
 
 function stripTrailingSeparators(value) {
@@ -150,7 +156,8 @@ async function createPathContext(watchPath) {
   };
 }
 
-function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths, reportedPath, isExcluded) {
+function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths, reportedPath, isExcluded,
+  excludedPatterns) {
   const { CREATED, DELETED, MODIFIED } = nsfw.actions;
   const directory = path.dirname(reportedPath);
   const file = path.basename(reportedPath);
@@ -159,6 +166,8 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths, rep
   let filePollerInterval;
 
   let currentExcludedPaths = excludedPaths;
+  // Kept, though only a watched directory applies them.
+  let currentExcludedPatterns = excludedPatterns;
 
   const report = events => { if (!currentExcludedPaths.some(isExcluded)) eventCallback(events); };
 
@@ -205,16 +214,32 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths, rep
     currentExcludedPaths = paths;
     return [...currentExcludedPaths];
   };
+
+  this.getExcludedPatterns = async () => [...currentExcludedPatterns];
+  this.updateExcludedPatterns = async (patterns) => {
+    currentExcludedPatterns = patterns;
+    return [...currentExcludedPatterns];
+  };
 }
 
-const buildNSFW = async (watchPath, eventCallback,
-  { debounceMS = 500, errorCallback: _errorCallback, excludedPaths = [] } = {}) => {
+const buildNSFW = async (watchPath, eventCallback, {
+  debounceMS = 500,
+  errorCallback: _errorCallback,
+  excludedPaths = [],
+  excludedPatterns = [],
+  respectGitignore = false
+} = {}) => {
   if (Number.isInteger(debounceMS)) {
     if (debounceMS < 1) {
       throw new Error('Minimum debounce is 1ms.');
     }
   } else {
     throw new Error('debounceMS must be an integer.');
+  }
+
+  validateExcludedPatterns(excludedPatterns);
+  if (typeof respectGitignore !== 'boolean') {
+    throw new TypeError('respectGitignore must be a boolean.');
   }
 
   const errorCallback = _errorCallback || ((nsfwError) => { throw nsfwError; });
@@ -246,10 +271,16 @@ const buildNSFW = async (watchPath, eventCallback,
 
   if (stats.isDirectory()) {
     implementation = new NSFW(context.watchPath, callback,
-      { debounceMS, errorCallback, excludedPaths: effectivePaths });
+      {
+        debounceMS,
+        errorCallback,
+        excludedPaths: effectivePaths,
+        excludedPatterns: [...excludedPatterns],
+        respectGitignore
+      });
   } else if (stats.isFile()) {
     implementation = new NSFWFilePoller(context.watchPath, eventCallback, debounceMS, effectivePaths,
-      watchPath, context.isWatchPath);
+      watchPath, context.isWatchPath, [...excludedPatterns]);
   } else {
     throw new Error('Path must be a valid path to a file or a directory');
   }
@@ -269,19 +300,26 @@ function nsfw(watchPath, eventCallback, options) {
   // watcher, which creates its job synchronously.
   let waiting = 0;
   let updates = Promise.resolve();
-  const inOrder = method => () => {
-    if (waiting === 0) return implementation[method]();
+  const whenReady = call => {
+    if (waiting === 0) return call();
     waiting++;
     return updates.then(() => {
       waiting--;
-      return implementation[method]();
+      return call();
     });
   };
+  const inOrder = method => () => whenReady(() => implementation[method]());
   this.start = inOrder('start');
   this.stop = inOrder('stop');
   this.pause = inOrder('pause');
   this.resume = inOrder('resume');
   this.getExcludedPaths = inOrder('getExcludedPaths');
+  this.getExcludedPatterns = inOrder('getExcludedPatterns');
+  this.updateExcludedPatterns = async patterns => {
+    validateExcludedPatterns(patterns);
+    const snapshot = [...patterns];
+    return whenReady(() => implementation.updateExcludedPatterns(snapshot));
+  };
   this.updateExcludedPaths = async paths => {
     validateExcludedPaths(paths);
     const snapshot = [...paths];

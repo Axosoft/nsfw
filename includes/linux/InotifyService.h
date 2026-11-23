@@ -3,6 +3,7 @@
 
 #include "InotifyEventLoop.h"
 #include "InotifyTree.h"
+#include "../PathFilter.h"
 #include "../Queue.h"
 #include <queue>
 #include <map>
@@ -12,19 +13,23 @@ class InotifyTree;
 
 class InotifyService {
 public:
-  InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths);
+  // filter: what the tree doesn't watch, besides the excluded paths.
+  InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
+    std::shared_ptr<PathFilter> filter);
 
   std::string getError();
   bool hasErrored();
   bool isWatching();
   std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths);
+  void updateExcludedPatterns(const std::vector<std::string> &excludedPatterns);
 
   ~InotifyService();
 private:
   void create(int wd, std::string name, bool fromInCreate);
   void createDirectory(int wd, std::string name, bool fromInCreate);
   void createDirectoryTree(std::string directoryTreePath);
-  void dispatch(EventType action, int wd, std::string name, bool fromInCreate = false);
+  void dispatch(EventType action, int wd, std::string name, bool fromInCreate = false,
+    PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
   void dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName);
   EmitCreatedEvent emitCreated();
   void watchIgnored(int wd);
@@ -33,7 +38,7 @@ private:
   void startRead(size_t bytesRead);
   void finishRead(int eventsRead, size_t bytesRead);
   void modify(int wd, std::string name);
-  void remove(int wd, std::string name);
+  void remove(int wd, std::string name, bool isDirectory);
   void removeDirectory(int wd);
   void forgetIncompleteScans();
   bool removeDroppedWatch(int wd);
@@ -45,11 +50,41 @@ private:
   void rename(int fromWd, std::string fromName, int toWd, std::string toName);
   void renameDirectory(int fromWd, std::string fromName, int toWd, std::string toName);
   void setError(const std::string &error);
+  void noteEntry(int wd, const std::string &directory, const std::string &name, bool replaced);
+  void noteMove(int fromWd, const std::string &fromPath, const std::string &fromName, int toWd,
+    const std::string &toPath, const std::string &toName);
+  void finishFilterPass();
+  int settleFilterChange();
+  void applyFilter(bool include);
+  void takeFilterChanges();
+  void wakeForFilterChange();
 
   InotifyEventLoop *mEventLoop;
   std::shared_ptr<EventQueue> mQueue;
   InotifyTree *mTree;
   int mInotifyInstance;
+  std::shared_ptr<PathFilter> mFilter;
+  // The filter's generation committed last (see PathFilter::commit()), the one whose exclusions alone the tree
+  // applied, the last one seen, when it was seen, and when the first one not committed was, see settleFilterChange().
+  // And below which directories the answers changed since, or all of them.
+  uint64_t mCommittedGeneration = 0;
+  uint64_t mExcludedGeneration = 0;
+  uint64_t mSeenGeneration = 0;
+  std::chrono::steady_clock::time_point mLastFilterChange;
+  std::chrono::steady_clock::time_point mFirstUnapplied;
+  std::chrono::steady_clock::time_point mNextFailedReadRetry;
+  std::chrono::steady_clock::time_point mLastExclusionPass;
+  std::set<std::string> mPendingDirectories;
+  bool mPendingAll = false;
+  // How long the ignore files must stay unchanged before the tree drops what they ignore, and before it watches what
+  // they no longer ignore, longer: a save that truncates and then writes, or a checkout that removes and then
+  // creates, would otherwise have it watch everything they ignore for a moment. Each at most so long after the first
+  // change, so a burst of changes can't put them off for long.
+  static constexpr std::chrono::milliseconds EXCLUSION_QUIET_PERIOD = std::chrono::milliseconds(200);
+  static constexpr std::chrono::milliseconds EXCLUSION_MAX_DELAY = std::chrono::milliseconds(1000);
+  static constexpr std::chrono::milliseconds INCLUSION_QUIET_PERIOD = std::chrono::milliseconds(1000);
+  static constexpr std::chrono::milliseconds INCLUSION_MAX_DELAY = std::chrono::milliseconds(5000);
+  static constexpr std::chrono::milliseconds FAILED_READ_RETRY = std::chrono::milliseconds(1000);
 
   friend class InotifyEventLoop;
 };

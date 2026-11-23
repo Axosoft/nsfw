@@ -32,6 +32,13 @@ declare module 'nsfw' {
              * like the ones getExcludedPaths() returns, even if a later call has replaced them.
              */
             updateExcludedPaths: (excludedPaths: string[]) => Promise<string[]>;
+            /** Returns a Promise that resolves with the excluded patterns. */
+            getExcludedPatterns: () => Promise<string[]>;
+            /**
+             * Replaces the excluded patterns, see `Options.excludedPatterns`. Rejects unless every pattern is a string;
+             * resolves with the patterns this call set, even if a later call has replaced them.
+             */
+            updateExcludedPatterns: (excludedPatterns: string[]) => Promise<string[]>;
         }
 
         export const enum ActionType {
@@ -75,6 +82,20 @@ declare module 'nsfw' {
             errorCallback?: (err: any) => void;
             /** absolute paths inside the watched path to be excluded; the ones outside it are ignored */
             excludedPaths?: string[];
+            /**
+             * Glob patterns with `.gitignore` syntax, relative to the watched path, whose matches are excluded: `*.log`
+             * matches at any depth, `/build` only at the top, `dist/` only directories, `**` spans directories and `!`
+             * includes again what an earlier pattern excluded. They take precedence over the ignore files of
+             * `respectGitignore`. Can be replaced with `updateExcludedPatterns()`. Only for a watched directory.
+             */
+            excludedPatterns?: string[];
+            /**
+             * Excludes what git ignores in the repository the watched path is in: its `.gitignore` files, which are read
+             * again when they change, its `info/exclude` and the user's `core.excludesFile`. The watched path itself is
+             * never excluded. Outside a repository it has no effect. Set at creation. Only for a watched directory.
+             * Defaults to false.
+             */
+            respectGitignore?: boolean;
         }
     }
 

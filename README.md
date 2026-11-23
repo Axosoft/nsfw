@@ -63,7 +63,9 @@ return nsfw(
     errorCallback(errors) {
       //handle errors
     },
-    excludedPaths: [path.join(dir2, 'node_modules')]
+    excludedPaths: [path.join(dir2, 'node_modules')],
+    excludedPatterns: ['*.log', 'tmp/'],
+    respectGitignore: true
   })
   .then(function(watcher) {
     watcher2 = watcher;
@@ -101,6 +103,51 @@ returns reject; the ones outside the watched path are ignored. Paths match on wh
 You can update the excludedPaths array without restarting the service using the `updateExcludedPaths` function, which
 handles the paths the same way and resolves with the paths that call set, without the ignored ones.
 `getExcludedPaths` resolves with the current ones.
+- excludedPatterns: array of glob patterns, with the syntax of `.gitignore` files, relative to the watched directory.
+What they match is not reported: `*.log` matches at any depth, `/dist` only at the top, `build/` only directories,
+`**` spans directories (`src/**/*.gen.ts`) and `!` includes again what an earlier pattern excluded (`!keep.log`).
+Nothing inside an excluded directory can be included again. Default `[]`. You can replace them without restarting the
+service using the `updateExcludedPatterns` function, which resolves with the patterns that call set;
+`getExcludedPatterns` resolves with the current ones.
+- respectGitignore: when `true`, what git ignores in the repository the watched directory is in is not reported:
+its `.gitignore` files (including the ones above the watched directory), its `info/exclude` and the user's
+`core.excludesFile` (`~/.config/git/ignore` by default). Changes to the `.gitignore` files and to `info/exclude` below
+the watched directory apply while watching, as long as their events are watched (not when `.git` is itself excluded,
+for `info/exclude`); the other files are read when the watcher starts. As in git, a `.gitignore` that is a symlink or
+larger than 100 MB is skipped, and the ignore files never exclude a `.git` directory or anything in it. The watched
+directory is never excluded either. Outside a repository it has no effect. `excludedPatterns` take precedence over the
+ignore files. Set when the watcher is created. Default `false`. Not supported: `include` directives and the
+`GIT_CONFIG_*` environment variables (only `/etc/gitconfig`, not on Windows, `$XDG_CONFIG_HOME/git/config`,
+`~/.gitconfig` and the repository's config are read for `core.excludesFile`), and nested repositories, which the outer
+repository's rules apply to as well. Unlike git, a symlink to a directory counts as a directory for patterns that only
+match directories, since the watcher follows it.
+Case is ignored for ASCII letters only on case-insensitive filesystems. As git's `safe.directory` check, a repository
+another user owns (under `sudo`, another than the one who ran it) is ignored unless `safe.directory` in the system or
+user config trusts it; on Windows the owner is the user's SID, or the Administrators group they are a member of, as
+git checks it, and paths to another machine read from the repository's files are refused. Nor is a repository looked
+for on another filesystem than the watched path's, except on Windows. Only `/etc/gitconfig` (not on Windows),
+`$XDG_CONFIG_HOME/git/config` and `~/.gitconfig` are read for `safe.directory`.
+
+All three options can be combined: a path is excluded when `excludedPaths` excludes it, or when `excludedPatterns` or
+the ignore files do, the patterns deciding first, negations included (`!keep.log` reports `keep.log` whatever the
+ignore files say). On Linux, the directories excluded by them are not watched at all, which spares inotify watches
+(`fs.inotify.max_user_watches`), and neither is a directory a symlink leads to that they exclude. On Linux the watched
+directories follow the ignore files: what they now ignore is dropped once they stay unchanged for 200 ms (at most 1 s
+after they first changed), and what they no longer ignore is watched once they stay unchanged for 1 s (at most 5 s
+after). What either the previous or the new rules ignore never gets a watch meanwhile, not even a directory created or
+moved then, so a save or a checkout that rewrites one never has everything it ignores watched for a moment; what the
+new rules ignore keeps the watches it had until they are dropped.
+Meanwhile events are already filtered by the new rules, and changes in a directory they stop ignoring can be missed. An ignore
+file that could never be read (no file descriptor left, say) excludes every directory below it on Linux until it
+can; one read before keeps the rules it had. A directory that becomes included again, because an ignore
+file or the patterns changed, is watched again without reporting what it already holds, like a path
+`updateExcludedPaths` includes again. Events are filtered by the rules in force when they happen: once a path is
+excluded, its later changes, its removal included, are not reported even if its creation was. A rename from an included path to an excluded one is reported as a removal, and
+one from an excluded path to an included one as a creation. When only patterns for directories (`build/`) match a
+path, its removal is judged by what it was when last seen, as its creation was, else by what the system tells (on
+Windows nothing, so as a directory: the removal of a file named `build` that was there before watching is not
+reported). `excludedPatterns` and `respectGitignore` only apply to
+watched directories, not to a watched file.
 
 ## Callback Argument
 

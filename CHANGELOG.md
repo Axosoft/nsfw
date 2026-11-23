@@ -6,6 +6,13 @@ Behaviour changes in excluded paths, so this needs a minor release: calls that u
 paths that used to be forwarded to the watcher are now ignored. On Linux, a watcher whose inotify queue overflows now
 stops with an error instead of losing events silently.
 
+### Added
+- `excludedPatterns` option: glob patterns with `.gitignore` syntax, relative to the watched directory, whose matches
+  are not reported. `updateExcludedPatterns()` replaces them while watching and `getExcludedPatterns()` returns them.
+- `respectGitignore` option: excludes what git ignores in the repository the watched directory is in (its
+  `.gitignore` files, followed while watching, its `info/exclude` and `core.excludesFile`).
+- On Linux, directories excluded by either option are not watched, sparing inotify watches.
+
 ### Changed
 - `nsfw()` and `updateExcludedPaths()` handle excluded paths the same way:
   - Relative paths reject with `Excluded path must be an absolute path.` Before, `updateExcludedPaths()` accepted

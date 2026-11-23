@@ -55,6 +55,12 @@ stops with an error instead of losing events silently.
   It can also be deleted right after an overflow is reported (say, by the `rm -rf` that overflowed the queue), so if
   `start()` then rejects, check that the directory still exists.
 
+### Performance
+- Linux: `start()` on a large tree takes about half the time and the watcher holds about 12% less memory. Scanning a
+  directory no longer looks up the entries it lists as regular files (or anything but a directory or a symlink), and
+  the indexes by watch descriptor and by directory are hash maps. Measure it with
+  `node --expose-gc js/scripts/benchmark-start.js <path>`.
+
 ### Fixed
 - A fresh `npm install nsfw` compiles again (#212). `node-addon-api` 8.9.2 headers need C++17, but the build forced
   C++11 on macOS.

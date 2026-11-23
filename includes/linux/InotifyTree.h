@@ -35,6 +35,11 @@ class InotifyTree {
   using ExcludedNames = std::unordered_set<std::string>;
   // A directory, wherever a path to it is.
   using Directory = std::pair<dev_t, ino_t>;
+  struct DirectoryHash {
+    size_t operator()(const Directory &directory) const {
+      return std::hash<ino_t>()(directory.second) ^ (std::hash<dev_t>()(directory.first) * 0x9e3779b97f4a7c15ULL);
+    }
+  };
 public:
   InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths);
 
@@ -90,13 +95,13 @@ private:
 
     // Calls visit with each node below this one, a parent before its children. It mustn't change the tree.
     template <typename Visit> void forEachBelow(const Visit &visit) {
-      for (const auto &child : *mChildren) {
+      for (const auto &child : mChildren) {
         visit(child.second);
         child.second->forEachBelow(visit);
       }
     }
     bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr, bool reportEntry = false,
-      uint64_t reportedUntil = 0);
+      uint64_t reportedUntil = 0, unsigned char type = DT_UNKNOWN);
     InotifyNode *findDescendant(const std::string &relativePath);
     void fixPaths();
     dev_t getDevice();
@@ -128,7 +133,7 @@ private:
     uint64_t adoption = 0;
     bool rewatch(uint64_t marker, int &replaced);
 
-    static std::string createFullPath(std::string parentPath, std::string name);
+    static std::string createFullPath(const std::string &parentPath, const std::string &name);
 
     ~InotifyNode();
   private:
@@ -151,7 +156,7 @@ private:
     bool mFoundByExclusionUpdate = false;
     // At a symlink to a directory (or the watched path), which only changes when the symlink does.
     bool mThroughSymlink;
-    std::map<std::string, InotifyNode *> *mChildren;
+    std::map<std::string, InotifyNode *> mChildren;
     const std::string &mDirectory;
     std::string mFullPath;
     dev_t mDevice;
@@ -283,9 +288,9 @@ private:
   std::string mError;
   std::mutex mErrorMutex;
   const int mInotifyInstance;
-  std::map<int, InotifyNode *> *mInotifyNodeByWatchDescriptor;
+  std::unordered_map<int, InotifyNode *> mInotifyNodeByWatchDescriptor;
   // A null value reserves a directory while its node is being constructed.
-  std::map<Directory, InotifyNode *> mNodesByDirectory;
+  std::unordered_map<Directory, InotifyNode *, DirectoryHash> mNodesByDirectory;
   // The watches of directories dropped from the tree, not removed yet. None is in mInotifyNodeByWatchDescriptor:
   // their events may be from where the directory couldn't be watched. removeDroppedWatches() removes them a few at a
   // time, removeDroppedWatch() an excluded one at its next event, and freeDroppedWatch() some when the limit of watches

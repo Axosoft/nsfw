@@ -100,7 +100,9 @@ private:
         child->forEachBelow(visit);
       }
     }
-    bool createChild(const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr);
+    // fullPath: this node's, which the caller builds once for what it does with the node.
+    bool createChild(const std::string &fullPath, const std::string &name, EmitCreatedEvent emitCreatedEvent = nullptr,
+      bool reportEntry = false, uint64_t reportedUntil = 0, unsigned char type = DT_UNKNOWN);
     InotifyNode *findDescendant(const std::string &relativePath);
     dev_t getDevice();
     std::string getFullPath();
@@ -120,7 +122,8 @@ private:
     InotifyNode *pullChild(std::string name);
     void removeChild(std::string name);
     void takeChildAsName(InotifyNode *child, std::string name);
-    bool scan(EmitCreatedEvent emitCreatedEvent, bool rescan = false, bool reportEntries = false);
+    bool scan(const std::string &fullPath, EmitCreatedEvent emitCreatedEvent, bool rescan = false,
+      bool reportEntries = false);
     bool takeFoundAgain(bool &fromExclusionUpdate);
     bool foundByExclusionUpdate() const;
     bool registrationChanged() const { return mRegistrationChanged; }
@@ -153,10 +156,8 @@ private:
       bool operator()(const InotifyNode *a, const std::string &b) const { return a->mName < b; }
       bool operator()(const std::string &a, const InotifyNode *b) const { return a < b->mName; }
     };
-    bool createChildIn(const std::string &fullPath, const std::string &name, EmitCreatedEvent emitCreatedEvent,
-      bool reportEntry, uint64_t reportedUntil, unsigned char type);
-    bool scanAt(const std::string &fullPath, EmitCreatedEvent emitCreatedEvent, bool rescan, bool reportEntries);
     void adopt(InotifyNode *child);
+    // Keeps the path of a node without a parent: leaving one, it keeps the path it had there until another takes it.
     void setParent(InotifyNode *newParent);
 
     // The path isn't kept: it is the parent's and the name, see getFullPath(), so a rename changes no path below it.

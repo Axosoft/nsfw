@@ -130,7 +130,6 @@ private:
     bool awaitsScan() const { return mFoundAgain; }
     bool isThroughSymlink() const { return mThroughSymlink; }
     void setThroughSymlink(bool throughSymlink) { mThroughSymlink = throughSymlink; }
-    uint64_t adoption = 0;
     bool rewatch(uint64_t marker, int &replaced);
 
     static std::string createFullPath(const std::string &parentPath, const std::string &name);
@@ -168,14 +167,15 @@ private:
     dev_t mDevice;
     ino_t mInodeNumber;
     int mWatchDescriptor;
-    bool mWatchDescriptorInitialized;
-    bool mAlive;
-    bool mRegistrationChanged = false;
+    // Bitfields keep the node in a smaller malloc bin. C++17 has no default initializers for them: the ctor sets them.
+    bool mWatchDescriptorInitialized : 1;
+    bool mAlive : 1;
+    bool mRegistrationChanged : 1;
     // Took a dropped watch back, and isn't scanned until the marker of its pass is queued, see settleFound().
-    bool mFoundAgain = false;
-    bool mFoundByExclusionUpdate = false;
+    bool mFoundAgain : 1;
+    bool mFoundByExclusionUpdate : 1;
     // At a symlink to a directory (or the watched path), which only changes when the symlink does.
-    bool mThroughSymlink;
+    bool mThroughSymlink : 1;
   };
 
   void addNodeReferenceByWD(int watchDescriptor, InotifyNode *node);
@@ -372,6 +372,10 @@ private:
   uint64_t mReadRemoval = 0;
   void deferChangedEntry(ChangedEntry entry);
   uint64_t mLastAdoption = 0;
+  // The adoption of each node found again, until settleFound() takes it for its scan or the node goes: kept out of the
+  // nodes, since few have one at a time. 0 for the rest.
+  std::unordered_map<const InotifyNode *, uint64_t> mAdoptions;
+  uint64_t adoptionOf(const InotifyNode *node) const;
   int mMarkerBatch = DROPPED_WATCHES_PER_BATCH;
   int mMarkerCredit = DROPPED_WATCHES_PER_BATCH;
   bool mDeferred = false;

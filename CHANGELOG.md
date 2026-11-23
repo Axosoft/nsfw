@@ -61,6 +61,8 @@ stops with an error instead of losing events silently.
   each entry, which changes two cases: an entry listed as a file that a symlink to a directory replaces before the scan
   gets to it isn't watched through it (as one created right after the scan never was), and neither is a directory that
   the filesystem lists as something else, which only a faulty FUSE daemon or a corrupted directory entry does.
+- Linux: each watched directory takes 16 bytes less memory (about 5% of what the watcher holds), except one moved back
+  in, which takes a little more until its rescan.
 
 ### Fixed
 - A fresh `npm install nsfw` compiles again (#212). `node-addon-api` 8.9.2 headers need C++17, but the build forced

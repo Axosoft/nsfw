@@ -796,7 +796,7 @@ void InotifyTree::settleFound() {
     pass.swap(mFound);
     pass.erase(std::remove_if(pass.begin(), pass.end(), [this](const Found &found) {
       auto node = findNodeByWatchDescriptor(found.watchDescriptor);
-      return node == NULL || node->adoption != found.adoption;
+      return node == NULL || adoptionOf(node) != found.adoption;
     }), pass.end());
     if (pass.empty()) break;
     uint64_t marker = queueMarker(pass);
@@ -810,7 +810,7 @@ void InotifyTree::settleFound() {
     for (const Found &found : pass) {
       InotifyNode *node = findNodeByWatchDescriptor(found.watchDescriptor);
       bool fromExclusionUpdate;
-      if (node == NULL || node->adoption != found.adoption || !node->takeFoundAgain(fromExclusionUpdate)) {
+      if (node == NULL || adoptionOf(node) != found.adoption || !node->takeFoundAgain(fromExclusionUpdate)) {
         continue;
       }
       RestorationScope restoration(this, fromExclusionUpdate);
@@ -2368,6 +2368,11 @@ std::string InotifyTree::getParentPath(const std::string &filePath) {
   return directory;
 }
 
+uint64_t InotifyTree::adoptionOf(const InotifyNode *node) const {
+  auto adoption = mAdoptions.find(node);
+  return adoption == mAdoptions.end() ? 0 : adoption->second;
+}
+
 // An unscanned ancestor can still be responsible for installing this watch. It can also be
 // attached through a symlink, so look for its inode as well as the spelling held in the tree.
 void InotifyTree::collectPendingAncestors(std::string path, std::unordered_set<uint64_t> &ancestors) {
@@ -2375,7 +2380,7 @@ void InotifyTree::collectPendingAncestors(std::string path, std::unordered_set<u
     InotifyNode *node = findNodeAtTreePath(path);
     if (!node || !node->awaitsScan()) node = findNodeByPath(path);
     if (node && node->awaitsScan()) {
-      ancestors.insert(node->adoption);
+      ancestors.insert(adoptionOf(node));
       return;
     }
     if (path == "/") break;
@@ -2504,6 +2509,10 @@ InotifyTree::InotifyNode::InotifyNode(
   mDevice(device),
   mInodeNumber(inodeNumber),
   mWatchDescriptorInitialized(false),
+  mAlive(false),
+  mRegistrationChanged(false),
+  mFoundAgain(false),
+  mFoundByExclusionUpdate(false),
   mThroughSymlink(throughSymlink) {
   if (mParent == NULL) {
     mTree->mPathsOfTopNodes[this] = fullPath;
@@ -2520,7 +2529,8 @@ InotifyTree::InotifyNode::InotifyNode(
 
   if (mFoundAgain) {
     mFoundByExclusionUpdate = mTree->mRestoringExclusions;
-    adoption = ++mTree->mLastAdoption;
+    uint64_t adoption = ++mTree->mLastAdoption;
+    mTree->mAdoptions[this] = adoption;
     mTree->mFound.push_back({ adoption, mTree->mCurrentUpdate, mWatchDescriptor, emitCreatedEvent });
     mAlive = true;
     return;
@@ -2611,6 +2621,7 @@ InotifyTree::InotifyNode::~InotifyNode() {
   mTree->mRejectedByAlias.erase(this);
   mTree->mRejectedLinks.erase(this);
   mTree->mLinkNodes.erase(this);
+  mTree->mAdoptions.erase(this);
 
   if (mWatchDescriptorInitialized) {
     mTree->removeNodeReferenceByWD(mWatchDescriptor, this);
@@ -2863,6 +2874,7 @@ bool InotifyTree::InotifyNode::takeFoundAgain(bool &fromExclusionUpdate) {
   fromExclusionUpdate = mFoundByExclusionUpdate;
   mFoundAgain = false;
   mFoundByExclusionUpdate = false;
+  if (foundAgain) mTree->mAdoptions.erase(this);
   return foundAgain;
 }
 

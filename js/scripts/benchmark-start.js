@@ -6,8 +6,13 @@ const nsfw = require('../src/index');
 
 const gc = global.gc || (() => {});
 
+function fail(error) {
+  console.error(error);
+  process.exit(1);
+}
+
 async function measure(targetPath) {
-  const watcher = await nsfw(targetPath, () => {}, { debounceMS: 500, errorCallback: (error) => { throw error; } });
+  const watcher = await nsfw(targetPath, () => {}, { debounceMS: 500, errorCallback: fail });
   gc();
   const rssBefore = process.memoryUsage().rss;
   const startedAt = performance.now();
@@ -44,7 +49,4 @@ async function main() {
   console.log(`max_rss_mb=${(process.resourceUsage().maxRSS / 1024).toFixed(1)}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main().catch(fail);

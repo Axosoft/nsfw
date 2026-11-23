@@ -196,7 +196,8 @@ private:
   };
   InotifyNode *findNodeByWatchDescriptor(int watchDescriptor);
   static bool isAncestorOrSelf(InotifyNode *ancestor, InotifyNode *node);
-  void sight(InotifyNode *scanning, const std::string &name, const struct stat &file, bool throughSymlink);
+  void sight(InotifyNode *scanning, const std::string &scanningPath, const std::string &name, const struct stat &file,
+    bool throughSymlink);
   InotifyNode *findSightedAt(int wd, const std::string &name);
   InotifyNode *findMovedNode(int wd, const std::string &name);
   bool untangleMove(int fromWd, const std::string &fromName, int toWd, EmitCreatedEvent emitCreatedEvent);

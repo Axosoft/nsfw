@@ -998,7 +998,8 @@ InotifyTree::InotifyNode *InotifyTree::findNodeByWatchDescriptor(int watchDescri
 // and the events of that move aren't handled yet, or it's seen twice (through a symlink or a bind mount). Nothing is
 // decided now: the place is remembered, and the directory is watched there if the holder's own events say it left for a
 // place that can't be watched, see discard().
-void InotifyTree::sight(InotifyNode *scanning, const std::string &name, const struct stat &file, bool throughSymlink) {
+void InotifyTree::sight(InotifyNode *scanning, const std::string &scanningPath, const std::string &name,
+  const struct stat &file, bool throughSymlink) {
   InotifyNode *holder = findNodeOf(file);
   if (
     holder == NULL || holder->getParent() == NULL ||
@@ -1023,7 +1024,7 @@ void InotifyTree::sight(InotifyNode *scanning, const std::string &name, const st
   }
   // A scanning node whose path leads elsewhere listed another directory: a rename of it is still queued, and the
   // rescan after it finds what it holds then.
-  if (!scanning->leadsToItself()) {
+  if (!scanning->leadsToItself(scanningPath)) {
     markScanIncomplete(scanning);
     return;
   }
@@ -2647,12 +2648,12 @@ bool InotifyTree::InotifyNode::createChild(const std::string &fullPath, const st
   }
   InotifyTree::Creating creating(mTree);
   std::string path = createFullPath(fullPath, name);
-  struct stat file;
+  // Zeroed: an entry that isn't looked up is then neither a symlink nor a directory.
+  struct stat file = {};
   const bool listedAsOther = type != DT_UNKNOWN && type != DT_DIR && type != DT_LNK;
   int lookupError = listedAsOther ? 0 : (lstat(path.c_str(), &file) < 0 ? errno : 0);
-  bool throughSymlink = !listedAsOther && lookupError == 0 && S_ISLNK(file.st_mode);
-  bool directory = !listedAsOther && lookupError == 0 && (!throughSymlink || stat(path.c_str(), &file) == 0) &&
-    S_ISDIR(file.st_mode);
+  bool throughSymlink = lookupError == 0 && S_ISLNK(file.st_mode);
+  bool directory = lookupError == 0 && (!throughSymlink || stat(path.c_str(), &file) == 0) && S_ISDIR(file.st_mode);
   if (directory && mTree->rejectsChild(this, name)) {
     eraseFromIndex(mTree->mRejectedLinks, this, name);
     mTree->excludedEntryFound(mTree->isExcluded(path) ? path : "");
@@ -2688,7 +2689,7 @@ bool InotifyTree::InotifyNode::createChild(const std::string &fullPath, const st
   // A reference, not an iterator: the child's scan may rehash the map, which only invalidates iterators.
   InotifyNode *&reserved = entry.first->second;
   if (!entry.second) {
-    mTree->sight(this, name, file, throughSymlink);
+    mTree->sight(this, fullPath, name, file, throughSymlink);
     return false;
   }
 
@@ -2762,6 +2763,7 @@ std::string InotifyTree::InotifyNode::getFullPath() {
     namesLength += 1 + top->mName.size();
   }
   auto topPath = mTree->mPathsOfTopNodes.find(top);
+  // Joined as createFullPath() joins a name: no separator added after "/".
   std::string path = topPath == mTree->mPathsOfTopNodes.end() ? "" : topPath->second;
   if (top == this) {
     return path;
@@ -2905,7 +2907,7 @@ bool InotifyTree::InotifyNode::registrationMatchesPath(const std::string &fullPa
 
   auto owner = mTree->findNodeByWatchDescriptor(mWatchDescriptor);
   if (owner && owner->mDevice == file.st_dev && owner->mInodeNumber == file.st_ino) {
-    if (mParent) mTree->sight(mParent, mName, file, link);
+    if (mParent) mTree->sight(mParent, mParent->getFullPath(), mName, file, link);
     return false;
   }
   mRegistrationChanged = owner || (link && !mThroughSymlink) ||

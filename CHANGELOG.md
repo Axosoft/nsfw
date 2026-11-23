@@ -56,9 +56,10 @@ stops with an error instead of losing events silently.
   `start()` then rejects, check that the directory still exists.
 
 ### Performance
-- Linux: `start()` on a large tree takes about half the time and the watcher holds about 12% less memory. Scanning a
-  directory no longer looks up the entries it lists as regular files (or anything but a directory or a symlink), and
-  the indexes by watch descriptor and by directory are hash maps. Measure it with
+- Linux: `start()` on a large tree takes about half the time and the watcher holds about 40% less memory. Scanning a
+  directory no longer looks up the entries it lists as regular files (or anything but a directory or a symlink), the
+  indexes by watch descriptor and by directory are hash maps, and each watched directory keeps only its name and its
+  parent instead of its full path and a second copy of its name. Measure it with
   `node --expose-gc js/scripts/benchmark-start.js <path>`.
 
 ### Fixed

@@ -2512,16 +2512,16 @@ InotifyTree::InotifyNode::InotifyNode(
   mAlive = scanAt(fullPath, emitCreatedEvent, false, false);
 }
 
+bool InotifyTree::InotifyNode::scan(EmitCreatedEvent emitCreatedEvent, bool rescan, bool reportEntries) {
+  return scanAt(getFullPath(), emitCreatedEvent, rescan, reportEntries);
+}
+
 // Adds a child for each directory in this one, false if it can't be read. A rescan only adds the ones it has no child
 // for: replacing the others is up to the events still queued for them. It reports what the directories it adds hold
 // as created, since a creation still queued for one of them finds it watched already, but not the directories
 // themselves, which the scan it completes or their own events report. That can report again what a directory that
 // moved here holds, which beats losing what was created in it. A rescan reports its own entries too with reportEntries,
 // for a directory found again whose first scan didn't run, see settleFound().
-bool InotifyTree::InotifyNode::scan(EmitCreatedEvent emitCreatedEvent, bool rescan, bool reportEntries) {
-  return scanAt(getFullPath(), emitCreatedEvent, rescan, reportEntries);
-}
-
 // fullPath: this node's. Creating a child moves no node, so it holds for the whole scan.
 bool InotifyTree::InotifyNode::scanAt(const std::string &fullPath, EmitCreatedEvent emitCreatedEvent, bool rescan,
   bool reportEntries) {

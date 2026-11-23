@@ -81,7 +81,7 @@ public:
 private:
   class InotifyNode {
   public:
-    // fullPath: its own, kept only for a node with no parent (the root). A child's is its parent's and its name.
+    // fullPath: this node's, stored only for a node with no parent: a child's is derived from its parent's.
     InotifyNode(
       InotifyTree *tree,
       InotifyNode *parent,

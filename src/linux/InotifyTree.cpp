@@ -2894,9 +2894,11 @@ bool InotifyTree::InotifyNode::scan(const std::string &fullPath, EmitCreatedEven
 
   for (int i = 0; i < resultCountOrError; ++i) {
     free(directoryContents[i]);
+    directoryContents[i] = NULL;
   }
 
   free(directoryContents);
+  directoryContents = NULL;
   return true;
 }
 

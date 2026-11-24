@@ -17,17 +17,23 @@ concurrency:
 
 jobs:
 
+  # The slow suite (Linux only) and the normal one run in separate jobs so they overlap. The addon is built on
+  # Node-API, whose ABI doesn't change between Node versions, so only one job runs the normal suite on every
+  # supported Node; the rest run the active LTS.
   linux-tests:
-    name: "Linux Tests (${{ matrix.container }}, ${{ matrix.arch }}, Node ${{ matrix.node }})"
+    name: "Linux Tests (${{ matrix.suite }}, ${{ matrix.container }}, ${{ matrix.arch }}, Node ${{ matrix.node }})"
     strategy:
       fail-fast: false
       matrix:
-        container: ["ubuntu:latest", "ubuntu:24.04"]
-        arch: [x64, arm64]
-        node: [22, 24, 26]
-        exclude:
-          - container: "ubuntu:24.04"
-            arch: arm64
+        include:
+          - { suite: normal, container: "ubuntu:latest", arch: x64, node: 22 }
+          - { suite: normal, container: "ubuntu:latest", arch: x64, node: 24 }
+          - { suite: normal, container: "ubuntu:latest", arch: x64, node: 26 }
+          - { suite: normal, container: "ubuntu:latest", arch: arm64, node: 26 }
+          - { suite: normal, container: "ubuntu:24.04", arch: x64, node: 26 }
+          - { suite: slow, container: "ubuntu:latest", arch: x64, node: 26 }
+          - { suite: slow, container: "ubuntu:latest", arch: arm64, node: 26 }
+          - { suite: slow, container: "ubuntu:24.04", arch: x64, node: 26 }
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 30
     container:
@@ -54,6 +60,8 @@ jobs:
 
       - name: Run tests
         id: tests
+        env:
+          NSFW_TEST_SUITE: ${{ matrix.suite }}
         run: |
           pnpm install --frozen-lockfile
           pnpm test
@@ -62,7 +70,7 @@ jobs:
       # dependency ranges resolve to their newest versions instead of the ones pnpm-lock.yaml pins above. Runs even
       # when the tests failed, so both results show. One container per arch is enough: the result doesn't depend on it.
       - name: Install the packed package and watch a directory
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && matrix.container == 'ubuntu:latest' }}
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && matrix.suite == 'normal' && matrix.container == 'ubuntu:latest' }}
         run: node js/scripts/fresh-install-test.js
 
   macos-tests:
@@ -70,7 +78,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24, 26]
+        # The active LTS; linux-tests covers the other Node versions.
+        node: [26]
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -100,7 +109,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24, 26]
+        # The active LTS; linux-tests covers the other Node versions.
+        node: [26]
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
@@ -111,15 +121,6 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           check-latest: true
-
-      # windows-2025 ships Visual Studio 2026 (18.x), which node-gyp finds from 12.1.0 on. The npm bundled with
-      # Node 22 still carries node-gyp 11; later Node releases bundle a newer one. pnpm bundles its own, but the
-      # fresh-install step below installs with npm.
-      - name: Use a node-gyp that supports Visual Studio 2026
-        if: ${{ matrix.node == 22 }}
-        run: |
-          npm install --global node-gyp@12
-          "npm_config_node_gyp=$(npm prefix -g)\node_modules\node-gyp\bin\node-gyp.js" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 

@@ -17,9 +17,11 @@ concurrency:
 
 jobs:
 
-  # The slow suite (Linux only) and the normal one run in separate jobs so they overlap. The addon is built on
-  # Node-API, whose ABI doesn't change between Node versions, so only one job runs the normal suite on every
-  # supported Node; the rest run the active LTS.
+  # The slow suite (Linux only) and the normal one run in separate jobs so they overlap, and the slow suite is split
+  # in three since it takes longest. The addon is built on Node-API, whose ABI doesn't change between Node versions,
+  # so only one job runs the normal suite on every supported Node; the rest run the active LTS. The slow suite runs on
+  # ubuntu:latest only: a container shares the runner's kernel, and so its inotify, whatever the image, and the
+  # normal suite already covers the toolchain of ubuntu:24.04.
   linux-tests:
     name: "Linux Tests (${{ matrix.suite }}, ${{ matrix.container }}, ${{ matrix.arch }}, Node ${{ matrix.node }})"
     strategy:
@@ -31,9 +33,12 @@ jobs:
           - { suite: normal, container: "ubuntu:latest", arch: x64, node: 26 }
           - { suite: normal, container: "ubuntu:latest", arch: arm64, node: 26 }
           - { suite: normal, container: "ubuntu:24.04", arch: x64, node: 26 }
-          - { suite: slow, container: "ubuntu:latest", arch: x64, node: 26 }
-          - { suite: slow, container: "ubuntu:latest", arch: arm64, node: 26 }
-          - { suite: slow, container: "ubuntu:24.04", arch: x64, node: 26 }
+          - { suite: slow-1, container: "ubuntu:latest", arch: x64, node: 26 }
+          - { suite: slow-2, container: "ubuntu:latest", arch: x64, node: 26 }
+          - { suite: slow-3, container: "ubuntu:latest", arch: x64, node: 26 }
+          - { suite: slow-1, container: "ubuntu:latest", arch: arm64, node: 26 }
+          - { suite: slow-2, container: "ubuntu:latest", arch: arm64, node: 26 }
+          - { suite: slow-3, container: "ubuntu:latest", arch: arm64, node: 26 }
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 30
     container:

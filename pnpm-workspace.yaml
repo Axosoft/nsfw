@@ -1,0 +1,4 @@
+overrides:
+  serialize-javascript: ^7.0.5
+  picomatch: ^2.3.2
+  flatted: ^3.4.2

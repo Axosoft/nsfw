@@ -5,7 +5,7 @@
   "main": "js/src/index.js",
   "scripts": {
     "lint": "eslint js/src js/spec",
-    "test": "yarn lint && node js/scripts/test.js",
+    "test": "pnpm lint && node js/scripts/test.js",
     "test:nolint": "node js/scripts/test.js"
   },
   "repository": {
@@ -39,11 +39,6 @@
     "globals": "^15.8.0",
     "mocha": "^10.6.0"
   },
-  "resolutions": {
-    "serialize-javascript": "^7.0.5",
-    "picomatch": "^2.3.2",
-    "flatted": "^3.4.2"
-  },
   "keywords": [
     "FileWatcher",
     "files",
@@ -52,5 +47,6 @@
     "file",
     "inotify",
     "fsevents"
-  ]
+  ],
+  "packageManager": "pnpm@12.23.0"
 }

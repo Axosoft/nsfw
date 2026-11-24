@@ -14,6 +14,24 @@ static bool isLastingError(int error) {
   return error == ENOENT || error == ENOTDIR || error == ELOOP || error == EACCES || error == EPERM;
 }
 
+namespace {
+// What scandir() lists, released on any way out of the scope that holds it, an exception included.
+struct DirectoryListing {
+  dirent **entries = NULL;
+  int countOrError = 0;
+
+  DirectoryListing() = default;
+  DirectoryListing(const DirectoryListing &) = delete;
+  DirectoryListing &operator=(const DirectoryListing &) = delete;
+  ~DirectoryListing() {
+    for (int i = 0; i < countOrError; ++i) {
+      free(entries[i]);
+    }
+    free(entries);
+  }
+};
+}
+
 static const char *const ROOT_CHANGED_ERROR = "Service shutdown: root path changed (renamed or deleted)";
 
 #ifdef __linux__
@@ -2842,29 +2860,22 @@ bool InotifyTree::InotifyNode::scan(const std::string &fullPath, EmitCreatedEven
   // The directories found again wait for the whole scan, see settleFound(), and the physical exclusions are resolved
   // once for its symlinks, see loadPhysicalExclusions().
   InotifyTree::Creating creating(mTree);
-  dirent ** directoryContents = NULL;
-
-  int resultCountOrError = scandir(
-    fullPath.c_str(),
-    &directoryContents,
-    NULL,
-    alphasort
-  );
-
-  if (resultCountOrError < 0) {
+  DirectoryListing listing;
+  listing.countOrError = scandir(fullPath.c_str(), &listing.entries, NULL, alphasort);
+  if (listing.countOrError < 0) {
     return false;
   }
 
   // What it reports can't be told from its IN_CREATE where a rename may have put another directory at its path.
   const bool reportEntry = !rescan || reportEntries;
   uint64_t reportedUntil = 0;
-  if (emitCreatedEvent && reportEntry && resultCountOrError > 2 && mWatchDescriptorInitialized &&
+  if (emitCreatedEvent && reportEntry && listing.countOrError > 2 && mWatchDescriptorInitialized &&
     !mTree->isRootExcluded() && leadsToItself(fullPath)) {
     reportedUntil = mTree->scanReportsUntil();
   }
 
-  for (int i = 0; i < resultCountOrError; ++i) {
-    std::string fileName = directoryContents[i]->d_name;
+  for (int i = 0; i < listing.countOrError; ++i) {
+    std::string fileName = listing.entries[i]->d_name;
 
     if (
       fileName == "." ||
@@ -2873,7 +2884,7 @@ bool InotifyTree::InotifyNode::scan(const std::string &fullPath, EmitCreatedEven
       continue;
     }
 
-    unsigned char type = directoryContents[i]->d_type;
+    unsigned char type = listing.entries[i]->d_type;
     if (!mTree->mExcluded.empty() && mTree->isExcluded(createFullPath(fullPath, fileName))) {
       if (type == DT_DIR || type == DT_LNK || type == DT_UNKNOWN) {
         mTree->setRejected(this, fileName, Rejected::BY_PATH);
@@ -2892,11 +2903,6 @@ bool InotifyTree::InotifyNode::scan(const std::string &fullPath, EmitCreatedEven
     }
   }
 
-  for (int i = 0; i < resultCountOrError; ++i) {
-    free(directoryContents[i]);
-  }
-
-  free(directoryContents);
   return true;
 }
 

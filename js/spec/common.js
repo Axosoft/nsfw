@@ -4,7 +4,7 @@ const path = require('path');
 const test = require('node:test');
 const util = require('util');
 
-exports.DEBOUNCE = 1000;
+exports.DEBOUNCE = 100;
 exports.TIMEOUT_PER_STEP = 3000;
 exports.WORKDIR = path.resolve(__dirname, '../../mockfs');
 

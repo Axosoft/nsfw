@@ -915,7 +915,7 @@ describe('Node Sentinel File Watcher', function() {
   describe('Excluded paths', function() {
     const debounceMS = 100;
     const eventTimeoutMS = 10000;
-    const absenceWindowMS = 500;
+    const absenceWindowMS = 200;
 
     const canonicalPaths = paths => paths.map(value => process.platform === 'win32' ?
       path.toNamespacedPath(value) : value);

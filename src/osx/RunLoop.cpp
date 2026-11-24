@@ -28,6 +28,7 @@ RunLoop::~RunLoop() {
   CFRunLoopStop(mRunLoop);
 
   mRunLoopThread.join();
+  CFRelease(mRunLoop);
 }
 
 void RunLoop::work() {
@@ -45,7 +46,9 @@ void RunLoop::work() {
   );
   FSEventStreamContext callbackInfo {0, (void *)mEventsService, nullptr, nullptr, nullptr};
 
-  mRunLoop = CFRunLoopGetCurrent();
+  // CFRunLoopGetCurrent doesn't retain, and the thread frees its run loop when it exits. CFRunLoopRun can return
+  // on its own when the mode runs out of sources, so the destructor's CFRunLoopStop would touch a freed object.
+  mRunLoop = (CFRunLoopRef)CFRetain(CFRunLoopGetCurrent());
 
   __block auto *runLoopHasStarted = &mReadyForCleanup;
   CFRunLoopPerformBlock(mRunLoop, kCFRunLoopDefaultMode, ^ {

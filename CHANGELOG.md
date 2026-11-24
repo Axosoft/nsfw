@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-Behaviour changes in excluded paths, so this needs a minor release: calls that used to succeed can now reject, and
-paths that used to be forwarded to the watcher are now ignored. On Linux, a watcher whose inotify queue overflows now
-stops with an error instead of losing events silently.
+This needs a major release: Node 18 and 20 are no longer supported (`engines.node` is `>=22`). Behaviour changes in
+excluded paths too: calls that used to succeed can now reject, and paths that used to be forwarded to the watcher are
+now ignored. On Linux, a watcher whose inotify queue overflows now stops with an error instead of losing events
+silently.
 
 ### Added
 - `excludedPatterns` option: glob patterns with `.gitignore` syntax, relative to the watched directory, whose matches
@@ -54,8 +55,8 @@ stops with an error instead of losing events silently.
 - All trailing separators of excluded paths are dropped (`\` too on Windows), not just one `/`; roots are kept.
 - Typings: code that silenced the old `[string]` type of `excludedPaths` with `// @ts-expect-error` now fails with
   "Unused '@ts-expect-error' directive"; drop the directive.
-- `node-addon-api` is bounded to `^8.0.0` instead of `*`, and `engines.node` is `^18 || ^20 || >=21`, the versions
-  `node-addon-api` 8 supports, instead of `>=10.16.0`.
+- Breaking: `engines.node` is `>=22`, the Node releases tested, instead of `>=10.16.0`; Node 18 and 20 have reached
+  end of life. `node-addon-api` is bounded to `^8.9.2` instead of `*`.
 - On macOS the addon is compiled as `gnu++17` with the deployment target of the Node or Electron headers it is built
   against (macOS 11.0 for Node 22, 13.5 for Node 24 and 26) instead of C++11 and macOS 10.7. Linux and Windows keep
   using the standard of the headers, C++17 or newer.

@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": ["js/dist/"],
+  "plugins": ["eslint", "typescript", "node", "jsdoc"],
+  "jsPlugins": ["@stylistic/eslint-plugin"],
+  "env": { "es2024": true, "node": true },
+  "categories": { "correctness": "error" },
+  "rules": {
+    "no-console": "warn",
+    "no-unused-vars": ["error", { "caughtErrors": "none" }],
+    "no-undef": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "sort-vars": "error",
+    "jsdoc/require-param": "error",
+    "jsdoc/require-param-type": "error",
+    "jsdoc/require-returns": "error",
+    "jsdoc/require-returns-type": "error",
+    "@stylistic/indent": ["error", 2, { "SwitchCase": 1 }],
+    "@stylistic/max-len": ["error", 120],
+    "@stylistic/no-mixed-spaces-and-tabs": "error",
+    "@stylistic/no-multi-spaces": "error",
+    "@stylistic/no-trailing-spaces": "error",
+    "@stylistic/quotes": ["error", "single"],
+    "@stylistic/semi": ["error", "always"],
+    "@stylistic/space-in-parens": ["error", "never"],
+    "@stylistic/space-unary-ops": ["error", { "words": true, "nonwords": false }]
+  },
+  "overrides": [
+    {
+      "files": ["*.ts"],
+      "rules": {
+        "typescript/no-require-imports": ["error", { "allowAsImport": true }],
+        "jsdoc/require-param": "off",
+        "jsdoc/require-param-type": "off",
+        "jsdoc/require-returns": "off",
+        "jsdoc/require-returns-type": "off"
+      }
+    }
+  ]
+}

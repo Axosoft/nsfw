@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
-const tsc = require.resolve('typescript/bin/tsc');
+// TypeScript 7 does not export bin/tsc, so it is found from the package root.
+const tsc = path.join(path.dirname(require.resolve('typescript/package.json')), 'bin', 'tsc');
 
 fs.rmSync(path.join(repoRoot, 'js', 'dist'), { recursive: true, force: true });
 cp.execFileSync(process.execPath, [tsc, '-p', repoRoot], { stdio: 'inherit' });

@@ -1,7 +1,10 @@
 /* eslint-disable no-console */
 // Installs the packed package into an empty project without a lockfile, the way a consumer runs `npm install nsfw`,
 // so every dependency range resolves to its latest match instead of the versions pinned by pnpm-lock.yaml. Then loads
-// the addon and watches a directory, to prove that it compiled against those versions and works.
+// the addon and watches a directory, to prove that it works.
+// Usage: node js/scripts/fresh-install-test.js prebuilt|source
+// prebuilt expects the binary for this platform packed in prebuilds/ to load without compiling anything, and source
+// expects the install script to compile one, as on a platform without a prebuilt binary.
 const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -9,15 +12,23 @@ const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const timeoutMS = 30000;
+const expectations = ['prebuilt', 'source'];
 
 // The addon is loaded in a child process: Windows can't delete a loaded nsfw.node, so the parent couldn't clean up.
-const run = process.argv[2] === '--watch' ? watch(process.argv[3], process.argv[4]) : main();
+const run = process.argv[2] === '--watch' ? watch(...process.argv.slice(3)) : main(process.argv[2]);
 run.catch(error => {
   console.error(error);
   process.exit(1);
 });
 
-async function main() {
+/**
+ * @param {string} expected prebuilt or source.
+ * @returns {Promise<void>} ...
+ */
+async function main(expected) {
+  if (!expectations.includes(expected)) {
+    throw new Error(`Usage: node ${path.relative(repoRoot, __filename)} ${expectations.join('|')}`);
+  }
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nsfw-fresh-install-'));
   try {
     const projectDir = path.join(workDir, 'project');
@@ -40,9 +51,9 @@ async function main() {
       private: true,
       dependencies: { nsfw: `file:${tarball}` },
       // npm 12 skips dependency install scripts unless allowed here, and matches a local tarball by its exact spec.
-      // Older npm ignores the field and always runs them.
-      allowScripts: { [`file:${tarball}`]: true },
-      devDependencies: selectedNodeGyp()
+      // Older npm ignores the field and always runs them. A prebuilt binary must load either way, so only the source
+      // build allows them.
+      ...expected === 'source' && { allowScripts: { [`file:${tarball}`]: true }, devDependencies: selectedNodeGyp() }
     }, null, 2));
 
     exec('npm install --no-package-lock --no-audit --no-fund --foreground-scripts', projectDir, { stdio: 'inherit' });
@@ -51,7 +62,7 @@ async function main() {
     }
 
     // The timeout also covers a watcher.stop() that never returns, which the child's own timeout can't.
-    cp.execFileSync(process.execPath, [__filename, '--watch', projectDir, watchDir], {
+    cp.execFileSync(process.execPath, [__filename, '--watch', expected, projectDir, watchDir], {
       stdio: 'inherit',
       timeout: 2 * timeoutMS
     });
@@ -66,17 +77,31 @@ async function main() {
 }
 
 /**
- * Loads nsfw from projectDir and waits for a watcher on watchDir to report a new file.
+ * Loads nsfw from projectDir, checks where its binary comes from and waits for a watcher on watchDir to report a new
+ * file.
+ * @param {string} expected prebuilt or source.
  * @param {string} projectDir ...
  * @param {string} watchDir ...
  * @returns {Promise<void>} ...
  */
-async function watch(projectDir, watchDir) {
+async function watch(expected, projectDir, watchDir) {
   const resolve = request => require.resolve(request, { paths: [projectDir] });
   const nodeAddonApiVersion = require(resolve('node-addon-api/package.json')).version;
   console.log(`installed nsfw ${require(resolve('nsfw/package.json')).version}, node-addon-api ${nodeAddonApiVersion}`);
 
-  // A missing binary, because the install script was skipped or failed quietly, throws here.
+  const packageDir = path.dirname(resolve('nsfw/package.json'));
+  const nodeGypBuild = require(require.resolve('node-gyp-build', { paths: [packageDir] }));
+  // Throws when there is neither a build nor a prebuilt binary, because the install script was skipped or failed.
+  const binary = nodeGypBuild.path(packageDir);
+  console.log(`nsfw loads ${binary}`);
+  const built = fs.existsSync(path.join(packageDir, 'build'));
+  if (expected === 'prebuilt' && (built || !binary.startsWith(path.join(packageDir, 'prebuilds') + path.sep))) {
+    throw new Error('expected the prebuilt binary to load without building one');
+  }
+  if (expected === 'source' && binary !== path.join(packageDir, 'build', 'Release', 'nsfw.node')) {
+    throw new Error('expected the install script to build the binary');
+  }
+
   const nsfw = require(resolve('nsfw'));
   let onEvent;
   const sawFile = new Promise(resolvePromise => {

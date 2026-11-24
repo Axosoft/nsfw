@@ -10,8 +10,9 @@ interface NativeBinding {
 
 type EventCallback = (events: nsfw.FileChangeEvent[]) => void;
 
+// A local build in build/Release wins over the prebuilt binary for this platform in prebuilds/.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const NSFW: NativeBinding = require('../../build/Release/nsfw.node');
+const NSFW: NativeBinding = require('node-gyp-build')(path.join(__dirname, '..', '..'));
 
 const isWin32 = process.platform === 'win32';
 

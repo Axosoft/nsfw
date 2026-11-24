@@ -44,3 +44,6 @@ compiled
 
 # TypeScript output
 js/dist
+
+# Output of prebuildify
+prebuilds

@@ -1,16 +1,15 @@
 const { describe } = require('node:test');
 const assert = require('assert');
-const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const nsfw = require('../../dist');
-const { it, mkdirp, remove, sleep } = require('../common');
+const { eventually, it, mkdirp, remove } = require('../common');
 const fixture = require('./fixture');
 
 describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, function() {
   const {
     watchedPath, outsidePath, touch, watchWhile, waitFor,
-    waitingPath, untilLoopWaits, whileHeld, barrier, expectWatched
+    waitingPath, untilWaiting, untilLoopWaits, whileHeld, barrier, expectWatched
   } = fixture();
 
 
@@ -158,7 +157,7 @@ describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, functio
         event.directory === path.dirname(insidePath) && event.file.startsWith('inside'));
       for (let i = 0; i < 20 && !reported(); ++i) {
         await fsp.writeFile(`${insidePath}.${i}`, 'Inside');
-        await sleep(500);
+        await eventually(reported, { timeout: 500 });
       }
       assert.ok(reported(), `No creation inside in ${JSON.stringify(events)}`);
     });
@@ -198,20 +197,8 @@ describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, functio
           await fsp.rename(path.join(watchedPath, 'A'), path.join(watchedPath, 'old'));
           await fsp.rename(path.join(watchedPath, 'B'), path.join(watchedPath, 'A'));
         });
-        // Written once the events are handled, so no scan finds the files, and named by directory, so a creation
-        // reported under the wrong one doesn't count.
         await barrier(events);
-        for (const directory of [['A', 'x'], ['old', 'x']]) {
-          const insideDirectory = path.join(watchedPath, ...directory);
-          const prefix = `in-${directory[0]}-`;
-          const reported = () => events.some(event => event.action === nsfw.actions.CREATED &&
-            event.directory === insideDirectory && event.file.startsWith(prefix));
-          for (let i = 0; i < 20 && !reported(); ++i) {
-            await fsp.writeFile(path.join(insideDirectory, `${prefix}${i}.file`), 'Inside');
-            await sleep(500);
-          }
-          assert.ok(reported(), `No creation in ${insideDirectory} in ${JSON.stringify(events)}`);
-        }
+        await expectWatched(events, ['A', 'x'], ['old', 'x']);
       });
     });
 
@@ -335,10 +322,7 @@ describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, functio
             touch(`padding-${String(i).padStart(3, '0')}.file`);
           }
         });
-        for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
-          await sleep(50);
-        }
-        assert.ok(fs.existsSync(waitingPath), 'The event loop never waited in held');
+        await untilWaiting('The event loop never waited in held');
         // Read with the rest of the padding, while what the scan of moved reported still holds.
         await fsp.rename(path.join(outsidePath, 'g.file'), path.join(movedPath, 'f.file'));
         touch(path.join('held', 'nsfw-test-release-event-loop'));

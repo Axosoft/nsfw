@@ -7,8 +7,8 @@ const path = require('path');
 const { isDeepStrictEqual, promisify } = require('util');
 
 const {
-  DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, countInotifyWatches, it, mkdirp, outputFile, remove, sleep,
-  watchCountReaches
+  DEBOUNCE, WORKDIR: workDir, barrier, countInotifyWatches, it, mkdirp, outputFile, remove, sleep, untilNextSecond,
+  waitUntil, watchCountReaches
 } = require('./common');
 
 const nsfw = require('../dist');
@@ -98,15 +98,14 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
+        await untilNextSecond(filePath);
         await fsp.writeFile(filePath, 'Bean bag video games at noon.');
-        await sleep(TIMEOUT_PER_STEP);
+        await waitUntil(() => changeEvents > 0, { message: 'No modification' });
         await remove(filePath);
-        await sleep(TIMEOUT_PER_STEP);
+        await waitUntil(() => deleteEvents > 0, { message: 'No deletion' });
         await fsp.writeFile(filePath, 'His watch has ended.');
-        await sleep(TIMEOUT_PER_STEP);
+        await waitUntil(() => createEvents > 0, { message: 'No creation' });
 
-        assert.ok(changeEvents > 0);
         assert.equal(createEvents, 1);
         assert.equal(deleteEvents, 1);
       } finally {
@@ -138,11 +137,8 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await fsp.writeFile(path.join(inPath, file), 'Peanuts, on occasion, rain from the skies.');
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(eventFound);
+        await waitUntil(() => eventFound, { message: 'No event' });
       } finally {
         await watch.stop();
         watch = null;
@@ -172,11 +168,8 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await remove(path.join(inPath, file));
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(eventFound);
+        await waitUntil(() => eventFound, { message: 'No event' });
       } finally {
         await watch.stop();
         watch = null;
@@ -206,11 +199,9 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
+        await untilNextSecond(path.join(inPath, file));
         await fsp.writeFile(path.join(inPath, file), 'At times, sunflower seeds are all that is life.');
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert(eventFound);
+        await waitUntil(() => eventFound, { message: 'No event' });
       } finally {
         await watch.stop();
         watch = null;
@@ -260,20 +251,25 @@ describe('Node Sentinel File Watcher', function() {
           }
         }
 
+        const events = [];
         let watch = await nsfw(
           workDir,
-          events => events.forEach(findEvent),
+          batch => {
+            batch.forEach(findEvent);
+            events.push(...batch);
+          },
           { debounceMS: DEBOUNCE }
         );
 
         try {
           await watch.start();
-          await sleep(TIMEOUT_PER_STEP);
           await outputFile(path.join(inPath, srcFile), '');
-          await sleep(TIMEOUT_PER_STEP);
+          await barrier(events, workDir);
           eventListening = true;
           await fsp.rename(path.join(inPath, srcFile), path.join(inPath, destFile));
-          await sleep(TIMEOUT_PER_STEP);
+          await waitUntil(() => renameEventFound || (deleteEventFound && createEventFound),
+            { message: () => `No rename in ${JSON.stringify(events)}` });
+          await barrier(events, workDir);
           eventListening = false;
 
           switch (process.platform) {
@@ -336,21 +332,26 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
+      const events = [];
       let watch = await nsfw(
         workDir,
-        events => events.forEach(findEvent),
+        batch => {
+          batch.forEach(findEvent);
+          events.push(...batch);
+        },
         { debounceMS: DEBOUNCE }
       );
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await outputFile(path.join(srcInPath, file), '');
         await mkdirp(path.join(destInPath));
-        await sleep(TIMEOUT_PER_STEP);
+        await barrier(events, workDir);
         eventListening = true;
         await fsp.rename(path.join(srcInPath, file), path.join(destInPath, file));
-        await sleep(TIMEOUT_PER_STEP);
+        await waitUntil(() => renameEventFound || (deleteEventFound && createEventFound),
+          { message: () => `No move in ${JSON.stringify(events)}` });
+        await barrier(events, workDir);
         eventListening = false;
 
         switch (process.platform) {
@@ -407,15 +408,12 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await Promise.all([watchA.start(), watchB.start()]);
-        await sleep(TIMEOUT_PER_STEP);
         await Promise.all([
           fsp.writeFile(path.join(dirA, fileA), 'At times, sunflower seeds are all that is life.'),
           fsp.writeFile(path.join(dirB, fileB), 'At times, sunflower seeds are all that is life.')
         ]);
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(createdA, 'watcher A did not report the created file');
-        assert.ok(createdB, 'watcher B did not report the created file');
+        await waitUntil(() => createdA && createdB, { message: () =>
+          `watcher ${createdA ? 'B' : 'A'} did not report the created file` });
       } finally {
         await Promise.all([watchA.stop(), watchB.stop()]);
         watchA = null;
@@ -443,9 +441,8 @@ describe('Node Sentinel File Watcher', function() {
         await Promise.all(watches.map((watch, i) => watch.start().then(() =>
           fsp.writeFile(path.join(dirs[i], file), 'Not a moment too soon.')
         )));
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.deepEqual(dirs.filter(dir => !seen.has(dir)), []);
+        await waitUntil(() => seen.size === dirs.length, { message: () =>
+          `Unreported: ${dirs.filter(dir => !seen.has(dir))}` });
       } finally {
         await Promise.all(watches.map(watch => watch.stop()));
         watches = null;
@@ -467,11 +464,11 @@ describe('Node Sentinel File Watcher', function() {
         await remove(path.join(workDir, `test${number + 1}`));
       };
 
-      let watch = await nsfw(workDir, () => {}, { debounceMS: DEBOUNCE });
+      const events = [];
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await Promise.all([
           performRenameProcedure(0),
           performRenameProcedure(2),
@@ -479,7 +476,7 @@ describe('Node Sentinel File Watcher', function() {
           performRenameProcedure(6),
           performRenameProcedure(8)
         ]);
-        await sleep(TIMEOUT_PER_STEP);
+        await barrier(events, workDir);
       } finally {
         await watch.stop();
         watch = null;
@@ -515,11 +512,8 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await remove(inPath);
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(deletionCount > 2);
+        await waitUntil(() => deletionCount > 2, { message: () => `${deletionCount} deletions` });
       } finally {
         await watch.stop();
         watch = null;
@@ -539,7 +533,6 @@ describe('Node Sentinel File Watcher', function() {
 
         try {
           await watch.start();
-          await sleep(TIMEOUT_PER_STEP);
           for (let i = 0; i < runs; ++i) {
             const created = path.join(workDir, `created${i}`);
             fs.mkdirSync(created);
@@ -550,12 +543,16 @@ describe('Node Sentinel File Watcher', function() {
             fs.rmSync(path.join(recreated, 'f.txt'), { recursive: true, force: true });
             fs.writeFileSync(path.join(recreated, 'f.txt'), 'y');
           }
-          await sleep(TIMEOUT_PER_STEP);
 
           const { CREATED, DELETED, MODIFIED } = nsfw.actions;
           const actions = directory => events.filter(event =>
             event.directory === path.join(workDir, directory) && event.file === 'f.txt' && event.action !== MODIFIED
           ).map(event => event.action);
+          // Each directory's scan may report its file after the barrier, so wait for every final creation first.
+          await waitUntil(() => Array.from({ length: runs }, (_, i) => [`created${i}`, `recreated${i}`])
+            .flat().every(directory => actions(directory).at(-1) === CREATED),
+          { message: () => `Unreported creations in ${JSON.stringify(events)}` });
+          await barrier(events, workDir);
           for (let i = 0; i < runs; ++i) {
             assert.deepEqual(actions(`created${i}`), [CREATED], `created${i}`);
             // What happened before the directory was watched and is gone by its scan goes unseen.
@@ -610,31 +607,36 @@ describe('Node Sentinel File Watcher', function() {
         }
       }
 
+      const events = [];
       let watch = await nsfw(
         workDir,
-        events => events.forEach(findEvent),
+        batch => {
+          batch.forEach(findEvent);
+          events.push(...batch);
+        },
         { debounceMS: DEBOUNCE }
       );
+      // Once this one reports the write made while paused, the paused watcher has had it too: FSEvents only delivers
+      // it after its latency, which can be after resume() otherwise.
+      const witnessEvents = [];
+      const witness = await nsfw(workDir, batch => witnessEvents.push(...batch), { debounceMS: DEBOUNCE });
 
       try {
+        await witness.start();
         await watch.start();
         await watch.pause();
-        await sleep(TIMEOUT_PER_STEP);
         await fsp.writeFile(path.join(inPath, file), 'You will not see me.');
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(!eventFound);
-
+        await waitUntil(() => witnessEvents.some(event => event.file === file),
+          { message: () => `No write in ${JSON.stringify(witnessEvents)}` });
         await watch.resume();
-        await sleep(TIMEOUT_PER_STEP);
+        // Whatever the pause held back would come before the barrier.
+        await barrier(events, workDir);
         assert.ok(!eventFound);
 
         await fsp.writeFile(path.join(inPath, file), 'But you will see me.');
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(eventFound);
+        await waitUntil(() => eventFound, { message: 'No event after resume' });
       } finally {
-        await watch.stop();
+        await Promise.all([watch.stop(), witness.stop()]);
         watch = null;
       }
     });
@@ -656,11 +658,8 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await remove(inPath);
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(erroredOut);
+        await waitUntil(() => erroredOut, { message: 'No error' });
         await assert.rejects(watch.stop(), /not running/);
         await fsp.mkdir(inPath);
         await watch.start();
@@ -712,11 +711,8 @@ describe('Node Sentinel File Watcher', function() {
       );
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await fsp.rename(inPath, renamed);
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(errorOk);
+        await waitUntil(() => errorOk, { message: 'No shutdown error' });
       } finally {
         try {
           await watch.stop();
@@ -739,11 +735,9 @@ describe('Node Sentinel File Watcher', function() {
           }
         );
         try {
-          await sleep(100);
           await watch.start();
-          await sleep(TIMEOUT_PER_STEP);
           await remove(inPath);
-          await sleep(TIMEOUT_PER_STEP);
+          await waitUntil(() => errorMsg !== '', { message: 'No error' });
 
           assert.equal(errorMsg, 'Service shutdown: root path changed (renamed or deleted)');
         } finally {
@@ -762,7 +756,6 @@ describe('Node Sentinel File Watcher', function() {
         let watch;
         try {
           await fsp.mkdir(inPath);
-          await sleep(TIMEOUT_PER_STEP);
           watch = await nsfw(
             inPath,
             () => { },
@@ -773,11 +766,8 @@ describe('Node Sentinel File Watcher', function() {
             }
           );
           await watch.start();
-          await sleep(TIMEOUT_PER_STEP);
           await fsp.rename(parentPath, renamed);
-          await sleep(TIMEOUT_PER_STEP);
-
-          assert.ok(errorOk);
+          await waitUntil(() => errorOk, { message: 'No shutdown error' });
         } finally {
           try {
             await watch.stop();
@@ -793,7 +783,6 @@ describe('Node Sentinel File Watcher', function() {
         let watch;
         try {
           await fsp.mkdir(inPath);
-          await sleep(TIMEOUT_PER_STEP);
           watch = await nsfw(
             inPath,
             () => { },
@@ -804,11 +793,8 @@ describe('Node Sentinel File Watcher', function() {
             }
           );
           await watch.start();
-          await sleep(TIMEOUT_PER_STEP);
           await remove(parentPath);
-          await sleep(TIMEOUT_PER_STEP);
-
-          assert.ok(errorOk);
+          await waitUntil(() => errorOk, { message: 'No shutdown error' });
         } finally {
           try {
             await watch.stop();
@@ -863,7 +849,6 @@ describe('Node Sentinel File Watcher', function() {
         );
 
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await execFile('git', ['clone', 'https://github.com/implausible/nsfw-stress-test',
           path.join(stressRepoPath, 'test')]);
         await fsp.stat(path.join(stressRepoPath, 'test'));
@@ -918,11 +903,8 @@ describe('Node Sentinel File Watcher', function() {
 
       try {
         await watch.start();
-        await sleep(TIMEOUT_PER_STEP);
         await fsp.writeFile(path.join(watchPath, file), 'Unicode though.');
-        await sleep(TIMEOUT_PER_STEP);
-
-        assert.ok(eventFound);
+        await waitUntil(() => eventFound, { message: 'No event' });
       } finally {
         await watch.stop();
         watch = null;
@@ -933,7 +915,7 @@ describe('Node Sentinel File Watcher', function() {
   describe('Excluded paths', function() {
     const debounceMS = 100;
     const eventTimeoutMS = 10000;
-    const absenceWindowMS = 500;
+    const absenceWindowMS = 200;
 
     const canonicalPaths = paths => paths.map(value => process.platform === 'win32' ?
       path.toNamespacedPath(value) : value);
@@ -1022,11 +1004,9 @@ describe('Node Sentinel File Watcher', function() {
     }
 
     async function appendFile(filePath, contents) {
-      // FSEvents demangles combined flags using birth/mtime seconds, so the append itself must land in a later
-      // second than the birth: a utimes() after it races the callback, which can stat the file in between.
-      const { birthtimeMs } = await fsp.stat(filePath);
-      const nextSecondMS = (Math.floor(birthtimeMs / 1000) + 1) * 1000;
-      await new Promise(resolve => setTimeout(resolve, Math.max(0, nextSecondMS - Date.now() + 50)));
+      // The append itself must land in a later second: a utimes() after it races the FSEvents callback, which can
+      // stat the file in between.
+      await untilNextSecond(filePath);
       await fsp.appendFile(filePath, contents);
     }
 

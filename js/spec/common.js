@@ -1,10 +1,10 @@
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const test = require('node:test');
 const util = require('util');
 
-exports.DEBOUNCE = 1000;
-exports.TIMEOUT_PER_STEP = 3000;
+exports.DEBOUNCE = 100;
 exports.WORKDIR = path.resolve(__dirname, '../../mockfs');
 
 exports.sleep = util.promisify(setTimeout);
@@ -31,12 +31,56 @@ exports.countInotifyWatches = function() {
   return count;
 };
 
+// Polls predicate() until it holds or timeout runs out, and returns whether it held.
+exports.eventually = async function(predicate, { timeout, interval = 25 }) {
+  const deadline = Date.now() + timeout;
+  while (!(await predicate())) {
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await exports.sleep(interval);
+  }
+  return true;
+};
+
+// Waits until predicate() holds. timeout is a generous upper bound for slow runners, not a delay: a predicate that
+// already holds returns at once. message (a string or a function, so it can describe the state at the deadline) is
+// the assertion's.
+exports.waitUntil = async function(predicate, { timeout = 15000, interval = 25, message = 'Never held' } = {}) {
+  if (!(await exports.eventually(predicate, { timeout, interval }))) {
+    assert.fail(typeof message === 'function' ? message() : message);
+  }
+};
+
+// Waits for one of the events recorded so far to match predicate.
+exports.waitForEvent = (events, predicate, description) => exports.waitUntil(() => events.some(predicate),
+  { message: () => `No ${description} in ${JSON.stringify(events)}` });
+
+// Creates a new file in directory and waits for its creation: events are delivered in order, so once it is
+// reported, so is everything that happened before it.
+let barriers = 0;
+exports.barrier = async function(events, directory) {
+  const file = `barrier-${process.pid}-${barriers++}.file`;
+  await fs.promises.writeFile(path.join(directory, file), 'Barrier');
+  const { CREATED } = require('../dist').actions;
+  await exports.waitForEvent(events, event => event.action === CREATED && event.directory === directory &&
+    event.file === file, `creation of ${file}`);
+};
+
+// Waits until the clock is past the second of filePath's birth and last modification, so that a change made next
+// stands out from them: FSEvents tells a modification from a creation by the birth and modification seconds, and the
+// poller behind a watched file only sees a change if it moves the timestamps it compares.
+exports.untilNextSecond = async function(filePath) {
+  const { birthtimeMs, mtimeMs } = await fs.promises.stat(filePath);
+  const nextSecondMS = (Math.floor(Math.max(birthtimeMs, mtimeMs) / 1000) + 1) * 1000;
+  await exports.sleep(Math.max(0, nextSecondMS - Date.now() + 50));
+};
+
 // Waits for the inotify watches this process holds to reach expected (Linux).
 exports.watchCountReaches = async function(expected, tries = 100) {
-  for (let i = 0; i < tries && exports.countInotifyWatches() !== expected; ++i) {
-    await exports.sleep(50);
-  }
-  require('assert').strictEqual(exports.countInotifyWatches(), expected);
+  await exports.waitUntil(() => exports.countInotifyWatches() === expected,
+    { timeout: tries * 50, interval: 50,
+      message: () => `${exports.countInotifyWatches()} inotify watches, not ${expected}` });
 };
 
 exports.mkdirp = directory => fs.promises.mkdir(directory, { recursive: true });

@@ -4,13 +4,13 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const nsfw = require('../../dist');
-const { countInotifyWatches, it, mkdirp, remove, sleep, watchCountReaches } = require('../common');
+const { countInotifyWatches, eventually, it, mkdirp, remove, sleep, watchCountReaches } = require('../common');
 const fixture = require('./fixture');
 
 describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, function() {
   const {
     watchedPath, outsidePath, markerSignal, touch, watchWhile,
-    waitFor, checkReturnState, waitingPath, untilLoopWaits, whileHeld,
+    waitFor, checkReturnState, waitingPath, untilWaiting, untilLoopWaits, whileHeld,
     barrier, expectWatched, reportedIn
   } = fixture();
 
@@ -367,8 +367,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
           touch('nsfw-test-pause-before-lock');
           touch('nsfw-test-release-event-loop');
           fs.renameSync(moving, path.join(outsidePath, 'moved.file'));
-          for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) await sleep(50);
-          assert.ok(fs.existsSync(waitingPath), 'The event loop never paused');
+          await untilWaiting('The event loop never paused');
         } else {
           await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
         }
@@ -467,8 +466,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       await remove(waitingPath);
       touch('nsfw-test-hold-event-loop');
       touch('nsfw-test-resume-event-loop');
-      for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) await sleep(50);
-      assert.ok(fs.existsSync(waitingPath), 'The move was never handled');
+      await untilWaiting('The move was never handled');
 
       // Pause the following read outside the event mutex so the update can see the unfinished scan.
       for (const name of ['nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop']) {
@@ -478,8 +476,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       touch('nsfw-test-pause-before-lock');
       touch('nsfw-test-release-event-loop');
       try {
-        for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) await sleep(50);
-        assert.ok(fs.existsSync(waitingPath), 'The next read never paused');
+        await untilWaiting('The next read never paused');
         const update = watch.updateExcludedPaths([]).then(() => {
           fs.writeFileSync(path.join(child, 'after.file'), '');
           return true;
@@ -547,10 +544,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       await remove(waitingPath);
       touch('nsfw-test-hold-event-loop');
       touch('nsfw-test-resume-event-loop');
-      for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
-        await sleep(50);
-      }
-      assert.ok(fs.existsSync(waitingPath), 'The event loop never waited at the hold file');
+      await untilWaiting('The event loop never waited at the hold file');
       // The marker is the removal of one of a1's, a2's and a3's dropped watches.
       assert.strictEqual(countInotifyWatches(), watches - 1);
       touch('nsfw-test-release-event-loop');
@@ -746,10 +740,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
         await remove(waitingPath);
         touch('nsfw-test-hold-event-loop');
         touch('nsfw-test-resume-event-loop');
-        for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
-          await sleep(50);
-        }
-        assert.ok(fs.existsSync(waitingPath), 'The event loop never waited at the hold file');
+        await untilWaiting('The event loop never waited at the hold file');
         // Q's new watch, and S's dropped one removed as the marker.
         assert.strictEqual(countInotifyWatches(), watches);
         touch('nsfw-test-release-event-loop');
@@ -1013,7 +1004,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
         event.directory === insideDirectory && event.file.startsWith('inside'));
       for (let i = 0; i < 20 && !reported(); ++i) {
         await fsp.writeFile(path.join(insideDirectory, `inside-${i}.file`), 'Inside');
-        await sleep(500);
+        await eventually(reported, { timeout: 500 });
       }
       assert.ok(reported(), `No creation inside in ${JSON.stringify(events)}`);
       // Reported under the path the rename gave it, after the rename.

@@ -10,7 +10,7 @@ const fixture = require('./fixture');
 describe('inotify aliases (slow)', { skip: process.platform !== 'linux' }, function() {
   const {
     watchedPath, outsidePath, touch, watchWhile, waitFor,
-    checkReturnState, waitingPath, untilLoopWaits, whileHeld, barrier, reportedIn,
+    checkReturnState, waitingPath, untilWaiting, untilLoopWaits, whileHeld, barrier, reportedIn,
     whileScanning, expectWatched
   } = fixture();
 
@@ -560,10 +560,7 @@ describe('inotify aliases (slow)', { skip: process.platform !== 'linux' }, funct
           fs.unlinkSync(path.join(watchedPath, 'link'));
           touch('nsfw-test-pause-before-lock');
           touch('nsfw-test-release-event-loop');
-          for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
-            await sleep(50);
-          }
-          assert.ok(fs.existsSync(waitingPath), 'The event loop never waited before the lock');
+          await untilWaiting('The event loop never waited before the lock');
           fs.renameSync(realPath, renamedPath);
           touch('nsfw-test-resume-event-loop');
 
@@ -782,10 +779,7 @@ describe('inotify aliases (slow)', { skip: process.platform !== 'linux' }, funct
         fs.renameSync(path.join(watchedPath, 'P', 'a'), path.join(outsidePath, 'a'));
         fs.symlinkSync(path.join(outsidePath, 'a'), hop);
         fs.symlinkSync(hop, aliasPath);
-        for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
-          await sleep(50);
-        }
-        assert.ok(fs.existsSync(waitingPath), 'The event loop never waited in h');
+        await untilWaiting('The event loop never waited in h');
         fs.renameSync(path.join(outsidePath, 'a'), path.join(watchedPath, 'M'));
         fs.unlinkSync(hop);
         fs.symlinkSync(path.join(watchedPath, 'M'), hop);

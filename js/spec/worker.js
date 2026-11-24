@@ -4,7 +4,7 @@ const {
   workerData
 } = require('worker_threads');
 
-const nsfw = require('../src');
+const nsfw = require('../dist');
 
 if (isMainThread) {
   throw new Error('Must be run via worker thread');

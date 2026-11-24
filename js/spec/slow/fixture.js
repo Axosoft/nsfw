@@ -3,7 +3,7 @@ const cp = require('child_process');
 const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
-const nsfw = require('../../src');
+const nsfw = require('../../dist');
 const { WORKDIR: workDir, sleep } = require('../common');
 
 module.exports = function fixture() {

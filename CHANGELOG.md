@@ -67,6 +67,11 @@ stops with an error instead of losing events silently.
   if the watched directory is gone by the time the error is reported, it gets the root path error, whatever came first.
   It can also be deleted right after an overflow is reported (say, by the `rm -rf` that overflowed the queue), so if
   `start()` then rejects, check that the directory still exists.
+- The JavaScript layer is written in TypeScript and published compiled to `js/dist`, with its type declarations
+  generated from the source instead of the hand-written `index.d.ts`. The public types are unchanged. Code that
+  required `nsfw/js/src/index.js` or referenced `nsfw/index.d.ts` directly has to require `nsfw` instead. Installing
+  from git runs the `prepare` script to compile it, so a package manager that blocks dependency scripts has to allow
+  nsfw's, as it already had to for building the addon.
 
 ### Performance
 - Linux: `start()` on a large tree takes about half the time, and the watcher holds about 40% less memory. Measure it

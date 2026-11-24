@@ -1,0 +1,12 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": ".",
+    "paths": { "nsfw": ["../../.."] }
+  },
+  "include": [],
+  "files": ["consumer.ts"]
+}

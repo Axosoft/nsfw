@@ -9,7 +9,7 @@ const {
   DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, countInotifyWatches, sleep, watchCountReaches
 } = require('./common');
 
-const nsfw = require('../src');
+const nsfw = require('../dist');
 
 describe('Node Sentinel File Watcher', function() {
   this.timeout(120000);
@@ -43,6 +43,22 @@ describe('Node Sentinel File Watcher', function() {
   });
 
   describe('Basic', function() {
+    it('returns watchers that are nsfw instances with detachable methods', async function() {
+      const directory = path.join(workDir, 'test0', 'folder0');
+      for (const watchPath of [directory, path.join(workDir, 'test0', 'testing0.file')]) {
+        const watcher = await nsfw(watchPath, () => {});
+        assert.ok(watcher instanceof nsfw);
+        const { start, pause, resume, stop } = watcher;
+        await start();
+        try {
+          await pause();
+          await resume();
+        } finally {
+          await stop();
+        }
+      }
+    });
+
     it('can watch a single file', async function() {
       const file = 'testing1.file';
       const inPath = path.resolve(workDir, 'test1');
@@ -3156,7 +3172,7 @@ describe('Node Sentinel File Watcher', function() {
       // In a process of its own: the warning is emitted once per process.
       async function deprecationWarnings(usesExcludedPaths) {
         const script = `
-          const nsfw = require(${JSON.stringify(path.resolve(__dirname, '../src'))});
+          const nsfw = require(${JSON.stringify(path.resolve(__dirname, '../dist'))});
           const codes = [];
           process.on('warning', warning => codes.push(warning.code));
           (async () => {

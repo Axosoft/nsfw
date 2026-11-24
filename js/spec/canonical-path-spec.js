@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const source = fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../dist/index.js'), 'utf8');
 
 function platformWrapper(platform, files = {}, methods = {}) {
   let native;

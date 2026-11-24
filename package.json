@@ -2,9 +2,12 @@
   "name": "nsfw",
   "version": "2.3.1",
   "description": "A simple file watcher for Node",
-  "main": "js/src/index.js",
+  "main": "js/dist/index.js",
   "scripts": {
-    "lint": "eslint js/src js/spec",
+    "build": "node js/scripts/build.js",
+    "prepare": "node js/scripts/build.js",
+    "lint": "eslint --ext .js,.ts js/src js/spec",
+    "test:types": "node js/scripts/build.js && tsc -p js/spec/types",
     "test": "pnpm lint && node js/scripts/test.js",
     "test:nolint": "node js/scripts/test.js"
   },
@@ -13,7 +16,7 @@
     "url": "git+https://github.com/axosoft/node-simple-file-watcher.git"
   },
   "author": "Axosoft, LLC",
-  "types": "index.d.ts",
+  "types": "js/dist/index.d.ts",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
@@ -22,8 +25,7 @@
     "node": "^18 || ^20 || >=21"
   },
   "files": [
-    "index.d.ts",
-    "js/src",
+    "js/dist",
     "src",
     "includes",
     "binding.gyp"
@@ -33,11 +35,15 @@
     "node-addon-api": "^8.0.0"
   },
   "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@typescript-eslint/eslint-plugin": "^8.74.0",
+    "@typescript-eslint/parser": "^8.74.0",
     "eslint": "8.x",
     "executive": "^1.6.3",
     "fs-extra": "^11.2.0",
     "globals": "^15.8.0",
-    "mocha": "^10.6.0"
+    "mocha": "^10.6.0",
+    "typescript": "~6.0.3"
   },
   "keywords": [
     "FileWatcher",

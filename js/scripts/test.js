@@ -1,5 +1,9 @@
 const cp = require('child_process');
 
+// The specs load js/dist, so they never run against a stale build.
+require('./build');
+exec('tsc -p js/spec/types');
+
 if (process.platform !== 'win32' && process.platform !== 'darwin') {
   // When ran as a npm script we can invoke npm bins such as node-gyp and mocha directly
   exec('node-gyp rebuild', { env: { ...process.env, NSFW_TEST_SLOW: 1 } });

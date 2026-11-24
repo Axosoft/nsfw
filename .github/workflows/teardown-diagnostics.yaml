@@ -10,7 +10,6 @@ on:
       - 'includes/**'
       - 'binding.gyp'
       - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
   workflow_dispatch:
     inputs:
       repetitions:
@@ -48,7 +47,7 @@ jobs:
       - name: Upload diagnostic evidence
         timeout-minutes: 3
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-worker-teardown-${{ github.run_id }}-${{ github.run_attempt }}
           path: teardown-diagnostics/

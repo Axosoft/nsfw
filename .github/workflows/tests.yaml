@@ -28,7 +28,7 @@ jobs:
         exclude:
           - container: "ubuntu:24.04"
             arch: arm64
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 30
     container:
       image: ${{ matrix.container }}
@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix:
         node: [22, 24, 26]
-    runs-on: macOS-latest
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -101,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         node: [22, 24, 26]
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -112,10 +112,11 @@ jobs:
           node-version: ${{ matrix.node }}
           check-latest: true
 
-      # The node-gyp bundled with npm predates Visual Studio 2026 (18.x), which windows-latest
-      # now ships; 12.1.0 is the first release that finds it. pnpm bundles a newer one, but the
+      # windows-2025 ships Visual Studio 2026 (18.x), which node-gyp finds from 12.1.0 on. The npm bundled with
+      # Node 22 still carries node-gyp 11; later Node releases bundle a newer one. pnpm bundles its own, but the
       # fresh-install step below installs with npm.
       - name: Use a node-gyp that supports Visual Studio 2026
+        if: ${{ matrix.node == 22 }}
         run: |
           npm install --global node-gyp@12
           "npm_config_node_gyp=$(npm prefix -g)\node_modules\node-gyp\bin\node-gyp.js" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -139,7 +140,7 @@ jobs:
     name: "Tests passed"
     if: ${{ always() }}
     needs: [linux-tests, macos-tests, windows-tests]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check matrix results

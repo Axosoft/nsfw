@@ -9,7 +9,8 @@ on:
       - 'src/**'
       - 'includes/**'
       - 'binding.gyp'
-      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
   workflow_dispatch:
     inputs:
       repetitions:
@@ -31,11 +32,11 @@ jobs:
         timeout-minutes: 2
         with:
           node-version: '26.13.1'
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        timeout-minutes: 2
       - name: Install and build
         timeout-minutes: 5
-        run: |
-          npm install --global yarn
-          yarn install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
       - name: Check diagnostic capture
         timeout-minutes: 2
         run: node --test js/scripts/teardown-diagnostics-test.js

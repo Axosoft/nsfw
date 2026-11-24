@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 // Installs the packed package into an empty project without a lockfile, the way a consumer runs `npm install nsfw`,
-// so every dependency range resolves to its latest match instead of the versions pinned by yarn.lock. Then loads the
-// addon and watches a directory, to prove that it compiled against those versions and works.
+// so every dependency range resolves to its latest match instead of the versions pinned by pnpm-lock.yaml. Then loads
+// the addon and watches a directory, to prove that it compiled against those versions and works.
 const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');

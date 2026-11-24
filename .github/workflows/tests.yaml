@@ -49,16 +49,18 @@ jobs:
           node-version: ${{ matrix.node }}
           check-latest: true
 
+      # Installs the pnpm version pinned by packageManager in package.json.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
       - name: Run tests
         id: tests
         run: |
-          npm install --global yarn
-          yarn install --frozen-lockfile
-          yarn test
+          pnpm install --frozen-lockfile
+          pnpm test
 
       # Installs the packed package into an empty project without a lockfile, as `npm install nsfw` does, so
-      # dependency ranges resolve to their newest versions instead of the ones yarn.lock pins above. Runs even when
-      # the tests failed, so both results show. One container per arch is enough: the result doesn't depend on it.
+      # dependency ranges resolve to their newest versions instead of the ones pnpm-lock.yaml pins above. Runs even
+      # when the tests failed, so both results show. One container per arch is enough: the result doesn't depend on it.
       - name: Install the packed package and watch a directory
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && matrix.container == 'ubuntu:latest' }}
         run: node js/scripts/fresh-install-test.js
@@ -80,12 +82,13 @@ jobs:
           node-version: ${{ matrix.node }}
           check-latest: true
 
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
       - name: Run tests
         id: tests
         run: |
-          npm install --global yarn
-          yarn install --frozen-lockfile
-          yarn test
+          pnpm install --frozen-lockfile
+          pnpm test
 
       # Same as in linux-tests.
       - name: Install the packed package and watch a directory
@@ -110,18 +113,20 @@ jobs:
           check-latest: true
 
       # The node-gyp bundled with npm predates Visual Studio 2026 (18.x), which windows-latest
-      # now ships; 12.1.0 is the first release that finds it.
+      # now ships; 12.1.0 is the first release that finds it. pnpm bundles a newer one, but the
+      # fresh-install step below installs with npm.
       - name: Use a node-gyp that supports Visual Studio 2026
         run: |
           npm install --global node-gyp@12
           "npm_config_node_gyp=$(npm prefix -g)\node_modules\node-gyp\bin\node-gyp.js" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
       - name: Run tests
         id: tests
         run: |
-          npm install --global yarn
-          yarn install --frozen-lockfile
-          yarn test
+          pnpm install --frozen-lockfile
+          pnpm test
 
       # Same as in linux-tests.
       - name: Install the packed package and watch a directory

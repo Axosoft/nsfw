@@ -7,7 +7,7 @@ const {
   DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, sleep
 } = require('./common');
 
-const nsfw = require('../src');
+const nsfw = require('../dist');
 
 describe('Node Sentinel File Watcher (slow)', function() {
   this.timeout(120000);

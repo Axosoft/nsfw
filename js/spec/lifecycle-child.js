@@ -7,7 +7,7 @@ const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
 
-const nsfw = require('../src');
+const nsfw = require('../dist');
 
 const [mode, watchDir] = isMainThread ? process.argv.slice(2) : workerData;
 

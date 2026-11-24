@@ -26,5 +26,16 @@
     "space-in-parens": [2, "never"],
     "space-unary-ops": [2, { "words": true, "nonwords": false }],
     "valid-jsdoc": 2
-  }
+  },
+  "ignorePatterns": ["js/dist/"],
+  "overrides": [{
+    "files": ["*.ts"],
+    "parser": "@typescript-eslint/parser",
+    "plugins": ["@typescript-eslint"],
+    "extends": ["plugin:@typescript-eslint/recommended"],
+    "rules": {
+      "@typescript-eslint/no-require-imports": [2, { "allowAsImport": true }],
+      "valid-jsdoc": 0
+    }
+  }]
 }

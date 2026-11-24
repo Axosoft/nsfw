@@ -2,7 +2,7 @@
 // Usage: node --expose-gc js/scripts/benchmark-start.js <path> [runs]
 const path = require('path');
 const { performance } = require('perf_hooks');
-const nsfw = require('../src/index');
+const nsfw = require('../dist');
 
 const gc = global.gc || (() => {});
 

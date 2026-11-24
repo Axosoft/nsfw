@@ -200,7 +200,8 @@ Make sure you have completed installing all of the dependencies listed for [Node
 
 ## Development
 The repository uses [pnpm](https://pnpm.io), pinned through the `packageManager` field of `package.json`. Install the
-dependencies, which also builds the addon, then lint and test with:
+dependencies, which also builds the addon and compiles the TypeScript in `js/src` to `js/dist`, then lint and test
+with:
 
 ```sh
 pnpm install

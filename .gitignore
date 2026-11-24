@@ -41,3 +41,6 @@ lib
 nsfw-stress-test
 mockfs
 compiled
+
+# TypeScript output
+js/dist

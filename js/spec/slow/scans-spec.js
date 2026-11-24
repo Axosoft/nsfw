@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const fse = require('fs-extra');
 const path = require('path');
-const nsfw = require('../../src');
+const nsfw = require('../../dist');
 const { sleep } = require('../common');
 const fixture = require('./fixture');
 

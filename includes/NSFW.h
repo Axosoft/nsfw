@@ -27,6 +27,7 @@
 class NSFW : public Napi::ObjectWrap<NSFW> {
   private:
     Napi::Value ExcludedPaths();
+    Napi::Value ExcludedPatterns();
     static std::size_t instanceCount;
     static bool gcEnabled;
 
@@ -42,9 +43,10 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     // Guards mRun, including while a run is being created or destroyed.
     std::mutex mRunLock;
     std::unique_ptr<Run> mRun;
-    // Only ever held briefly, so the main thread can take it.
+    // Only ever held briefly, so the main thread can take it. Guards mFilterOptions too.
     std::mutex mExcludedPathsLock;
     std::vector<std::string> mExcludedPaths;
+    FilterOptions mFilterOptions;
     uint64_t mNextRunId = 0;
     uint64_t mRunId = 0;
     bool stopRun(uint64_t runId = 0);
@@ -163,6 +165,28 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     };
 
     Napi::Value UpdateExcludedPaths(const Napi::CallbackInfo &info);
+
+    class GetExcludedPatternsWorker: public Job {
+      public:
+        GetExcludedPatternsWorker(Napi::Env env, NSFW *nsfw);
+        void Execute() {}
+        void OnOK();
+    };
+
+    Napi::Value GetExcludedPatterns(const Napi::CallbackInfo &info);
+
+    class UpdateExcludedPatternsWorker: public Job {
+      public:
+        UpdateExcludedPatternsWorker(Napi::Env env, const Napi::CallbackInfo &info, NSFW *nsfw);
+        void Execute();
+        void OnOK();
+
+      private:
+        // The patterns this call set, which its promise resolves with.
+        std::vector<std::string> mExcludedPatterns;
+    };
+
+    Napi::Value UpdateExcludedPatterns(const Napi::CallbackInfo &info);
 
   public:
     static Napi::Object Init(Napi::Env, Napi::Object exports);

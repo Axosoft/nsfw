@@ -7,7 +7,11 @@
         "sources": [
             "src/NSFW.cpp",
             "src/Queue.cpp",
-            "src/NativeInterface.cpp"
+            "src/NativeInterface.cpp",
+            "src/FilterPaths.cpp",
+            "src/GitRepository.cpp",
+            "src/GitignoreRules.cpp",
+            "src/PathFilter.cpp"
         ],
         "include_dirs": [
             "includes",

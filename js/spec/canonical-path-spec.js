@@ -18,7 +18,7 @@ function platformWrapper(platform, files = {}, methods = {}) {
   const module = { exports: {} };
   vm.runInNewContext(source, {
     module,
-    process: { platform },
+    process: { platform, emitWarning() {} },
     require(name) {
       if (name === 'path') return platform === 'win32' ? path.win32 : path.posix;
       if (name === 'fs') return { promises: {

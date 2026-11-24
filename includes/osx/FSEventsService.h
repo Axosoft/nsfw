@@ -43,11 +43,11 @@ public:
   ~FSEventsService();
 private:
   void create(std::string path);
-  void demangle(std::string path);
-  void dispatch(EventType action, std::string path);
+  void demangle(std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
+  void dispatch(EventType action, std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
   void modify(std::string path);
-  void remove(std::string path);
-  void rename(std::vector<std::string> &paths);
+  void remove(std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
+  void rename(std::vector<std::string> &paths, const std::map<std::string, PathFilter::Kind> &kinds);
   void splitFilePath(std::string &directory, std::string &name, const std::string &path);
   bool isExcluded(std::string filePath);
   std::vector<CFStringRef> createExcludedPaths(const std::vector<std::string> &excludedPaths) const;

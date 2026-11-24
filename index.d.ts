@@ -24,14 +24,23 @@ declare module 'nsfw' {
             /**
              * Returns a Promise that resolves with the excluded paths: absolute paths inside the watched path, spelled
              * under its canonical form (its real path on Linux and macOS, its `\\?\` form on Windows).
+             * @deprecated Use `getExcludedPatterns()` and `excludedPatterns` instead.
              */
             getExcludedPaths: () => Promise<string[]>;
             /**
              * Replaces the excluded paths. Rejects unless every path is absolute, and ignores the ones outside the watched
              * path; resolves with the paths this call set, without those and without trailing separators, spelled
              * like the ones getExcludedPaths() returns, even if a later call has replaced them.
+             * @deprecated Use `updateExcludedPatterns()` instead: `/build` excludes `build` in the watched directory.
              */
             updateExcludedPaths: (excludedPaths: string[]) => Promise<string[]>;
+            /** Returns a Promise that resolves with the excluded patterns. */
+            getExcludedPatterns: () => Promise<string[]>;
+            /**
+             * Replaces the excluded patterns, see `Options.excludedPatterns`. Rejects unless every pattern is a string;
+             * resolves with the patterns this call set, even if a later call has replaced them.
+             */
+            updateExcludedPatterns: (excludedPatterns: string[]) => Promise<string[]>;
         }
 
         export const enum ActionType {
@@ -73,8 +82,25 @@ declare module 'nsfw' {
             debounceMS?: number;
             /** callback to fire in the case of errors */
             errorCallback?: (err: any) => void;
-            /** absolute paths inside the watched path to be excluded; the ones outside it are ignored */
+            /**
+             * absolute paths inside the watched path to be excluded; the ones outside it are ignored
+             * @deprecated Use `excludedPatterns` instead: `/build` excludes `build` in the watched directory.
+             */
             excludedPaths?: string[];
+            /**
+             * Glob patterns with `.gitignore` syntax, relative to the watched path, whose matches are excluded: `*.log`
+             * matches at any depth, `/build` only at the top, `dist/` only directories, `**` spans directories and `!`
+             * includes again what an earlier pattern excluded. They take precedence over the ignore files of
+             * `respectGitignore`. Can be replaced with `updateExcludedPatterns()`. Only for a watched directory.
+             */
+            excludedPatterns?: string[];
+            /**
+             * Excludes what git ignores in the repository the watched path is in: its `.gitignore` files, which are read
+             * again when they change, its `info/exclude` and the user's `core.excludesFile`. The watched path itself is
+             * never excluded. Outside a repository it has no effect. Set at creation. Only for a watched directory.
+             * Defaults to false.
+             */
+            respectGitignore?: boolean;
         }
     }
 

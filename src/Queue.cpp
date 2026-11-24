@@ -48,13 +48,88 @@ void EventQueue::enqueue(
   const std::string &fromDirectory,
   const std::string &fromFile,
   const std::string &toDirectory,
-  const std::string &toFile
+  const std::string &toFile,
+  PathFilter::Kind kind
 ) {
+  std::shared_ptr<PathFilter> filter;
+  bool watcherNotesEntries;
+  {
+    std::lock_guard<std::mutex> lock(mFilterMutex);
+    filter = mFilter;
+    watcherNotesEntries = mWatcherNotesEntries;
+  }
+  if (!filter || !filter->isActive()) {
+    if (!mPaused) push(type, fromDirectory, fromFile, toDirectory, toFile);
+    return;
+  }
+
+  // Also while paused: the rules have to follow their files whether or not their changes are reported. On macOS a
+  // modification counts as a replacement too: it reports a directory that moved in as modified when it can't tell,
+  // see FSEventsService::demangle(). Elsewhere it doesn't, so Windows reporting a directory as modified whenever an
+  // entry changes in it doesn't have its rules read again each time.
+  if (!watcherNotesEntries) {
+#if defined(__APPLE__)
+    const bool replaced = true;
+#else
+    const bool replaced = type != MODIFIED;
+#endif
+    if (type == RENAMED) {
+      filter->entryMoved(fromDirectory, fromFile, toDirectory, toFile);
+    } else {
+      filter->entryChanged(fromDirectory, fromFile, replaced);
+    }
+  }
   if (mPaused) {
     return;
   }
+
+  if (type == DELETED) {
+    if (!filter->isRemovalIgnored(fromDirectory, fromFile, kind)) push(type, fromDirectory, fromFile);
+    return;
+  }
+  if (type != RENAMED) {
+    bool replacedReported = false;
+    if (!filter->isReplacementIgnored(fromDirectory, fromFile, kind, replacedReported)) {
+      push(type, fromDirectory, fromFile);
+    } else if (replacedReported) {
+      push(DELETED, fromDirectory, fromFile);
+    }
+    return;
+  }
+  // What left is what arrived, which can still be looked up.
+  if (kind == PathFilter::Kind::UNKNOWN) {
+    kind = PathFilter::kindOf(toDirectory, toFile);
+  }
+  const bool fromIgnored = filter->isRemovalIgnored(fromDirectory, fromFile, kind);
+  bool replacedReported = false;
+  const bool toIgnored = filter->isReplacementIgnored(toDirectory, toFile, kind, replacedReported);
+  if (toIgnored && replacedReported) {
+    push(DELETED, toDirectory, toFile);
+  }
+  if (!fromIgnored && !toIgnored) {
+    push(RENAMED, fromDirectory, fromFile, toDirectory, toFile);
+  } else if (!toIgnored) {
+    push(CREATED, toDirectory, toFile);
+  } else if (!fromIgnored) {
+    push(DELETED, fromDirectory, fromFile);
+  }
+}
+
+void EventQueue::push(
+  const EventType type,
+  const std::string &fromDirectory,
+  const std::string &fromFile,
+  const std::string &toDirectory,
+  const std::string &toFile
+) {
   std::lock_guard<std::mutex> lock(mutex);
   queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile)));
+}
+
+void EventQueue::setFilter(std::shared_ptr<PathFilter> filter, bool watcherNotesEntries) {
+  std::lock_guard<std::mutex> lock(mFilterMutex);
+  mFilter = std::move(filter);
+  mWatcherNotesEntries = watcherNotesEntries;
 }
 
 void EventQueue::pause() {
@@ -63,6 +138,11 @@ void EventQueue::pause() {
 }
 
 void EventQueue::resume() {
+  {
+    // What entries were when last seen went stale while their events weren't judged.
+    std::lock_guard<std::mutex> lock(mFilterMutex);
+    if (mFilter) mFilter->forgetSeenKinds();
+  }
   mPaused = false;
 }
 

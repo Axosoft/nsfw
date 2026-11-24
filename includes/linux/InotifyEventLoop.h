@@ -34,6 +34,8 @@ public:
 
   void work();
   void wakeForEntryRetry();
+  // Has the loop run its maintenance, see InotifyService::settleFilterChange(), without waiting for an event.
+  void wake();
 
 #ifdef NSFW_TEST_SLOW_1
   static bool failReads(int inotifyInstance);

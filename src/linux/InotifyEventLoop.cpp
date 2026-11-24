@@ -39,6 +39,10 @@ static std::string readErrorMessage(ssize_t bytesRead, int errorNumber) {
 
 void InotifyEventLoop::wakeForEntryRetry() {
   if (!mInotifyService->mTree->needsEntryRetry()) return;
+  wake();
+}
+
+void InotifyEventLoop::wake() {
   ssize_t sent;
   do {
     sent = write(mWakePipe[1], "1", 1);
@@ -74,7 +78,7 @@ void InotifyEventLoop::work() {
     inotifyService->modify(event->wd, event->len > 0 ? event->name : "");
   };
 
-  auto remove = [&event, &isDirectoryRemoval, &inotifyService]() {
+  auto remove = [&event, &isDirectoryRemoval, &isDirectoryEvent, &inotifyService]() {
     if (event == NULL) {
       return;
     }
@@ -82,7 +86,7 @@ void InotifyEventLoop::work() {
     if (isDirectoryRemoval) {
       inotifyService->removeDirectory(event->wd);
     } else {
-      inotifyService->remove(event->wd, event->len > 0 ? event->name : "");
+      inotifyService->remove(event->wd, event->len > 0 ? event->name : "", isDirectoryEvent);
     }
   };
 
@@ -107,7 +111,7 @@ void InotifyEventLoop::work() {
     if (renameEvent.isDirectory) {
       inotifyService->removeMovedDirectory(renameEvent.wd, renameEvent.name);
     } else {
-      inotifyService->remove(renameEvent.wd, renameEvent.name);
+      inotifyService->remove(renameEvent.wd, renameEvent.name, false);
       inotifyService->revalidateLinks();
     }
   };
@@ -148,6 +152,13 @@ void InotifyEventLoop::work() {
     int timeout = -1;
     {
       auto lock = lockEventHandling();
+      if (!renameEvent.isStarted) {
+        // An ignore file change left for later, see InotifyService::settleFilterChange().
+        int filterWait = inotifyService->settleFilterChange();
+        if (filterWait >= 0) {
+          timeout = filterWait;
+        }
+      }
       if (!renameEvent.isStarted && inotifyService->mTree->needsEntryRetry()) {
         auto now = std::chrono::steady_clock::now();
         if (now >= nextRetry) {
@@ -156,7 +167,7 @@ void InotifyEventLoop::work() {
           inotifyService->revalidateLinks();
           nextRetry = now + std::chrono::milliseconds(50);
         }
-        timeout = 50;
+        timeout = timeout < 0 ? 50 : std::min(timeout, 50);
       }
     }
     pollfd inputs[] = { { mInotifyInstance, POLLIN, 0 }, { mWakePipe[0], POLLIN, 0 } };

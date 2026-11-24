@@ -67,6 +67,7 @@ void FSEventsServiceCallback(
   FSEventsService *eventsService = (FSEventsService *)clientCallBackInfo;
   char **paths = (char **)eventPaths;
   std::vector<std::string> renamedPaths;
+  std::map<std::string, PathFilter::Kind> renamedKinds;
   for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
     if (eventIds[i] == 0 && (eventFlags[i] & kFSEventStreamEventFlagRootChanged) == kFSEventStreamEventFlagRootChanged) {
       eventsService->mRootChanged = true;
@@ -81,22 +82,31 @@ void FSEventsServiceCallback(
                       (eventFlags[i] & kFSEventStreamEventFlagItemXattrMod) == kFSEventStreamEventFlagItemXattrMod;
     bool isRenamed = (eventFlags[i] & kFSEventStreamEventFlagItemRenamed) == kFSEventStreamEventFlagItemRenamed;
 
+    // What a removed entry was, which the filter can't look up anymore. Not when the flags coalesce two entries. A
+    // symlink counts as a directory, which it most often leads to, as the filter follows it when it can, so its
+    // removal is judged like its creation was.
+    const bool isDirectory = (eventFlags[i] & kFSEventStreamEventFlagItemIsDir) != 0;
+    const bool isFile = (eventFlags[i] & kFSEventStreamEventFlagItemIsFile) != 0;
+    const bool isSymlink = (eventFlags[i] & kFSEventStreamEventFlagItemIsSymlink) != 0;
+    const PathFilter::Kind kind = isSymlink ? PathFilter::Kind::DIRECTORY : isDirectory == isFile ?
+      PathFilter::Kind::UNKNOWN : (isDirectory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE);
     if(!eventsService->isExcluded(paths[i])) {
       if (isCreated && !(isRemoved || isModified || isRenamed)) {
         eventsService->create(paths[i]);
       } else if (isRemoved && !(isCreated || isModified || isRenamed)) {
-        eventsService->remove(paths[i]);
+        eventsService->remove(paths[i], kind);
       } else if (isModified && !(isCreated || isRemoved || isRenamed)) {
         eventsService->modify(paths[i]);
       } else if (isRenamed && !(isCreated || isModified || isRemoved)) {
         renamedPaths.push_back(paths[i]);
+        renamedKinds[paths[i]] = kind;
       } else {
-        eventsService->demangle(paths[i]);
+        eventsService->demangle(paths[i], kind);
       }
     }
   }
   if(!eventsService->mRootChanged) {
-    eventsService->rename(renamedPaths);
+    eventsService->rename(renamedPaths, renamedKinds);
   }
 }
 
@@ -153,10 +163,10 @@ void FSEventsService::create(std::string path) {
   dispatch(CREATED, path);
 }
 
-void FSEventsService::demangle(std::string path) {
+void FSEventsService::demangle(std::string path, PathFilter::Kind kind) {
   struct stat file;
   if (stat(path.c_str(), &file) != 0) {
-    remove(path);
+    remove(path, kind);
     return;
   }
 
@@ -167,12 +177,12 @@ void FSEventsService::demangle(std::string path) {
   }
 }
 
-void FSEventsService::dispatch(EventType action, std::string path) {
+void FSEventsService::dispatch(EventType action, std::string path, PathFilter::Kind kind) {
   std::string directory, name;
 
   splitFilePath(directory, name, path);
 
-  mQueue->enqueue(action, directory, name);
+  mQueue->enqueue(action, directory, name, "", "", kind);
 }
 
 std::string FSEventsService::getError() {
@@ -194,11 +204,16 @@ void FSEventsService::modify(std::string path) {
   dispatch(MODIFIED, path);
 }
 
-void FSEventsService::remove(std::string path) {
-  dispatch(DELETED, path);
+void FSEventsService::remove(std::string path, PathFilter::Kind kind) {
+  dispatch(DELETED, path, kind);
 }
 
-void FSEventsService::rename(std::vector<std::string> &paths) {
+// kinds: what each path was, for one that is gone, see demangle().
+void FSEventsService::rename(std::vector<std::string> &paths, const std::map<std::string, PathFilter::Kind> &kinds) {
+  auto kindOf = [&kinds](const std::string &path) {
+    auto found = kinds.find(path);
+    return found == kinds.end() ? PathFilter::Kind::UNKNOWN : found->second;
+  };
   auto *binNamesByPath = new std::map<std::string, std::vector<std::string> *>;
 
   for (const std::string &path : paths) {
@@ -225,13 +240,14 @@ void FSEventsService::rename(std::vector<std::string> &paths) {
       } else if (!sideAExists && sideBExists) {
         mQueue->enqueue(RENAMED, binIterator->first, sideA, binIterator->first, sideB);
       } else {
-        demangle(fullSideA);
-        demangle(fullSideB);
+        demangle(fullSideA, kindOf(fullSideA));
+        demangle(fullSideB, kindOf(fullSideB));
       }
 
     } else {
       for (auto pathIterator = binIterator->second->begin(); pathIterator != binIterator->second->end(); ++pathIterator) {
-        demangle(binIterator->first + "/" + *pathIterator);
+        const std::string path = binIterator->first + "/" + *pathIterator;
+        demangle(path, kindOf(path));
       }
     }
     delete binIterator->second;

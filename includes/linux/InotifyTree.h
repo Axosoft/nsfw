@@ -21,6 +21,8 @@
 #include <thread>
 #include <mutex>
 
+#include "../PathFilter.h"
+
 /**
  * void EmitCreatedEvent(std::string directory, std::string file);
  */
@@ -41,7 +43,8 @@ class InotifyTree {
     }
   };
 public:
-  InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths);
+  InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths,
+    std::shared_ptr<PathFilter> filter);
 
   void addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent = nullptr);
   std::string getError();
@@ -73,6 +76,14 @@ public:
   void revalidateLinks(bool unknownMoveDestination, EmitCreatedEvent emitCreatedEvent);
   void retryChangedEntry();
   std::future<bool> updateExcludedPaths(const std::vector<std::string> &excludedPaths, EmitCreatedEvent emitCreatedEvent);
+  void excludeFiltered(const std::vector<std::string> &directories, EmitCreatedEvent emitCreatedEvent,
+    bool holderSubtrees = true);
+  void includeFiltered();
+  void recheckFilteredLinks(EmitCreatedEvent emitCreatedEvent);
+  // The physical path of the directory with wd when a symlink holds it or one above it, see physicalPathOf(node).
+  bool physicalPathOf(int wd, std::string &physical);
+  // Whether name in the directory with wd led to a directory as far as the tree knows: it watches it, or rejected it.
+  bool hadDirectoryAt(int wd, const std::string &name);
 
   // In bytes: what one read of the event loop takes at most, which removeDroppedWatches() paces itself by.
   static const int READ_SIZE = 8192;
@@ -264,15 +275,27 @@ private:
   void excludedEntryFound(const std::string &excludedPath);
   void directoryChanged(const Directory &directory, InotifyNode *node);
   bool namesThroughAlias(InotifyNode *parent, const std::string &name);
-  enum class Rejected { NO, BY_PATH, BY_ALIAS };
-  Rejected exclusionOfChild(InotifyNode *parent, const std::string &name);
-  bool rejectsChild(InotifyNode *parent, const std::string &name);
+  // BY_FILTER: the filter ignores it, by the tree's own path too, but unlike an excluded path it never makes a symlink
+  // to it excluded, see excludesLink().
+  enum class Rejected { NO, BY_PATH, BY_ALIAS, BY_FILTER };
+  enum class Link { UNKNOWN, NO, YES };
+  Rejected exclusionOfChild(InotifyNode *parent, const std::string &name, Link link = Link::UNKNOWN,
+    bool askFilter = true, bool *throughLink = nullptr);
+  bool isFilterRejectedOnly(InotifyNode *parent, const std::string &name) const;
+  void forgetFilterRejection(InotifyNode *parent, const std::string &name);
+  bool leadsBelowAny(InotifyNode *holder, const std::vector<std::string> &directories);
+  bool physicalPathOf(InotifyNode *node, std::string &physical);
+  Rejected rejectionOfChild(InotifyNode *parent, const std::string &name, Link link = Link::UNKNOWN);
+  bool rejectsChild(InotifyNode *parent, const std::string &name, Link link = Link::UNKNOWN);
   bool isRejected(InotifyNode *parent, const std::string &name) const;
   void setRejected(InotifyNode *parent, const std::string &name, Rejected rejected);
   void applyExclusions(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
-  void includeRejected(InotifyNode *node, bool throughAliasOnly, EmitCreatedEvent emitCreatedEvent = nullptr);
+  // Which rejected names includeRejected() asks about again.
+  enum class Rejections { ALL, BY_ALIAS, BY_FILTER };
+  void includeRejected(InotifyNode *node, Rejections which, EmitCreatedEvent emitCreatedEvent = nullptr);
   void restoreRejectedChild(InotifyNode *parent, const std::string &name, EmitCreatedEvent emitCreatedEvent);
-  bool excludeNamed(InotifyNode *node, const ExcludedNames &names, EmitCreatedEvent emitCreatedEvent);
+  bool excludeNamed(InotifyNode *node, const ExcludedNames &names, EmitCreatedEvent emitCreatedEvent,
+    bool byFilter = true);
   bool excludesLink(const std::string &path, const Directory &directory, std::string *target = nullptr);
   void loadPhysicalExclusions();
   bool excludeLink(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
@@ -465,6 +488,12 @@ private:
   std::map<InotifyNode *, std::set<std::string>> mRejectedByPath;
   // Or by another path, which can stop leading there wherever something changes, see revalidateRejected().
   std::map<InotifyNode *, std::set<std::string>> mRejectedByAlias;
+  // Or by the filter, see Rejected::BY_FILTER.
+  std::map<InotifyNode *, std::set<std::string>> mRejectedByFilter;
+  // The ones of those rejected for where they lead, or for their physical path, and whether a symlink changed since
+  // they were asked about, see recheckFilteredLinks().
+  std::map<InotifyNode *, std::set<std::string>> mFilteredLinks;
+  bool mFilteredLinksChanged = false;
   // Nodes held at symlinks, each with the physical path its directory was last found at (empty if never resolved):
   // only a hint of where it is once the symlink dangles, see findStaleLinksByTarget(). searched once every excluded
   // directory was read for it at a dangling symlink, without finding it: only the ones that change are read for it
@@ -490,6 +519,10 @@ private:
   bool mLinksAwaitScans = false;
   std::shared_ptr<UpdateCompletion> mLinkUpdate;
   bool mRootExcluded = false;
+  // The directories it ignores are rejected like excluded paths, by the tree's own path, see exclusionOfChild(). Its
+  // answers change with its patterns and ignore files too, see excludeFiltered() and includeFiltered().
+  std::shared_ptr<PathFilter> mFilter;
+  bool leadsToIgnored(const std::string &path, bool knownLink);
   std::string mWatchedPath;
   Directory mWatchedDirectory;
 

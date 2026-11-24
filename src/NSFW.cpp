@@ -47,6 +47,11 @@ class NSFW::Run {
       return mInterface->updateExcludedPaths(excludedPaths);
     }
 
+    void updateExcludedPatterns(const std::vector<std::string> &excludedPatterns) {
+      std::lock_guard<std::mutex> lock(mLock);
+      mInterface->updateExcludedPatterns(excludedPatterns);
+    }
+
   private:
     void poll();
 
@@ -126,7 +131,7 @@ void NSFW::Run::poll() {
   mEventCallback.Release();
 }
 
-static std::vector<std::string> toExcludedPaths(Napi::Env env, Napi::Array paths, const char *notStringError) {
+static std::vector<std::string> toStrings(Napi::Env env, Napi::Array paths, const char *notStringError) {
   std::vector<std::string> excludedPaths;
   for (uint32_t i = 0; i < paths.Length(); i++) {
     Napi::Value path = paths[i];
@@ -211,11 +216,33 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
       throw Napi::TypeError::New(env, "options.excludedPaths must be an array.");
     }
     if (maybeExcludedPaths.IsArray()) {
-      mExcludedPaths = toExcludedPaths(
+      mExcludedPaths = toStrings(
         env,
         maybeExcludedPaths.As<Napi::Array>(),
         "options.excludedPaths elements must be strings."
       );
+    }
+
+    // excludedPatterns
+    Napi::Value maybeExcludedPatterns = options["excludedPatterns"];
+    if (options.Has("excludedPatterns") && !maybeExcludedPatterns.IsArray()) {
+      throw Napi::TypeError::New(env, "options.excludedPatterns must be an array.");
+    }
+    if (maybeExcludedPatterns.IsArray()) {
+      mFilterOptions.excludedPatterns = toStrings(
+        env,
+        maybeExcludedPatterns.As<Napi::Array>(),
+        "options.excludedPatterns elements must be strings."
+      );
+    }
+
+    // respectGitignore
+    Napi::Value maybeRespectGitignore = options["respectGitignore"];
+    if (options.Has("respectGitignore") && !maybeRespectGitignore.IsBoolean()) {
+      throw Napi::TypeError::New(env, "options.respectGitignore must be a boolean.");
+    }
+    if (maybeRespectGitignore.IsBoolean()) {
+      mFilterOptions.respectGitignore = maybeRespectGitignore.As<Napi::Boolean>().Value();
     }
   }
 
@@ -344,15 +371,17 @@ void NSFW::StartWorker::Execute() {
   }
 
   std::vector<std::string> excludedPaths;
+  FilterOptions filterOptions;
   {
     std::lock_guard<std::mutex> excludedPathsLock(mNSFW->mExcludedPathsLock);
     excludedPaths = mNSFW->mExcludedPaths;
+    filterOptions = mNSFW->mFilterOptions;
   }
 
   try {
     mNSFW->mQueue->clear();
     std::unique_ptr<NativeInterface> nativeInterface(
-      new NativeInterface(mNSFW->mPath, excludedPaths, mNSFW->mQueue)
+      new NativeInterface(mNSFW->mPath, excludedPaths, filterOptions, mNSFW->mQueue)
     );
     if (!nativeInterface->isWatching()) {
       mStatus = COULD_NOT_START;
@@ -502,7 +531,7 @@ NSFW::UpdateExcludedPathsWorker::UpdateExcludedPathsWorker(Napi::Env env, const 
     throw Napi::TypeError::New(env, "Must pass an array of string to updateExcludedPaths.");
   }
 
-  mExcludedPaths = toExcludedPaths(env, info[0].As<Napi::Array>(), "excludedPaths elements must be strings.");
+  mExcludedPaths = toStrings(env, info[0].As<Napi::Array>(), "excludedPaths elements must be strings.");
   // Stored here, on the main thread, so updates apply in call order; Execute only forwards them to a running watcher.
   std::lock_guard<std::mutex> lock(mNSFW->mExcludedPathsLock);
   mNSFW->mExcludedPaths = mExcludedPaths;
@@ -555,6 +584,52 @@ Napi::Value NSFW::UpdateExcludedPaths(const Napi::CallbackInfo &info) {
   return (new UpdateExcludedPathsWorker(info.Env(), info, this))->RunJob();
 }
 
+NSFW::GetExcludedPatternsWorker::GetExcludedPatternsWorker(Napi::Env env, NSFW *nsfw): Job(env, nsfw) {}
+
+void NSFW::GetExcludedPatternsWorker::OnOK() {
+  mDeferred.Resolve(mNSFW->ExcludedPatterns());
+}
+
+Napi::Value NSFW::GetExcludedPatterns(const Napi::CallbackInfo &info) {
+  return (new GetExcludedPatternsWorker(info.Env(), this))->RunJob();
+}
+
+NSFW::UpdateExcludedPatternsWorker::UpdateExcludedPatternsWorker(Napi::Env env, const Napi::CallbackInfo &info,
+  NSFW *nsfw): Job(info.Env(), nsfw) {
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    throw Napi::TypeError::New(env, "Must pass an array of string to updateExcludedPatterns.");
+  }
+
+  mExcludedPatterns = toStrings(env, info[0].As<Napi::Array>(), "excludedPatterns elements must be strings.");
+  // Stored on the main thread, like the excluded paths, so updates apply in call order.
+  std::lock_guard<std::mutex> lock(mNSFW->mExcludedPathsLock);
+  mNSFW->mFilterOptions.excludedPatterns = mExcludedPatterns;
+}
+
+void NSFW::UpdateExcludedPatternsWorker::Execute() {
+  std::lock_guard<std::mutex> lock(mNSFW->mRunLock);
+  // A stopped watcher only keeps them for its next start().
+  if (!mNSFW->mRun) {
+    return;
+  }
+  // The latest patterns, which can already be a later call's, see UpdateExcludedPathsWorker::Execute(). Applied at
+  // once: nothing waits for scans, unlike a removed excluded path.
+  std::vector<std::string> excludedPatterns;
+  {
+    std::lock_guard<std::mutex> excludedPathsLock(mNSFW->mExcludedPathsLock);
+    excludedPatterns = mNSFW->mFilterOptions.excludedPatterns;
+  }
+  mNSFW->mRun->updateExcludedPatterns(excludedPatterns);
+}
+
+void NSFW::UpdateExcludedPatternsWorker::OnOK() {
+  mDeferred.Resolve(toJsArray(Env(), mExcludedPatterns));
+}
+
+Napi::Value NSFW::UpdateExcludedPatterns(const Napi::CallbackInfo &info) {
+  return (new UpdateExcludedPatternsWorker(info.Env(), info, this))->RunJob();
+}
+
 // A stop can run before the yielding update's OnOK. Retirement is remembered by run, so its
 // promise can settle on the main thread even if a later run has already started.
 void NSFW::resolveRetiredUpdates() {
@@ -582,6 +657,11 @@ Napi::Value NSFW::ExcludedPaths() {
   return toJsArray(Env(), mExcludedPaths);
 }
 
+Napi::Value NSFW::ExcludedPatterns() {
+  std::lock_guard<std::mutex> lock(mExcludedPathsLock);
+  return toJsArray(Env(), mFilterOptions.excludedPatterns);
+}
+
 Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {
   return Napi::Number::New(info.Env(), instanceCount);
 }
@@ -595,7 +675,9 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("pause", &NSFW::Pause),
     InstanceMethod("resume", &NSFW::Resume),
     InstanceMethod("getExcludedPaths", &NSFW::GetExcludedPaths),
-    InstanceMethod("updateExcludedPaths", &NSFW::UpdateExcludedPaths)
+    InstanceMethod("updateExcludedPaths", &NSFW::UpdateExcludedPaths),
+    InstanceMethod("getExcludedPatterns", &NSFW::GetExcludedPatterns),
+    InstanceMethod("updateExcludedPatterns", &NSFW::UpdateExcludedPatterns)
   });
 
   if (gcEnabled) {

@@ -3,7 +3,7 @@ const cp = require('child_process');
 const exec = require('executive');
 const fse = require('fs-extra');
 const path = require('path');
-const { isDeepStrictEqual } = require('util');
+const { isDeepStrictEqual, promisify } = require('util');
 
 const {
   DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, countInotifyWatches, sleep, watchCountReaches
@@ -932,7 +932,7 @@ describe('Node Sentinel File Watcher', function() {
           events.push(...batch);
           listeners.forEach(listener => listener());
         },
-        async observe(filePath, action, operation) {
+        async observe(filePath, action, operation, timeoutMS = eventTimeoutMS) {
           const offset = events.length;
           let listener, timer;
           const received = new Promise((resolve, reject) => {
@@ -946,7 +946,7 @@ describe('Node Sentinel File Watcher', function() {
             listeners.add(listener);
             timer = setTimeout(() => reject(new Error(
               `No action ${action} observed for ${filePath}: ${JSON.stringify(events.slice(offset))}`
-            )), eventTimeoutMS);
+            )), timeoutMS);
           });
           try {
             await Promise.all([received, operation()]);
@@ -978,10 +978,11 @@ describe('Node Sentinel File Watcher', function() {
     }
 
     // reportedPath is where the watcher reports inPath's events, when that differs (macOS resolves symlinks).
-    async function withWatchers(inPath, excludedPaths, test, reportedPath = inPath) {
+    // options: more options for the watcher under test.
+    async function withWatchers(inPath, excludedPaths, test, reportedPath = inPath, options = {}) {
       const actual = recordEvents();
       const control = recordEvents();
-      const watch = await nsfw(inPath, actual.callback, { debounceMS, excludedPaths });
+      const watch = await nsfw(inPath, actual.callback, { debounceMS, excludedPaths, ...options });
       const witness = await nsfw(inPath, control.callback, { debounceMS });
       const barrier = markerBarrier(reportedPath, actual);
 
@@ -3110,6 +3111,562 @@ describe('Node Sentinel File Watcher', function() {
         assert.deepEqual(await watch.getExcludedPaths(), canonicalPaths(second));
       } finally {
         await watch.stop();
+      }
+    });
+
+    describe('by patterns and ignore files', function() {
+      const inPath = path.join(workDir, 'test4');
+      const isLinux = process.platform === 'linux';
+
+      // A file written over: macOS can report it as created, when it can't tell, see FSEventsService::demangle().
+      const CHANGED = [nsfw.actions.CREATED, nsfw.actions.MODIFIED];
+
+      // The most inotify watches above before this process held while action ran, sampled every 10 ms.
+      async function peakWatchesDuring(before, action) {
+        let most = 0;
+        const sampling = setInterval(() => { most = Math.max(most, countInotifyWatches() - before); }, 10);
+        try {
+          await action();
+        } finally {
+          clearInterval(sampling);
+        }
+        return most;
+      }
+
+      // Creates files in directory until one is reported: the Linux watcher only watches a directory again once the
+      // ignore files stayed unchanged for a moment.
+      async function eventuallyReported(recorder, directory) {
+        for (let attempt = 0; ; attempt++) {
+          const filePath = path.join(directory, `attempt-${attempt}.file`);
+          try {
+            await recorder.observe(filePath, nsfw.actions.CREATED, () => fse.writeFile(filePath, 'Included'), 1000);
+            return;
+          } catch (error) {
+            if (attempt === 9) throw error;
+          }
+        }
+      }
+
+      // A repository of its own, so the ignore files of the one the tests run in don't apply.
+      async function makeRepository(gitignore) {
+        await fse.mkdir(path.join(inPath, '.git'));
+        await fse.writeFile(path.join(inPath, '.gitignore'), gitignore);
+      }
+
+      // In a process of its own: the warning is emitted once per process.
+      async function deprecationWarnings(usesExcludedPaths) {
+        const script = `
+          const nsfw = require(${JSON.stringify(path.resolve(__dirname, '../src'))});
+          const codes = [];
+          process.on('warning', warning => codes.push(warning.code));
+          (async () => {
+            const options = ${usesExcludedPaths} ?
+              { excludedPaths: [${JSON.stringify(path.join(inPath, 'build'))}] } : { excludedPatterns: ['/build'] };
+            const watcher = await nsfw(${JSON.stringify(inPath)}, () => {}, options);
+            if (${usesExcludedPaths}) {
+              await watcher.updateExcludedPaths([]);
+              await watcher.getExcludedPaths();
+            }
+            await watcher.getExcludedPatterns();
+            setImmediate(() => console.log(JSON.stringify(codes)));
+          })();
+        `;
+        const { stdout } = await promisify(cp.execFile)(process.execPath, ['-e', script]);
+        return JSON.parse(stdout);
+      }
+
+      it('warns once that excludedPaths is deprecated, and not for excludedPatterns', async function() {
+        assert.deepStrictEqual(await deprecationWarnings(true), ['NSFW_EXCLUDED_PATHS']);
+        assert.deepStrictEqual(await deprecationWarnings(false), []);
+      });
+
+      it('rejects filter options of the wrong type', async function() {
+        await assert.rejects(() => nsfw(inPath, () => {}, { excludedPatterns: '*.log' }),
+          /^TypeError: excludedPatterns must be an array of strings/);
+        await assert.rejects(() => nsfw(inPath, () => {}, { excludedPatterns: [1] }),
+          /^TypeError: excludedPatterns must be an array of strings/);
+        await assert.rejects(() => nsfw(inPath, () => {}, { respectGitignore: 'yes' }),
+          /^TypeError: respectGitignore must be a boolean/);
+      });
+
+      it('excludes what glob patterns match', async function() {
+        const nested = path.join(inPath, 'nested', 'deeper');
+        await fse.ensureDir(nested);
+        await fse.ensureDir(path.join(inPath, 'build'));
+        const options = { excludedPatterns: ['*.log', 'build/', '/top.file', 'nested/**/*.tmp'] };
+
+        await withWatchers(inPath, [], async ({ actual, excluded }) => {
+          await exerciseExcludedFile(path.join(inPath, 'root.log'), excluded);
+          await exerciseExcludedFile(path.join(nested, 'nested.log'), excluded);
+          await exerciseExcludedFile(path.join(inPath, 'build', 'output.file'), excluded);
+          await exerciseExcludedFile(path.join(inPath, 'top.file'), excluded);
+          await exerciseExcludedFile(path.join(nested, 'deep.tmp'), excluded);
+          await expectReported(actual, path.join(inPath, 'nested'), 'top.file');
+          await expectReported(actual, inPath, 'root.tmp');
+        }, inPath, options);
+      });
+
+      it('includes again what a negated pattern matches', async function() {
+        const options = { excludedPatterns: ['*.log', '!keep.log'] };
+        await withWatchers(inPath, [], async ({ actual, excluded }) => {
+          await exerciseExcludedFile(path.join(inPath, 'other.log'), excluded);
+          await expectReported(actual, inPath, 'keep.log');
+        }, inPath, options);
+      });
+
+      it('reports a rename across the boundary of a pattern as a creation or a removal', async function() {
+        const included = path.join(inPath, 'renamed.file');
+        const ignored = path.join(inPath, 'renamed.tmp');
+        await fse.writeFile(included, 'Renamed');
+
+        await withWatchers(inPath, [], async ({ actual, barrier }) => {
+          await actual.observe(included, nsfw.actions.DELETED, () => fse.rename(included, ignored));
+          await actual.observe(included, nsfw.actions.CREATED, () => fse.rename(ignored, included));
+          await barrier();
+          assert.deepStrictEqual(eventsNamed(actual.events, 'renamed.tmp'), []);
+        }, inPath, { excludedPatterns: ['*.tmp'] });
+      });
+
+      it('replaces the patterns while watching, also from none', async function() {
+        const directory = path.join(inPath, 'generated');
+        await fse.ensureDir(directory);
+
+        await withWatchers(inPath, [], async ({ watch, actual, barrier, excluded }) => {
+          await expectReported(actual, directory, 'before.file');
+          assert.deepStrictEqual(await watch.getExcludedPatterns(), []);
+          assert.deepStrictEqual(await watch.updateExcludedPatterns(['generated/', '*.tmp']), ['generated/', '*.tmp']);
+          assert.deepStrictEqual(await watch.getExcludedPatterns(), ['generated/', '*.tmp']);
+          await barrier();
+          await exerciseExcludedFile(path.join(directory, 'during.file'), excluded);
+          await exerciseExcludedFile(path.join(inPath, 'during.tmp'), excluded);
+          await watch.updateExcludedPatterns(['*.tmp']);
+          await expectReported(actual, directory, 'after.file');
+          await exerciseExcludedFile(path.join(inPath, 'after.tmp'), excluded);
+          await watch.updateExcludedPatterns([]);
+          await expectReported(actual, inPath, 'last.tmp');
+        }, inPath);
+      });
+
+      it('rejects patterns of the wrong type in an update and keeps the current ones', async function() {
+        const watch = await nsfw(inPath, () => {}, { excludedPatterns: ['*.tmp'] });
+        await assert.rejects(() => watch.updateExcludedPatterns('*.log'),
+          /^TypeError: excludedPatterns must be an array of strings/);
+        await assert.rejects(() => watch.updateExcludedPatterns([null]),
+          /^TypeError: excludedPatterns must be an array of strings/);
+        assert.deepStrictEqual(await watch.getExcludedPatterns(), ['*.tmp']);
+      });
+
+      it('resolves each update with the patterns it set and keeps the last one for the next start', async function() {
+        const watch = await nsfw(inPath, () => {}, { debounceMS });
+        const input = ['a'];
+        const results = await Promise.all([
+          watch.updateExcludedPatterns(input),
+          watch.updateExcludedPatterns(['b']),
+          watch.updateExcludedPatterns(['*.tmp'])
+        ]);
+        input.push('changed');
+        assert.deepStrictEqual(results, [['a'], ['b'], ['*.tmp']]);
+        assert.deepStrictEqual(await watch.getExcludedPatterns(), ['*.tmp']);
+
+        const recorder = recordEvents();
+        const watching = await nsfw(inPath, recorder.callback, { debounceMS });
+        await watching.updateExcludedPatterns(['*.tmp']);
+        await watching.start();
+        await watching.stop();
+        // Kept across a restart too.
+        await watching.start();
+        try {
+          const barrier = markerBarrier(inPath, recorder);
+          await barrier();
+          await fse.writeFile(path.join(inPath, 'stopped.tmp'), 'Excluded');
+          await barrier();
+          assert.deepStrictEqual(eventsNamed(recorder.events, 'stopped.tmp'), []);
+        } finally {
+          await watching.stop();
+        }
+      });
+
+      it('keeps the order of pattern and path updates', async function() {
+        const excludedPath = path.join(inPath, 'excluded');
+        const watch = await nsfw(inPath, () => {}, { debounceMS });
+        await watch.start();
+        try {
+          const calls = await Promise.all([
+            watch.updateExcludedPaths([excludedPath]),
+            watch.updateExcludedPatterns(['*.tmp']),
+            watch.getExcludedPatterns(),
+            watch.getExcludedPaths()
+          ]);
+          assert.deepStrictEqual(calls.slice(1), [['*.tmp'], ['*.tmp'], canonicalPaths([excludedPath])]);
+        } finally {
+          await watch.stop();
+        }
+      });
+
+      it('excludes what the ignore files of the repository ignore', async function() {
+        await makeRepository('*.tmp\nignored/\n');
+        await fse.ensureDir(path.join(inPath, 'ignored'));
+        await fse.ensureDir(path.join(inPath, 'sub'));
+        await fse.writeFile(path.join(inPath, 'sub', '.gitignore'), 'local.file\n!keep.tmp\n');
+
+        await withWatchers(inPath, [], async ({ actual, excluded }) => {
+          await exerciseExcludedFile(path.join(inPath, 'root.tmp'), excluded);
+          await exerciseExcludedFile(path.join(inPath, 'ignored', 'inside.file'), excluded);
+          await exerciseExcludedFile(path.join(inPath, 'sub', 'local.file'), excluded);
+          await expectReported(actual, path.join(inPath, 'sub'), 'keep.tmp');
+          // A new file, which macOS may report as modified, see CHANGED.
+          const topLevel = path.join(inPath, 'local.file');
+          await actual.observe(topLevel, CHANGED, () => fse.writeFile(topLevel, 'Included'));
+        }, inPath, { respectGitignore: true });
+      });
+
+      it('lets the patterns take precedence over the ignore files', async function() {
+        await makeRepository('*.tmp\n');
+        const options = { respectGitignore: true, excludedPatterns: ['!wanted.tmp', '*.data'] };
+        await withWatchers(inPath, [], async ({ actual, excluded }) => {
+          await exerciseExcludedFile(path.join(inPath, 'other.tmp'), excluded);
+          await exerciseExcludedFile(path.join(inPath, 'other.data'), excluded);
+          await expectReported(actual, inPath, 'wanted.tmp');
+        }, inPath, options);
+      });
+
+      it('follows the changes of an ignore file', async function() {
+        await makeRepository('');
+        const changing = path.join(inPath, 'changing');
+        await fse.ensureDir(changing);
+        const gitignore = path.join(inPath, '.gitignore');
+
+        await withWatchers(inPath, [], async ({ actual, barrier, excluded }) => {
+          await expectReported(actual, changing, 'before.file');
+          await actual.observe(gitignore, CHANGED, () => fse.writeFile(gitignore, 'changing/\n'));
+          await barrier();
+          await exerciseExcludedFile(path.join(changing, 'during.file'), excluded);
+          await actual.observe(gitignore, nsfw.actions.DELETED, () => fse.remove(gitignore));
+          await barrier();
+          await eventuallyReported(actual, changing);
+        }, inPath, { respectGitignore: true });
+      });
+
+      it('never lets the ignore files exclude the .git directory or what it holds', async function() {
+        await makeRepository('.*\n!.gitignore\nlogs/\n*.lock\n');
+        const head = path.join(inPath, '.git', 'HEAD');
+        const lock = path.join(inPath, '.git', 'index.lock');
+        await fse.ensureDir(path.join(inPath, '.git', 'logs'));
+        const log = path.join(inPath, '.git', 'logs', 'HEAD');
+        await withWatchers(inPath, [], async ({ actual, excluded }) => {
+          await actual.observe(head, nsfw.actions.CREATED, () => fse.writeFile(head, 'ref: refs/heads/main\n'));
+          await actual.observe(lock, nsfw.actions.CREATED, () => fse.writeFile(lock, ''));
+          await actual.observe(log, nsfw.actions.CREATED, () => fse.writeFile(log, ''));
+          await exerciseExcludedFile(path.join(inPath, '.hidden'), excluded);
+        }, inPath, { respectGitignore: true });
+      });
+
+      it('reads again a nested ignore file that changed while its directory was ignored', async function() {
+        await makeRepository('');
+        const nested = path.join(inPath, 'nested');
+        await fse.ensureDir(path.join(nested, 'sub'));
+        await fse.writeFile(path.join(nested, '.gitignore'), 'sub/\n');
+        const gitignore = path.join(inPath, '.gitignore');
+
+        await withWatchers(inPath, [], async ({ actual, barrier, excluded }) => {
+          await exerciseExcludedFile(path.join(nested, 'sub', 'first.file'), excluded);
+          const watchesBefore = isLinux ? countInotifyWatches() : 0;
+          await actual.observe(gitignore, CHANGED, () => fse.writeFile(gitignore, 'nested/\n'));
+          await barrier();
+          if (isLinux) {
+            // nested is unwatched, so the change to its own .gitignore goes unseen.
+            await watchCountReaches(watchesBefore - 1);
+          }
+          await fse.writeFile(path.join(nested, '.gitignore'), '');
+          await actual.observe(gitignore, CHANGED, () => fse.writeFile(gitignore, ''));
+          await barrier();
+          await eventuallyReported(actual, path.join(nested, 'sub'));
+        }, inPath, { respectGitignore: true });
+      });
+
+      it('does not report the removal of a directory a pattern for directories excludes', async function() {
+        const ignored = path.join(inPath, 'build');
+        await fse.ensureDir(path.join(ignored, 'a'));
+        await fse.writeFile(path.join(ignored, 'a', 'output.file'), 'Output');
+        await withWatchers(inPath, [], async ({ excluded }) => {
+          await excluded(ignored, nsfw.actions.DELETED, () => fse.remove(ignored));
+        }, inPath, { excludedPatterns: ['build/'] });
+      });
+
+      if (process.platform !== 'win32') {
+        it('reports a symlink to an excluded directory, but nothing done through it', async function() {
+          const ignored = path.join(inPath, 'build');
+          const link = path.join(inPath, 'current');
+          await fse.ensureDir(ignored);
+          await withWatchers(inPath, [], async ({ actual, excluded }) => {
+            await actual.observe(link, nsfw.actions.CREATED, () => fse.symlink(ignored, link));
+            await excluded(path.join(ignored, 'output.file'), undefined,
+              () => fse.writeFile(path.join(link, 'output.file'), 'Output'));
+            await actual.observe(link, nsfw.actions.DELETED, () => fse.remove(link));
+            assert.deepStrictEqual(eventsNamed(actual.events, 'output.file'), []);
+          }, inPath, { excludedPatterns: ['build/'] });
+        });
+
+        it('reports a symlink to a file named like a pattern for directories, its removal too', async function() {
+          const target = path.join(inPath, 'target.file');
+          const link = path.join(inPath, 'build');
+          await fse.writeFile(target, 'A file');
+          await withWatchers(inPath, [], async ({ actual }) => {
+            await actual.observe(link, nsfw.actions.CREATED, () => fse.symlink(target, link));
+            await actual.observe(link, nsfw.actions.DELETED, () => fse.remove(link));
+          }, inPath, { excludedPatterns: ['build/'] });
+        });
+
+        // macOS coalesces the events of one path, so whether it tells a replacement apart varies.
+        (isLinux ? it : it.skip)(
+          'reports the removal of a symlink to a file that a symlink to a directory was renamed over',
+          async function() {
+            const file = path.join(inPath, 'target.file');
+            const directory = path.join(inPath, 'store');
+            const link = path.join(inPath, 'build');
+            const next = path.join(inPath, 'next');
+            await fse.writeFile(file, 'A file');
+            await fse.ensureDir(directory);
+            await withWatchers(inPath, [], async ({ actual }) => {
+              await actual.observe(link, nsfw.actions.CREATED, () => fse.symlink(file, link));
+              await actual.observe(link, nsfw.actions.DELETED, async () => {
+                await fse.symlink(directory, next);
+                await fse.rename(next, link);
+              });
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        it('judges a symlink named like a pattern for directories by where it leads, also once removed',
+          async function() {
+            const target = path.join(inPath, 'store');
+            const link = path.join(inPath, 'node_modules');
+            await fse.ensureDir(target);
+            await withWatchers(inPath, [], async ({ excluded }) => {
+              await excluded(link, nsfw.actions.CREATED, () => fse.symlink(target, link));
+              await excluded(link, nsfw.actions.DELETED, () => fse.remove(link));
+            }, inPath, { excludedPatterns: ['node_modules/'] });
+          });
+      }
+
+      it('reports the removal of a file named like a pattern for directories', async function() {
+        const file = path.join(inPath, 'build');
+        await withWatchers(inPath, [], async ({ actual }) => {
+          await actual.observe(file, nsfw.actions.CREATED, () => fse.writeFile(file, 'A file'));
+          await actual.observe(file, nsfw.actions.DELETED, () => fse.remove(file));
+        }, inPath, { excludedPatterns: ['build/'] });
+      });
+
+      // macOS coalesces the events of one path, so whether it tells a replacement apart varies.
+      (process.platform === 'darwin' ? it.skip : it)(
+        'reports the removal of a file named like a pattern for directories that a directory replaced',
+        async function() {
+          const file = path.join(inPath, 'build');
+          await withWatchers(inPath, [], async ({ actual, excluded }) => {
+            await actual.observe(file, nsfw.actions.CREATED, () => fse.writeFile(file, 'A file'));
+            await actual.observe(file, nsfw.actions.DELETED, async () => {
+              await fse.remove(file);
+              await fse.mkdir(file);
+            });
+            await excluded(path.join(file, 'output.file'), undefined,
+              () => fse.writeFile(path.join(file, 'output.file'), 'Output'));
+          }, inPath, { excludedPatterns: ['build/'] });
+        });
+
+      it('matches patterns with many stars in bounded time', async function() {
+        const name = 'a'.repeat(80);
+        const nested = path.join(inPath, ...Array(20).fill('a'));
+        await fse.ensureDir(nested);
+        const patterns = ['*a*a*a*a*a*a*a*a*a*a*a*a*c', '**/a/'.repeat(24) + 'b'];
+        await withWatchers(inPath, [], async ({ actual, excluded }) => {
+          await exerciseExcludedFile(path.join(inPath, `${name}c`), excluded);
+          // No match, which a matcher without wildmatch's early aborts, or with several "**", could take exponential
+          // time to find.
+          await expectReported(actual, inPath, name);
+          await expectReported(actual, nested, 'c');
+        }, inPath, { excludedPatterns: patterns });
+      });
+
+      it('applies the ignore files above the watched path in the repository', async function() {
+        await makeRepository('*.tmp\n');
+        const watched = path.join(inPath, 'folder4');
+        await withWatchers(watched, [], async ({ actual, excluded }) => {
+          await exerciseExcludedFile(path.join(watched, 'below.tmp'), excluded);
+          await expectReported(actual, watched);
+        }, watched, { respectGitignore: true });
+      });
+
+      if (isLinux) {
+        it('never watches what an ignore file ignores while it is rewritten', async function() {
+          await makeRepository('ignored/\n');
+          await fse.ensureDir(path.join(inPath, 'ignored', 'a', 'b', 'c'));
+          const gitignore = path.join(inPath, '.gitignore');
+          const before = countInotifyWatches();
+          const watch = await nsfw(inPath, () => {}, { debounceMS, respectGitignore: true });
+          try {
+            await watch.start();
+            // inPath, .git, folder4.
+            await watchCountReaches(before + 3);
+            const most = await peakWatchesDuring(before, async () => {
+              // Truncated, then written 300 ms later; then removed and created again 300 ms later.
+              await fse.writeFile(gitignore, '');
+              await sleep(300);
+              await fse.writeFile(gitignore, 'ignored/\n');
+              await sleep(300);
+              await fse.remove(gitignore);
+              await sleep(300);
+              await fse.writeFile(gitignore, 'ignored/\n');
+              // Past the longest delay of an inclusion, 5 s after the first change.
+              await sleep(5500);
+            });
+            assert.strictEqual(most, 3);
+            assert.strictEqual(countInotifyWatches(), before + 3);
+          } finally {
+            await watch.stop();
+          }
+        });
+
+        it('watches what an ignore file stops ignoring in a directory renamed meanwhile, once it settles',
+          async function() {
+            await makeRepository('');
+            await fse.ensureDir(path.join(inPath, 'a', 'out'));
+            await fse.writeFile(path.join(inPath, 'a', '.gitignore'), 'out/\n');
+            const before = countInotifyWatches();
+            const recorder = recordEvents();
+            const watch = await nsfw(inPath, recorder.callback, { debounceMS, respectGitignore: true });
+            try {
+              await watch.start();
+              // inPath, .git, folder4, a.
+              await watchCountReaches(before + 4);
+              const most = await peakWatchesDuring(before, async () => {
+                await fse.writeFile(path.join(inPath, 'a', '.gitignore'), '');
+                await fse.rename(path.join(inPath, 'a'), path.join(inPath, 'b'));
+                // The rules applied before still count until the change settles, wherever the directory went.
+                await sleep(600);
+              });
+              assert.strictEqual(most, 4);
+              // And b/out once it settled.
+              await watchCountReaches(before + 5);
+              await eventuallyReported(recorder, path.join(inPath, 'b', 'out'));
+            } finally {
+              await watch.stop();
+            }
+          });
+
+        it('reports what is written in a directory recreated without the rule that ignored it', async function() {
+          await makeRepository('');
+          await fse.ensureDir(path.join(inPath, 'pkg', 'generated'));
+          await fse.writeFile(path.join(inPath, 'pkg', '.gitignore'), 'generated/\n');
+          const recorder = recordEvents();
+          const watch = await nsfw(inPath, recorder.callback, { debounceMS, respectGitignore: true });
+          try {
+            await watch.start();
+            const barrier = markerBarrier(inPath, recorder);
+            await barrier();
+            await fse.remove(path.join(inPath, 'pkg'));
+            await fse.ensureDir(path.join(inPath, 'pkg', 'generated'));
+            await fse.writeFile(path.join(inPath, 'pkg', '.gitignore'), '');
+            await barrier();
+            // Nothing the removed directory's rules decided is left: the new one is judged by its own.
+            const written = path.join(inPath, 'pkg', 'generated', 'output.file');
+            await recorder.observe(written, nsfw.actions.CREATED, () => fse.writeFile(written, 'Output'));
+          } finally {
+            await watch.stop();
+          }
+        });
+
+        it('does not watch a directory created while an ignore file is rewritten', async function() {
+          await makeRepository('cache/\n');
+          const gitignore = path.join(inPath, '.gitignore');
+          const before = countInotifyWatches();
+          const watch = await nsfw(inPath, () => {}, { debounceMS, respectGitignore: true });
+          try {
+            await watch.start();
+            // inPath, .git, folder4.
+            await watchCountReaches(before + 3);
+            const most = await peakWatchesDuring(before, async () => {
+              await fse.writeFile(gitignore, '');
+              await fse.ensureDir(path.join(inPath, 'cache', 'x', 'y'));
+              await sleep(300);
+              await fse.writeFile(gitignore, 'cache/\n');
+              // Past the longest delay of an inclusion, 5 s after the first change.
+              await sleep(5500);
+            });
+            assert.strictEqual(most, 3);
+          } finally {
+            await watch.stop();
+          }
+        });
+
+        it('does not watch what is created in a directory an ignore file just started ignoring', async function() {
+          await makeRepository('');
+          await fse.ensureDir(path.join(inPath, 'build'));
+          const before = countInotifyWatches();
+          const watch = await nsfw(inPath, () => {}, { debounceMS, respectGitignore: true });
+          try {
+            await watch.start();
+            // inPath, .git, folder4, build.
+            await watchCountReaches(before + 4);
+            const most = await peakWatchesDuring(before, async () => {
+              await fse.writeFile(path.join(inPath, '.gitignore'), 'build/\n');
+              await fse.ensureDir(path.join(inPath, 'build', 'a', 'b', 'c'));
+              await watchCountReaches(before + 3);
+            });
+            assert.strictEqual(most, 4);
+          } finally {
+            await watch.stop();
+          }
+        });
+
+        it('does not watch an ignored directory through a symlink to it', async function() {
+          await makeRepository('build/\n');
+          await fse.ensureDir(path.join(inPath, 'build', 'a', 'b'));
+          await fse.symlink(path.join(inPath, 'build'), path.join(inPath, 'current'));
+          const before = countInotifyWatches();
+          const watch = await nsfw(inPath, () => {}, { debounceMS, respectGitignore: true });
+          try {
+            await watch.start();
+            // inPath, .git, folder4.
+            await watchCountReaches(before + 3);
+          } finally {
+            await watch.stop();
+          }
+        });
+
+        it('does not watch the directories it ignores', async function() {
+          await makeRepository('ignored/\n');
+          await fse.ensureDir(path.join(inPath, 'ignored', 'a', 'b'));
+          await fse.ensureDir(path.join(inPath, 'patterned', 'a', 'b'));
+          const before = countInotifyWatches();
+          const recorder = recordEvents();
+          const reported = recorder.events;
+          const watch = await nsfw(inPath, recorder.callback,
+            { debounceMS, respectGitignore: true, excludedPatterns: ['patterned'] });
+          const barrier = markerBarrier(inPath, recorder);
+          try {
+            await watch.start();
+            // inPath, .git, folder4.
+            await watchCountReaches(before + 3);
+            await fse.writeFile(path.join(inPath, '.gitignore'), '');
+            await watchCountReaches(before + 6);
+            await barrier();
+            // Included again silently: what the directories already held isn't reported.
+            assert.deepStrictEqual(reported.filter(event => event.directory.includes('ignored')), []);
+            await fse.writeFile(path.join(inPath, '.gitignore'), 'ignored/\n');
+            await watchCountReaches(before + 3);
+            await fse.mkdir(path.join(inPath, 'ignored-later'));
+            await watchCountReaches(before + 4);
+            await fse.writeFile(path.join(inPath, '.gitignore'), 'ignored*/\n');
+            await watchCountReaches(before + 3);
+            await fse.mkdir(path.join(inPath, 'patterned', 'a', 'c'));
+            await watch.updateExcludedPatterns([]);
+            // patterned, a, b, c.
+            await watchCountReaches(before + 7);
+            await watch.updateExcludedPatterns(['a']);
+            await watchCountReaches(before + 4);
+          } finally {
+            await watch.stop();
+          }
+        });
       }
     });
 

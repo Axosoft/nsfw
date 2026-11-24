@@ -1,0 +1,54 @@
+name: Release
+
+# Publishing a GitHub release runs the whole test workflow, which builds the binaries for every platform and tests
+# them, then publishes to npm the package that workflow packed with them. Running it by hand does the same with
+# npm publish --dry-run.
+#
+# npm authenticates the publish through trusted publishing, which needs this workflow registered as a trusted
+# publisher of nsfw on npmjs.com, or else through an NPM_TOKEN secret.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yaml
+
+  publish:
+    name: "Publish to npm"
+    needs: tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Trusted publishing needs npm 11.5 or later.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+
+      - name: Check the version against the release tag
+        if: ${{ github.event_name == 'release' }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(tar -xzOf nsfw-*.tgz package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).version')
+          echo "release $TAG, package $version"
+          test "${TAG#v}" = "$version"
+
+      # A prerelease goes to the next dist-tag, so it doesn't become what `npm install nsfw` installs.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
+        run: npm publish ./nsfw-*.tgz --access public --tag "$DIST_TAG" ${{ github.event_name != 'release' && '--dry-run' || '' }}

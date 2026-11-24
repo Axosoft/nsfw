@@ -1,0 +1,172 @@
+name: Prebuild
+
+# Builds the Node-API binary for every supported platform with prebuildify, then packs them with the rest of the
+# package. Node-API's ABI doesn't change between Node versions, so each platform gets a single binary, built against
+# Node 22, the oldest supported. Run by tests.yaml, which tests these binaries, and by release.yaml, which publishes
+# the package packed here.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # Each libc is built in its own image: manylinux_2_28 links against glibc 2.28 (its gcc-toolset links the newer
+  # libstdc++ symbols statically), and Alpine against musl. Both run through docker instead of as job containers
+  # because the runner can't run JavaScript actions in an Alpine container on arm64.
+  linux:
+    name: "Prebuild (linux-${{ matrix.arch }}, ${{ matrix.libc }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        libc: [glibc, musl]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      # Without the install script, which would build the addon for the runner.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # The manylinux image has no Node, so it runs the runner's: the official Linux binaries need glibc 2.28 too.
+      - name: Build
+        env:
+          IMAGE: ${{ matrix.libc == 'musl' && 'node:22-alpine' || format('quay.io/pypa/manylinux_2_28_{0}', matrix.arch == 'arm64' && 'aarch64' || 'x86_64') }}
+          SETUP: ${{ matrix.libc == 'musl' && 'apk add --no-cache build-base python3' || 'export PATH=/opt/node/bin:$PATH' }}
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w -v "$(dirname "$(dirname "$(command -v node)")"):/opt/node:ro" "$IMAGE" \
+            sh -euc "$SETUP && node node_modules/prebuildify/bin.js --napi --strip --tag-libc"
+
+      - name: Check the binary
+        env:
+          BINARY: prebuilds/linux-${{ matrix.arch }}/nsfw.${{ matrix.libc }}.node
+        run: |
+          file "$BINARY"
+          if [ '${{ matrix.libc }}' = glibc ]; then
+            newest=$(objdump -T "$BINARY" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)
+            echo "newest glibc symbol: $newest"
+            test "$(printf '%s\nGLIBC_2.28\n' "$newest" | sort -V | tail -n 1)" = GLIBC_2.28
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: prebuilds-linux-${{ matrix.arch }}-${{ matrix.libc }}
+          path: prebuilds/
+          if-no-files-found: error
+
+  # The arm64 runner builds both: clang cross-compiles to x64.
+  darwin:
+    name: "Prebuild (darwin-${{ matrix.arch }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build
+        run: pnpm exec prebuildify --napi --strip --arch ${{ matrix.arch }}
+
+      # binding.gyp sets the oldest macOS the binary loads on.
+      - name: Check the binary
+        env:
+          BINARY: prebuilds/darwin-${{ matrix.arch }}/nsfw.node
+        run: |
+          file "$BINARY"
+          test "$(lipo -archs "$BINARY")" = '${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}'
+          minos=$(otool -l "$BINARY" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')
+          echo "minimum macOS: $minos"
+          test "$minos" = 11.0
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: prebuilds-darwin-${{ matrix.arch }}
+          path: prebuilds/
+          if-no-files-found: error
+
+  windows:
+    name: "Prebuild (win32-${{ matrix.arch }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || 'windows-2025' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build
+        run: pnpm exec prebuildify --napi --strip
+
+      - name: Check the binary
+        shell: bash
+        run: test -f prebuilds/win32-${{ matrix.arch }}/nsfw.node
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: prebuilds-win32-${{ matrix.arch }}
+          path: prebuilds/
+          if-no-files-found: error
+
+  package:
+    name: "Pack"
+    needs: [linux, darwin, windows]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: prebuilds-*
+          path: prebuilds
+          merge-multiple: true
+
+      # npm pack runs prepare, which compiles js/dist.
+      - name: Pack
+        run: |
+          npm pack
+          node js/scripts/check-package.js nsfw-*.tgz | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: nsfw-*.tgz
+          if-no-files-found: error

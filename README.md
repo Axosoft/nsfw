@@ -195,8 +195,30 @@ nsfw.actions = {
 ```
 
 ## Installation
-NSFW is a native node module and requires Node-Gyp to be functional before you can install it.
-Make sure you have completed installing all of the dependencies listed for [Node-Gyp](https://github.com/nodejs/node-gyp) on your operating system.
+```sh
+npm install nsfw
+```
+
+NSFW is a native module built on [Node-API](https://nodejs.org/api/n-api.html), so one binary works on every Node
+release and in Electron. The package ships a prebuilt binary for these platforms, which installs without a compiler
+toolchain:
+
+| Platform | Architectures | Minimum version |
+| --- | --- | --- |
+| Linux, glibc | x64, arm64 | glibc 2.28 (Debian 10, Ubuntu 20.04, RHEL 8) |
+| Linux, musl (Alpine) | x64, arm64 | Alpine with the `libstdc++` package, which Node needs too |
+| macOS | x64, arm64 | macOS 11 |
+| Windows | x64, arm64 | Windows 10 |
+
+Those are the oldest versions Node 22 runs on too. The binary is picked when the module loads, so a package manager
+that skips dependency install scripts, like pnpm or npm 12, works as well. Other musl distributions than Alpine need
+`LIBC=musl` in the environment to be detected as such.
+
+On any other platform the install script compiles the addon from source with
+[node-gyp](https://github.com/nodejs/node-gyp), which needs the toolchain it lists for your operating system and
+the install script to be allowed to run. To compile it on a supported platform as well, install with
+`npm install nsfw --build-from-source` (or `npm_config_build_from_source=true` in the environment). A binary in
+`build/Release` takes precedence over the prebuilt one.
 
 ## Development
 The repository uses [pnpm](https://pnpm.io), pinned through the `packageManager` field of `package.json`. Install the
@@ -207,3 +229,7 @@ with:
 pnpm install
 pnpm test
 ```
+
+`pnpm exec prebuildify --napi --strip` builds the binary for the current platform into `prebuilds/` (add `--tag-libc`
+on Linux), and `NSFW_TEST_PREBUILT=1 pnpm test` runs the tests against it instead of a build of its own. The release
+workflow builds every platform's binary in CI, tests them and publishes them with the package.

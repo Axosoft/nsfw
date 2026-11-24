@@ -4,6 +4,8 @@ on:
       - master
       - release/*
   pull_request:
+  # Run by release.yaml, which publishes the package this run packs.
+  workflow_call:
 
 name: Run Tests
 
@@ -17,32 +19,25 @@ concurrency:
 
 jobs:
 
-  # The slow suite (Linux only) and the normal one run in separate jobs so they overlap, and the slow suite is split
-  # in three since it takes longest. The addon is built on Node-API, whose ABI doesn't change between Node versions,
-  # so only one job runs the normal suite on every supported Node; the rest run the active LTS. The slow suite runs on
-  # ubuntu:latest only: a container shares the runner's kernel, and so its inotify, whatever the image, and the
-  # normal suite already covers the toolchain of ubuntu:24.04.
-  linux-tests:
-    name: "Linux Tests (${{ matrix.suite }}, ${{ matrix.container }}, ${{ matrix.arch }}, Node ${{ matrix.node }})"
+  # Builds the binary for every supported platform: the other jobs test those binaries, as published.
+  prebuild:
+    uses: ./.github/workflows/prebuild.yaml
+
+  # The slow suite builds its own binary, with the NSFW_TEST_SLOW define, so it doesn't wait for prebuild. It is split
+  # in three since it takes longest, and runs on ubuntu:latest only: a container shares the runner's kernel, and so
+  # its inotify, whatever the image.
+  linux-slow-tests:
+    name: "Linux Tests (${{ matrix.suite }}, ${{ matrix.arch }}, Node ${{ matrix.node }})"
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { suite: normal, container: "ubuntu:latest", arch: x64, node: 22 }
-          - { suite: normal, container: "ubuntu:latest", arch: x64, node: 24 }
-          - { suite: normal, container: "ubuntu:latest", arch: x64, node: 26 }
-          - { suite: normal, container: "ubuntu:latest", arch: arm64, node: 26 }
-          - { suite: normal, container: "ubuntu:24.04", arch: x64, node: 26 }
-          - { suite: slow-1, container: "ubuntu:latest", arch: x64, node: 26 }
-          - { suite: slow-2, container: "ubuntu:latest", arch: x64, node: 26 }
-          - { suite: slow-3, container: "ubuntu:latest", arch: x64, node: 26 }
-          - { suite: slow-1, container: "ubuntu:latest", arch: arm64, node: 26 }
-          - { suite: slow-2, container: "ubuntu:latest", arch: arm64, node: 26 }
-          - { suite: slow-3, container: "ubuntu:latest", arch: arm64, node: 26 }
+        suite: [slow-1, slow-2, slow-3]
+        arch: [x64, arm64]
+        node: [26]
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 30
     container:
-      image: ${{ matrix.container }}
+      image: ubuntu:latest
     steps:
       - uses: actions/checkout@v7
 
@@ -64,31 +59,131 @@ jobs:
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Run tests
-        id: tests
         env:
           NSFW_TEST_SUITE: ${{ matrix.suite }}
         run: |
           pnpm install --frozen-lockfile
           pnpm test
 
+  # The normal suite runs against the prebuilt binary, without a toolchain installed. The addon is built on
+  # Node-API, whose ABI doesn't change between Node versions, so only x64 runs it on every supported Node; the rest
+  # run the active LTS. The ubuntu:24.04 job removes the binaries for its platform instead, so the install script
+  # builds one from source, as on a platform without a prebuilt binary.
+  linux-tests:
+    name: "Linux Tests (normal, ${{ matrix.container }}, ${{ matrix.arch }}, Node ${{ matrix.node }}, ${{ matrix.binary }})"
+    needs: prebuild
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { container: "ubuntu:latest", arch: x64, node: 22, binary: prebuilt }
+          - { container: "ubuntu:latest", arch: x64, node: 24, binary: prebuilt }
+          - { container: "ubuntu:latest", arch: x64, node: 26, binary: prebuilt }
+          - { container: "ubuntu:latest", arch: arm64, node: 26, binary: prebuilt }
+          - { container: "ubuntu:24.04", arch: x64, node: 26, binary: source }
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
+    timeout-minutes: 30
+    container:
+      image: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: prebuilds-*
+          path: prebuilds
+          merge-multiple: true
+
+      - name: Remove the prebuilt binaries for this platform
+        if: ${{ matrix.binary == 'source' }}
+        run: rm -r prebuilds/linux-${{ matrix.arch }}
+
+      # Runs before setup-node: the Node 26+ binaries link libatomic, which the bare Ubuntu image doesn't ship.
+      - name: Install dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update && apt-get install -y git libatomic1 ${{ matrix.binary == 'source' && 'build-essential python3' || '' }}
+
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Run tests
+        id: tests
+        env:
+          NSFW_TEST_SUITE: normal
+          NSFW_TEST_PREBUILT: ${{ matrix.binary == 'prebuilt' && '1' || '' }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+
       # Installs the packed package into an empty project without a lockfile, as `npm install nsfw` does, so
       # dependency ranges resolve to their newest versions instead of the ones pnpm-lock.yaml pins above. Runs even
-      # when the tests failed, so both results show. One container per arch is enough: the result doesn't depend on it.
+      # when the tests failed, so both results show.
       - name: Install the packed package and watch a directory
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && matrix.suite == 'normal' && matrix.container == 'ubuntu:latest' }}
-        run: node js/scripts/fresh-install-test.js
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: node js/scripts/fresh-install-test.js ${{ matrix.binary }}
+
+  # The same against the musl binary, in Alpine, through docker: the runner can't run JavaScript actions in an Alpine
+  # container on arm64.
+  musl-tests:
+    name: "Linux Tests (normal, node:${{ matrix.node }}-alpine, ${{ matrix.arch }}, Node ${{ matrix.node }}, prebuilt)"
+    needs: prebuild
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        node: [26]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: prebuilds-*
+          path: prebuilds
+          merge-multiple: true
+
+      # The tests, then the fresh install even when they failed, as in linux-tests. The repository belongs to the
+      # runner's user, so git, which the specs run, has to be told it is safe.
+      - name: Run tests and install the packed package
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w -e NSFW_TEST_SUITE=normal -e NSFW_TEST_PREBUILT=1 node:${{ matrix.node }}-alpine sh -euc '
+            apk add --no-cache git
+            git config --global --add safe.directory "*"
+            npm install --global "$(node -p "require(\"./package.json\").packageManager")"
+            pnpm install --frozen-lockfile
+            status=0
+            pnpm test || status=$?
+            node js/scripts/fresh-install-test.js prebuilt
+            exit $status
+          '
 
   macos-tests:
-    name: "MacOS Tests (Node ${{ matrix.node }})"
+    name: "MacOS Tests (${{ matrix.arch }}, Node ${{ matrix.node }})"
+    needs: prebuild
     strategy:
       fail-fast: false
       matrix:
         # The active LTS; linux-tests covers the other Node versions.
         node: [26]
-    runs-on: macos-26
+        arch: [x64, arm64]
+    runs-on: ${{ matrix.arch == 'x64' && 'macos-26-intel' || 'macos-26' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: prebuilds-*
+          path: prebuilds
+          merge-multiple: true
 
       - name: Use Node.js ${{ matrix.node }}
         uses: actions/setup-node@v7
@@ -100,6 +195,8 @@ jobs:
 
       - name: Run tests
         id: tests
+        env:
+          NSFW_TEST_PREBUILT: 1
         run: |
           pnpm install --frozen-lockfile
           pnpm test
@@ -107,19 +204,27 @@ jobs:
       # Same as in linux-tests.
       - name: Install the packed package and watch a directory
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
-        run: node js/scripts/fresh-install-test.js
+        run: node js/scripts/fresh-install-test.js prebuilt
 
   windows-tests:
-    name: "Windows Tests (Node ${{ matrix.node }})"
+    name: "Windows Tests (${{ matrix.arch }}, Node ${{ matrix.node }})"
+    needs: prebuild
     strategy:
       fail-fast: false
       matrix:
         # The active LTS; linux-tests covers the other Node versions.
         node: [26]
-    runs-on: windows-2025
+        arch: [x64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || 'windows-2025' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: prebuilds-*
+          path: prebuilds
+          merge-multiple: true
 
       - name: Use Node.js ${{ matrix.node }}
         uses: actions/setup-node@v7
@@ -131,6 +236,8 @@ jobs:
 
       - name: Run tests
         id: tests
+        env:
+          NSFW_TEST_PREBUILT: 1
         run: |
           pnpm install --frozen-lockfile
           pnpm test
@@ -138,20 +245,23 @@ jobs:
       # Same as in linux-tests.
       - name: Install the packed package and watch a directory
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
-        run: node js/scripts/fresh-install-test.js
+        run: node js/scripts/fresh-install-test.js prebuilt
 
   # Single stable check for branch protection, so matrix changes don't require
   # editing the required status checks.
   tests-passed:
     name: "Tests passed"
     if: ${{ always() }}
-    needs: [linux-tests, macos-tests, windows-tests]
+    needs: [prebuild, linux-slow-tests, linux-tests, musl-tests, macos-tests, windows-tests]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check matrix results
         run: |
-          echo 'linux=${{ needs.linux-tests.result }} macos=${{ needs.macos-tests.result }} windows=${{ needs.windows-tests.result }}'
+          echo 'prebuild=${{ needs.prebuild.result }} linux-slow=${{ needs.linux-slow-tests.result }} linux=${{ needs.linux-tests.result }} musl=${{ needs.musl-tests.result }} macos=${{ needs.macos-tests.result }} windows=${{ needs.windows-tests.result }}'
+          test '${{ needs.prebuild.result }}' = success
+          test '${{ needs.linux-slow-tests.result }}' = success
           test '${{ needs.linux-tests.result }}' = success
+          test '${{ needs.musl-tests.result }}' = success
           test '${{ needs.macos-tests.result }}' = success
           test '${{ needs.windows-tests.result }}' = success

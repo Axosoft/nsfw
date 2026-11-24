@@ -1,33 +1,33 @@
+const { describe } = require('node:test');
 const assert = require('assert');
 const cp = require('child_process');
 const fs = require('fs');
-const fse = require('fs-extra');
+const fsp = require('fs/promises');
 const path = require('path');
 const nsfw = require('../../dist');
-const { sleep } = require('../common');
+const { it, mkdirp, sleep } = require('../common');
 const fixture = require('./fixture');
 
-describe('inotify mounts (slow)', function() {
-  this.timeout(120000);
+describe('inotify mounts (slow)', { skip: process.platform !== 'linux' }, function() {
   const {
     watchedPath, outsidePath, touch, watchWhile, waitFor,
     whileHeld, barrier, reportedIn, withMount, expectWatched
   } = fixture();
 
-  it('watches btrfs subvolumes with the same inode numbers', async function() {
+  it('watches btrfs subvolumes with the same inode numbers', async function(t) {
     // Some 32-bit platforms sign-extend the filesystem magic.
     const btrfsMagic = global.BigInt(0x9123683e);
     if (!fs.statfsSync ||
       global.BigInt.asUintN(32, fs.statfsSync(watchedPath, { bigint: true }).type) !== btrfsMagic ||
       cp.spawnSync('btrfs', ['version'], { stdio: 'ignore' }).error) {
-      this.skip();
+      return t.skip();
     }
 
     const first = path.join(watchedPath, 'sv1');
     const second = path.join(watchedPath, 'sv2');
     for (const subvolume of [first, second]) {
       cp.execFileSync('btrfs', ['subvolume', 'create', subvolume]);
-      await fse.mkdir(path.join(subvolume, 'd'));
+      await fsp.mkdir(path.join(subvolume, 'd'));
     }
 
     for (const name of ['.', 'd']) {
@@ -36,45 +36,43 @@ describe('inotify mounts (slow)', function() {
       assert.strictEqual(a.ino, b.ino);
       assert.notStrictEqual(a.dev, b.dev);
     }
-    await fse.symlink(watchedPath, path.join(first, 'd', 'loop'));
+    await fsp.symlink(watchedPath, path.join(first, 'd', 'loop'));
 
     await watchWhile(async events => {
       await expectWatched(events, ['sv1'], ['sv1', 'd'], ['sv2'], ['sv2', 'd']);
     });
   });
 
-  describe('mounts', function() {
-    // Mounts need privileges: as root, outside a container.
-    before(function() {
-      const probe = path.join(require('os').tmpdir(), `nsfw-mount-probe-${process.pid}`);
-      fs.mkdirSync(probe, { recursive: true });
-      let works = false;
-      try {
-        cp.execFileSync('mount', ['-t', 'tmpfs', 'tmpfs', probe], { stdio: 'ignore' });
-        works = true;
-        cp.execFileSync('umount', ['-l', probe], { stdio: 'ignore' });
-      } catch (error) {
-        // No privileges, skipped below.
-      }
-      try {
-        fs.rmdirSync(probe);
-      } catch (error) {
-        // Left behind if it couldn't be unmounted.
-      }
-      if (!works) {
-        this.skip();
-      }
-    });
+  // Mounts need privileges: as root, outside a container.
+  function canMount() {
+    const probe = path.join(require('os').tmpdir(), `nsfw-mount-probe-${process.pid}`);
+    fs.mkdirSync(probe, { recursive: true });
+    let works = false;
+    try {
+      cp.execFileSync('mount', ['-t', 'tmpfs', 'tmpfs', probe], { stdio: 'ignore' });
+      works = true;
+      cp.execFileSync('umount', ['-l', probe], { stdio: 'ignore' });
+    } catch (error) {
+      // No privileges.
+    }
+    try {
+      fs.rmdirSync(probe);
+    } catch (error) {
+      // Left behind if it couldn't be unmounted.
+    }
+    return works;
+  }
 
+  describe('mounts', { skip: !canMount() }, function() {
     it('watches a directory that left at a bind mount of it made in the same read, with the exclusions there',
       async function() {
-        await fse.ensureDir(path.join(watchedPath, 'z', 'sub', 'inner'));
+        await mkdirp(path.join(watchedPath, 'z', 'sub', 'inner'));
         const aliasPath = path.join(watchedPath, 'n', 'alias');
 
         await watchWhile(async events => {
           await whileHeld(async () => {
             await withMount(this, ['--bind', path.join(watchedPath, 'z', 'sub')], aliasPath, async () => {
-              await fse.rename(path.join(watchedPath, 'z', 'sub'), path.join(outsidePath, 'sub'));
+              await fsp.rename(path.join(watchedPath, 'z', 'sub'), path.join(outsidePath, 'sub'));
               touch('nsfw-test-release-event-loop');
               assert.deepStrictEqual(
                 await reportedIn(events, path.join(outsidePath, 'sub'), ['top.file', 'inner/deep.file']),
@@ -87,8 +85,8 @@ describe('inotify mounts (slow)', function() {
 
     it('watches what a directory excluded by a move holds, once a bind mount of it takes it where it is not excluded',
       async function() {
-        await fse.ensureDir(path.join(watchedPath, 'old', 'c', 'e1', 'e2'));
-        await fse.ensureDir(path.join(watchedPath, 'new'));
+        await mkdirp(path.join(watchedPath, 'old', 'c', 'e1', 'e2'));
+        await mkdirp(path.join(watchedPath, 'new'));
         const aliasPath = path.join(watchedPath, 'n', 'alias');
 
         await watchWhile(async events => {
@@ -98,7 +96,7 @@ describe('inotify mounts (slow)', function() {
               await barrier(events);
               // e1 and e2 are excluded where c goes, so e1 goes to the bind mount, the one place it can be watched,
               // where e2 isn't excluded.
-              await fse.rename(path.join(watchedPath, 'old', 'c'), path.join(watchedPath, 'new', 'c'));
+              await fsp.rename(path.join(watchedPath, 'old', 'c'), path.join(watchedPath, 'new', 'c'));
               assert.deepStrictEqual(
                 await reportedIn(events, aliasPath, ['top.file', 'e2/deep.file']),
                 [path.join('n', 'alias', 'top.file'), path.join('n', 'alias', 'e2', 'deep.file')]
@@ -109,7 +107,7 @@ describe('inotify mounts (slow)', function() {
       });
 
     it('does not watch a directory that leaves after a bind mount of it seen by a scan is gone', async function() {
-      await fse.ensureDir(path.join(watchedPath, 'z', 'sub', 'inner'));
+      await mkdirp(path.join(watchedPath, 'z', 'sub', 'inner'));
       const aliasPath = path.join(watchedPath, 'n', 'alias');
 
       await watchWhile(async events => {
@@ -120,24 +118,24 @@ describe('inotify mounts (slow)', function() {
             await barrier(events);
           });
         });
-        await fse.rename(path.join(watchedPath, 'z', 'sub'), path.join(outsidePath, 'sub'));
+        await fsp.rename(path.join(watchedPath, 'z', 'sub'), path.join(outsidePath, 'sub'));
         assert.deepStrictEqual(
           await reportedIn(events, path.join(outsidePath, 'sub'), ['top.file', 'inner/deep.file']), []);
       });
     });
 
     it('keeps the exclusions of a directory found through a bind mount while its parent moves', async function() {
-      await fse.ensureDir(path.join(watchedPath, 'parent', 'real', 'sub'));
+      await mkdirp(path.join(watchedPath, 'parent', 'real', 'sub'));
       const aliasPath = path.join(watchedPath, 'aliases', 'alias');
       const excludedPath = path.join(watchedPath, 'moved', 'real', 'sub');
 
       await watchWhile(async events => {
         await whileHeld(async () => {
           await withMount(this, ['--bind', path.join(watchedPath, 'parent', 'real')], aliasPath, async () => {
-            await fse.rename(path.join(watchedPath, 'parent'), path.join(watchedPath, 'moved'));
+            await fsp.rename(path.join(watchedPath, 'parent'), path.join(watchedPath, 'moved'));
             touch('nsfw-test-release-event-loop');
             await barrier(events);
-            await fse.writeFile(path.join(excludedPath, 'excluded.file'), 'Excluded');
+            await fsp.writeFile(path.join(excludedPath, 'excluded.file'), 'Excluded');
             await sleep(500);
             await barrier(events);
             assert.deepStrictEqual(events.filter(event => event.file === 'excluded.file'), []);
@@ -149,8 +147,8 @@ describe('inotify mounts (slow)', function() {
     // As the symlink one above, with a bind mount of the directory, which a scan sees as a directory of its own.
     it('watches a directory a scan saw at a bind mount of it at its real path, once its move is handled',
       async function() {
-        await fse.ensureDir(path.join(watchedPath, 'a'));
-        await fse.ensureDir(path.join(outsidePath, 'P', 'z', 'm'));
+        await mkdirp(path.join(watchedPath, 'a'));
+        await mkdirp(path.join(outsidePath, 'P', 'z', 'm'));
 
         await watchWhile(async events => {
           await whileHeld(async () => {
@@ -174,8 +172,8 @@ describe('inotify mounts (slow)', function() {
     // once it leaves, it's watched there.
     it('watches a directory at a bind mount of it a scan saw while it was found again, once it leaves',
       async function() {
-        await fse.ensureDir(path.join(watchedPath, 'a'));
-        await fse.ensureDir(path.join(outsidePath, 'P', 'z', 'm'));
+        await mkdirp(path.join(watchedPath, 'a'));
+        await mkdirp(path.join(outsidePath, 'P', 'z', 'm'));
 
         await watchWhile(async events => {
           await whileHeld(async () => {
@@ -195,24 +193,24 @@ describe('inotify mounts (slow)', function() {
       });
 
     it('watches a directory moved out of the source of a bind mount scanned before it', async function() {
-      await fse.ensureDir(path.join(watchedPath, 'z-source', 'moving', 'inner'));
-      await fse.ensureDir(path.join(watchedPath, 'z-source', 'moving', 'excluded'));
+      await mkdirp(path.join(watchedPath, 'z-source', 'moving', 'inner'));
+      await mkdirp(path.join(watchedPath, 'z-source', 'moving', 'excluded'));
       const aliasPath = path.join(watchedPath, 'a-alias');
       const excludedPath = path.join(watchedPath, 'archive', 'moving', 'excluded');
 
       await withMount(this, ['--bind', path.join(watchedPath, 'z-source')], aliasPath, async () => {
         await watchWhile(async events => {
           await whileHeld(async () => {
-            await fse.ensureDir(path.join(watchedPath, 'archive'));
-            await fse.rename(path.join(watchedPath, 'z-source', 'moving'),
+            await mkdirp(path.join(watchedPath, 'archive'));
+            await fsp.rename(path.join(watchedPath, 'z-source', 'moving'),
               path.join(watchedPath, 'archive', 'moving'));
           });
           const insidePath = path.join(watchedPath, 'archive', 'moving', 'inner', 'inside.file');
-          await fse.writeFile(insidePath, 'Inside');
+          await fsp.writeFile(insidePath, 'Inside');
           await waitFor(events, event => event.action === nsfw.actions.CREATED &&
             event.directory === path.dirname(insidePath) && event.file === 'inside.file', 'creation inside');
           // With the exclusions of its new path.
-          await fse.writeFile(path.join(excludedPath, 'excluded.file'), 'Excluded');
+          await fsp.writeFile(path.join(excludedPath, 'excluded.file'), 'Excluded');
           await barrier(events);
           assert.deepStrictEqual(events.filter(event => event.file === 'excluded.file'), []);
         }, [excludedPath]);
@@ -224,16 +222,16 @@ describe('inotify mounts (slow)', function() {
         const mountPoint = path.join(outsidePath, 'mount');
 
         await withMount(this, ['-t', 'tmpfs', 'tmpfs'], mountPoint, async () => {
-          await fse.ensureDir(path.join(mountPoint, 'moving', 'inner'));
-          await fse.symlink(mountPoint, path.join(watchedPath, 'link'));
+          await mkdirp(path.join(mountPoint, 'moving', 'inner'));
+          await fsp.symlink(mountPoint, path.join(watchedPath, 'link'));
 
           await watchWhile(async events => {
             await whileHeld(async () => {
-              await fse.ensureDir(path.join(mountPoint, 'archive'));
-              await fse.rename(path.join(mountPoint, 'moving'), path.join(mountPoint, 'archive', 'moving'));
+              await mkdirp(path.join(mountPoint, 'archive'));
+              await fsp.rename(path.join(mountPoint, 'moving'), path.join(mountPoint, 'archive', 'moving'));
             });
             const insidePath = path.join(watchedPath, 'link', 'archive', 'moving', 'inner', 'inside.file');
-            await fse.writeFile(insidePath, 'Inside');
+            await fsp.writeFile(insidePath, 'Inside');
             await waitFor(events, event => event.action === nsfw.actions.CREATED &&
               event.directory === path.dirname(insidePath) && event.file === 'inside.file', 'creation inside');
           });

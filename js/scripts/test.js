@@ -4,13 +4,16 @@ const cp = require('child_process');
 require('./build');
 exec('tsc -p js/spec/types');
 
+// One file at a time: the specs share the mockfs work directory.
+const nodeTest = 'node --test --test-concurrency=1 --test-force-exit --expose-gc --test-reporter=spec';
+
 if (process.platform !== 'win32' && process.platform !== 'darwin') {
-  // When ran as a npm script we can invoke npm bins such as node-gyp and mocha directly
+  // When ran as a npm script we can invoke npm bins such as node-gyp directly
   exec('node-gyp rebuild', { env: { ...process.env, NSFW_TEST_SLOW: 1 } });
-  exec('mocha --exit --v8-expose-gc js/spec/index-slow-spec.js js/spec/slow/*-spec.js');
+  exec(`${nodeTest} js/spec/index-slow-spec.js js/spec/slow/*-spec.js`);
   exec('node-gyp rebuild');
 }
-exec('mocha --exit --v8-expose-gc js/spec/canonical-path-spec.js js/spec/index-spec.js js/spec/lifecycle-spec.js');
+exec(`${nodeTest} js/spec/canonical-path-spec.js js/spec/index-spec.js js/spec/lifecycle-spec.js`);
 
 /**
  * @param {string} commandline ...

@@ -1,18 +1,13 @@
+const { after, afterEach, before, beforeEach } = require('node:test');
 const assert = require('assert');
 const cp = require('child_process');
 const fs = require('fs');
-const fse = require('fs-extra');
+const fsp = require('fs/promises');
 const path = require('path');
 const nsfw = require('../../dist');
-const { WORKDIR: workDir, sleep } = require('../common');
+const { WORKDIR: workDir, mkdirp, outputFile, remove, sleep } = require('../common');
 
 module.exports = function fixture() {
-  before(function() {
-    if (process.platform !== 'linux') {
-      this.skip();
-    }
-  });
-
   const watchedPath = path.join(workDir, 'watched');
   const outsidePath = path.join(workDir, 'outside');
   const markerSignal = watchedPath + '.nsfw-test-one-marker';
@@ -44,7 +39,7 @@ module.exports = function fixture() {
   async function checkReturnState(events, directory, name, exists, knownBefore = false) {
     await barrier(events);
     const file = path.join(directory, name);
-    assert.strictEqual(await fse.pathExists(file), exists);
+    assert.strictEqual(await fsp.access(file).then(() => true, () => false), exists);
     const actions = events.filter(event => event.directory === directory && event.file === name)
       .map(event => event.action);
     const addedAncestor = events.some(event => {
@@ -77,7 +72,7 @@ module.exports = function fixture() {
       }
     }
     const witness = 'after-return.file';
-    await fse.writeFile(path.join(directory, witness), 'visible');
+    await fsp.writeFile(path.join(directory, witness), 'visible');
     await waitFor(events, event => event.action === nsfw.actions.CREATED && event.directory === directory &&
       event.file === witness, 'creation after return');
   }
@@ -91,8 +86,8 @@ module.exports = function fixture() {
   // not to be empty once that read is handled (so that dropped watches aren't removed then) creates a file first,
   // before.file in most.
   async function untilLoopWaits(start, end) {
-    await Promise.all([start, end].map(file => fse.remove(path.join(watchedPath, file))));
-    await fse.remove(waitingPath);
+    await Promise.all([start, end].map(file => remove(path.join(watchedPath, file))));
+    await remove(waitingPath);
     touch(start);
     for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
       await sleep(50);
@@ -117,15 +112,17 @@ module.exports = function fixture() {
   }
 
   beforeEach(async function() {
-    await fse.ensureDir(watchedPath);
-    await fse.ensureDir(outsidePath);
+    // Node 22 runs no afterEach hook after a test calls t.skip().
+    await remove(workDir);
+    await mkdirp(watchedPath);
+    await mkdirp(outsidePath);
   });
 
   // What gets reported for files written in `directory` once the events are handled.
   async function reportedIn(events, directory, files) {
     await barrier(events);
     for (const file of files) {
-      await fse.outputFile(path.join(directory, file), 'Written');
+      await outputFile(path.join(directory, file), 'Written');
     }
     await sleep(1000);
     await barrier(events);
@@ -138,8 +135,8 @@ module.exports = function fixture() {
   // archive's scan builds a first, which the slow build takes 500 ms to do, then sees x.
   async function whileScanning(events, operation) {
     await whileHeld(async () => {
-      await fse.ensureDir(path.join(watchedPath, 'archive', 'a'));
-      await fse.rename(path.join(watchedPath, 'X'), path.join(watchedPath, 'archive', 'x'));
+      await mkdirp(path.join(watchedPath, 'archive', 'a'));
+      await fsp.rename(path.join(watchedPath, 'X'), path.join(watchedPath, 'archive', 'x'));
     });
     await waitFor(events, event => event.action === nsfw.actions.CREATED &&
       event.directory === path.join(watchedPath, 'archive') && event.file === 'x', 'scan of archive');
@@ -148,7 +145,7 @@ module.exports = function fixture() {
 
   // Mounts need privileges, so these only run where mount works (as root, outside a container).
   async function withMount(test, mountArguments, mountPoint, run) {
-    await fse.ensureDir(mountPoint);
+    await mkdirp(mountPoint);
     try {
       cp.execFileSync('mount', [...mountArguments, mountPoint], { stdio: 'ignore' });
     } catch (error) {
@@ -175,7 +172,7 @@ module.exports = function fixture() {
       const reported = () => events.some(event => event.action === nsfw.actions.CREATED &&
         event.directory === insideDirectory && event.file.startsWith(prefix));
       for (let i = 0; i < 20 && !reported(); ++i) {
-        await fse.writeFile(path.join(insideDirectory, `${prefix}${i}.file`), 'Inside');
+        await fsp.writeFile(path.join(insideDirectory, `${prefix}${i}.file`), 'Inside');
         await sleep(500);
       }
       assert.ok(reported(), `No creation in ${insideDirectory} in ${JSON.stringify(events)}`);
@@ -184,8 +181,8 @@ module.exports = function fixture() {
   before(function() {
     assert.ok(nsfw._native.NSFW_TEST_SLOW === true, 'NSFW should be built in slow mode');
   });
-  afterEach(() => fse.remove(workDir));
-  after(() => fse.remove(waitingPath));
+  afterEach(() => remove(workDir));
+  after(() => remove(waitingPath));
   return {
     watchedPath, outsidePath, markerSignal, touch, watchWhile,
     waitFor, checkReturnState, waitingPath, untilLoopWaits, whileHeld,

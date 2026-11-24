@@ -5,7 +5,6 @@ const test = require('node:test');
 const util = require('util');
 
 exports.DEBOUNCE = 100;
-exports.TIMEOUT_PER_STEP = 3000;
 exports.WORKDIR = path.resolve(__dirname, '../../mockfs');
 
 exports.sleep = util.promisify(setTimeout);
@@ -32,16 +31,24 @@ exports.countInotifyWatches = function() {
   return count;
 };
 
-// Polls until predicate() holds. timeout is a generous upper bound for slow runners, not a delay: a predicate that
-// already holds returns at once. message (a string or a function, so it can describe the state at the deadline) is
-// the assertion's.
-exports.waitUntil = async function(predicate, { timeout = 15000, interval = 25, message = 'Never held' } = {}) {
+// Polls predicate() until it holds or timeout runs out, and returns whether it held.
+exports.eventually = async function(predicate, { timeout, interval = 25 }) {
   const deadline = Date.now() + timeout;
   while (!(await predicate())) {
     if (Date.now() >= deadline) {
-      assert.fail(typeof message === 'function' ? message() : message);
+      return false;
     }
     await exports.sleep(interval);
+  }
+  return true;
+};
+
+// Waits until predicate() holds. timeout is a generous upper bound for slow runners, not a delay: a predicate that
+// already holds returns at once. message (a string or a function, so it can describe the state at the deadline) is
+// the assertion's.
+exports.waitUntil = async function(predicate, { timeout = 15000, interval = 25, message = 'Never held' } = {}) {
+  if (!(await exports.eventually(predicate, { timeout, interval }))) {
+    assert.fail(typeof message === 'function' ? message() : message);
   }
 };
 

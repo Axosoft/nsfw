@@ -5,7 +5,9 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const nsfw = require('../../dist');
-const { WORKDIR: workDir, mkdirp, outputFile, remove, sleep } = require('../common');
+const {
+  WORKDIR: workDir, barrier: barrierIn, eventually, mkdirp, outputFile, remove, sleep, waitForEvent, waitUntil
+} = require('../common');
 
 module.exports = function fixture() {
   const watchedPath = path.join(workDir, 'watched');
@@ -25,12 +27,7 @@ module.exports = function fixture() {
     }
   }
 
-  async function waitFor(events, predicate, description) {
-    for (let i = 0; i < 100 && !events.some(predicate); ++i) {
-      await sleep(100);
-    }
-    assert.ok(events.some(predicate), `No ${description} in ${JSON.stringify(events)}`);
-  }
+  const waitFor = waitForEvent;
 
   // Checks, once the events are handled, that what was reported about name in directory adds up to whether it
   // exists, and that directory is watched. One that is gone needs no creation left standing; and if it was at that
@@ -79,6 +76,8 @@ module.exports = function fixture() {
 
   // The slow build's hooks create this file once the event loop waits.
   const waitingPath = `/tmp/nsfw-test-waiting-${process.pid}`;
+  const untilWaiting = message => waitUntil(() => fs.existsSync(waitingPath),
+    { timeout: 10000, interval: 10, message });
 
   // Creates start in the watched directory, so that the event loop waits until the file named end shows up, and
   // resolves once it does wait, after reading start on its own. Neither file may exist before. With the pause before
@@ -89,10 +88,7 @@ module.exports = function fixture() {
     await Promise.all([start, end].map(file => remove(path.join(watchedPath, file))));
     await remove(waitingPath);
     touch(start);
-    for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
-      await sleep(50);
-    }
-    assert.ok(fs.existsSync(waitingPath), `The event loop never waited after ${start}`);
+    await untilWaiting(`The event loop never waited after ${start}`);
   }
 
   // Everything operation causes is queued while the event loop is held, so it reads it in as few reads as fit.
@@ -102,14 +98,8 @@ module.exports = function fixture() {
     touch('nsfw-test-release-event-loop');
   }
 
-  // Created after the events under test, so once it's reported they have been handled. A new file each time, since
-  // waitFor() looks at every event so far.
-  let barriers = 0;
-  async function barrier(events) {
-    const file = `barrier-${barriers++}.file`;
-    touch(file);
-    await waitFor(events, event => event.action === nsfw.actions.CREATED && event.file === file, 'barrier');
-  }
+  // Created after the events under test, so once it's reported they have been handled.
+  const barrier = events => barrierIn(events, watchedPath);
 
   beforeEach(async function() {
     // Node 22 runs no afterEach hook after a test calls t.skip().
@@ -171,9 +161,10 @@ module.exports = function fixture() {
       const prefix = `in-${directory.join('-')}-`;
       const reported = () => events.some(event => event.action === nsfw.actions.CREATED &&
         event.directory === insideDirectory && event.file.startsWith(prefix));
+      // Until a scan watches it: what is written before goes unseen, so write again every 500 ms.
       for (let i = 0; i < 20 && !reported(); ++i) {
         await fsp.writeFile(path.join(insideDirectory, `${prefix}${i}.file`), 'Inside');
-        await sleep(500);
+        await eventually(reported, { timeout: 500 });
       }
       assert.ok(reported(), `No creation in ${insideDirectory} in ${JSON.stringify(events)}`);
     }
@@ -185,7 +176,7 @@ module.exports = function fixture() {
   after(() => remove(waitingPath));
   return {
     watchedPath, outsidePath, markerSignal, touch, watchWhile,
-    waitFor, checkReturnState, waitingPath, untilLoopWaits, whileHeld,
+    waitFor, checkReturnState, waitingPath, untilWaiting, untilLoopWaits, whileHeld,
     barrier, reportedIn, whileScanning, withMount, expectWatched
   };
 };

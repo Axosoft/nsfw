@@ -5,7 +5,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 
 const {
-  DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, it, mkdirp, remove, sleep
+  DEBOUNCE, WORKDIR: workDir, it, mkdirp, remove, sleep
 } = require('./common');
 
 const nsfw = require('../dist');
@@ -71,7 +71,6 @@ describe('Node Sentinel File Watcher (slow)', function() {
 
     try {
       await watch.start();
-      await sleep(TIMEOUT_PER_STEP);
       await mkdirp(directory);
       await fsp.writeFile(filePath, '');
       await Promise.race([

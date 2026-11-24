@@ -24,12 +24,14 @@ declare module 'nsfw' {
             /**
              * Returns a Promise that resolves with the excluded paths: absolute paths inside the watched path, spelled
              * under its canonical form (its real path on Linux and macOS, its `\\?\` form on Windows).
+             * @deprecated Use `getExcludedPatterns()` and `excludedPatterns` instead.
              */
             getExcludedPaths: () => Promise<string[]>;
             /**
              * Replaces the excluded paths. Rejects unless every path is absolute, and ignores the ones outside the watched
              * path; resolves with the paths this call set, without those and without trailing separators, spelled
              * like the ones getExcludedPaths() returns, even if a later call has replaced them.
+             * @deprecated Use `updateExcludedPatterns()` instead: `/build` excludes `build` in the watched directory.
              */
             updateExcludedPaths: (excludedPaths: string[]) => Promise<string[]>;
             /** Returns a Promise that resolves with the excluded patterns. */
@@ -80,7 +82,10 @@ declare module 'nsfw' {
             debounceMS?: number;
             /** callback to fire in the case of errors */
             errorCallback?: (err: any) => void;
-            /** absolute paths inside the watched path to be excluded; the ones outside it are ignored */
+            /**
+             * absolute paths inside the watched path to be excluded; the ones outside it are ignored
+             * @deprecated Use `excludedPatterns` instead: `/build` excludes `build` in the watched directory.
+             */
             excludedPaths?: string[];
             /**
              * Glob patterns with `.gitignore` syntax, relative to the watched path, whose matches are excluded: `*.log`

@@ -13,6 +13,12 @@ stops with an error instead of losing events silently.
   `.gitignore` files, followed while watching, its `info/exclude` and `core.excludesFile`).
 - On Linux, directories excluded by either option are not watched, sparing inotify watches.
 
+### Deprecated
+- `excludedPaths`, `updateExcludedPaths()` and `getExcludedPaths()`, in favour of `excludedPatterns`,
+  `updateExcludedPatterns()` and `getExcludedPatterns()`: `/build` excludes `build` in the watched directory. They keep
+  working, and emit a `DeprecationWarning` (code `NSFW_EXCLUDED_PATHS`) once per process. They will be removed in a
+  future major release.
+
 ### Changed
 - `nsfw()` and `updateExcludedPaths()` handle excluded paths the same way:
   - Relative paths reject with `Excluded path must be an absolute path.` Before, `updateExcludedPaths()` accepted

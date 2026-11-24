@@ -3,7 +3,7 @@ const cp = require('child_process');
 const exec = require('executive');
 const fse = require('fs-extra');
 const path = require('path');
-const { isDeepStrictEqual } = require('util');
+const { isDeepStrictEqual, promisify } = require('util');
 
 const {
   DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, countInotifyWatches, sleep, watchCountReaches
@@ -3152,6 +3152,33 @@ describe('Node Sentinel File Watcher', function() {
         await fse.mkdir(path.join(inPath, '.git'));
         await fse.writeFile(path.join(inPath, '.gitignore'), gitignore);
       }
+
+      // In a process of its own: the warning is emitted once per process.
+      async function deprecationWarnings(usesExcludedPaths) {
+        const script = `
+          const nsfw = require(${JSON.stringify(path.resolve(__dirname, '../src'))});
+          const codes = [];
+          process.on('warning', warning => codes.push(warning.code));
+          (async () => {
+            const options = ${usesExcludedPaths} ?
+              { excludedPaths: [${JSON.stringify(path.join(inPath, 'build'))}] } : { excludedPatterns: ['/build'] };
+            const watcher = await nsfw(${JSON.stringify(inPath)}, () => {}, options);
+            if (${usesExcludedPaths}) {
+              await watcher.updateExcludedPaths([]);
+              await watcher.getExcludedPaths();
+            }
+            await watcher.getExcludedPatterns();
+            setImmediate(() => console.log(JSON.stringify(codes)));
+          })();
+        `;
+        const { stdout } = await promisify(cp.execFile)(process.execPath, ['-e', script]);
+        return JSON.parse(stdout);
+      }
+
+      it('warns once that excludedPaths is deprecated, and not for excludedPatterns', async function() {
+        assert.deepStrictEqual(await deprecationWarnings(true), ['NSFW_EXCLUDED_PATHS']);
+        assert.deepStrictEqual(await deprecationWarnings(false), []);
+      });
 
       it('rejects filter options of the wrong type', async function() {
         await assert.rejects(() => nsfw(inPath, () => {}, { excludedPatterns: '*.log' }),

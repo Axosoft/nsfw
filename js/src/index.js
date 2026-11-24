@@ -20,6 +20,17 @@ function validateExcludedPaths(excludedPaths) {
   }
 }
 
+// Once per process, as Node does for its own deprecations.
+let warnedExcludedPaths = false;
+function warnExcludedPaths() {
+  if (warnedExcludedPaths) return;
+  warnedExcludedPaths = true;
+  process.emitWarning(
+    'excludedPaths, updateExcludedPaths() and getExcludedPaths() are deprecated: use excludedPatterns, ' +
+    'updateExcludedPatterns() and getExcludedPatterns() instead (\'/build\' excludes build in the watched directory).',
+    { type: 'DeprecationWarning', code: 'NSFW_EXCLUDED_PATHS' });
+}
+
 function validateExcludedPatterns(excludedPatterns) {
   if (!Array.isArray(excludedPatterns) || excludedPatterns.some(pattern => typeof pattern !== 'string')) {
     throw new TypeError('excludedPatterns must be an array of strings.');
@@ -225,10 +236,15 @@ function NSFWFilePoller(watchPath, eventCallback, debounceMS, excludedPaths, rep
 const buildNSFW = async (watchPath, eventCallback, {
   debounceMS = 500,
   errorCallback: _errorCallback,
-  excludedPaths = [],
+  excludedPaths,
   excludedPatterns = [],
   respectGitignore = false
 } = {}) => {
+  if (excludedPaths === undefined) {
+    excludedPaths = [];
+  } else {
+    warnExcludedPaths();
+  }
   if (Number.isInteger(debounceMS)) {
     if (debounceMS < 1) {
       throw new Error('Minimum debounce is 1ms.');
@@ -313,7 +329,11 @@ function nsfw(watchPath, eventCallback, options) {
   this.stop = inOrder('stop');
   this.pause = inOrder('pause');
   this.resume = inOrder('resume');
-  this.getExcludedPaths = inOrder('getExcludedPaths');
+  const getExcludedPaths = inOrder('getExcludedPaths');
+  this.getExcludedPaths = () => {
+    warnExcludedPaths();
+    return getExcludedPaths();
+  };
   this.getExcludedPatterns = inOrder('getExcludedPatterns');
   this.updateExcludedPatterns = async patterns => {
     validateExcludedPatterns(patterns);
@@ -321,6 +341,7 @@ function nsfw(watchPath, eventCallback, options) {
     return whenReady(() => implementation.updateExcludedPatterns(snapshot));
   };
   this.updateExcludedPaths = async paths => {
+    warnExcludedPaths();
     validateExcludedPaths(paths);
     const snapshot = [...paths];
     waiting++;

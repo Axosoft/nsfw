@@ -63,8 +63,7 @@ return nsfw(
     errorCallback(errors) {
       //handle errors
     },
-    excludedPaths: [path.join(dir2, 'node_modules')],
-    excludedPatterns: ['*.log', 'tmp/'],
+    excludedPatterns: ['/node_modules', '*.log', 'tmp/'],
     respectGitignore: true
   })
   .then(function(watcher) {
@@ -74,8 +73,8 @@ return nsfw(
   .then(function() {
     // we are now watching dir2 for events!
 
-    // we can update excludedPaths array
-    return watcher2.updateExcludedPaths([path.join(dir2, 'node_modules'), path.join(dir2, '.git')]);
+    // we can replace the excluded patterns
+    return watcher2.updateExcludedPatterns(['/node_modules', '/.git', '*.log', 'tmp/']);
   })
   .then(function() {
     // To stop watching
@@ -97,12 +96,18 @@ in which case another `start()` rejects as already running. `stop()` on an alrea
 For directory watchers, `start()`, `stop()`, `pause()` and `resume()` run in call order.
 Thus `stop(); start()` restarts the watcher even when `stop()` is not awaited.
 Each operation still returns a promise that should be handled for errors.
-- excludedPaths: array with the absolute paths we want to exclude watching. A relative one makes the promise `nsfw()`
-returns reject; the ones outside the watched path are ignored. Paths match on whole path components: excluding
+- excludedPaths (deprecated: use `excludedPatterns`, see below): array with the absolute paths we want to exclude
+watching. Using it, `updateExcludedPaths` or `getExcludedPaths` emits a `DeprecationWarning` (code
+`NSFW_EXCLUDED_PATHS`) once per process; they keep working until a future major release. A relative one makes the
+promise `nsfw()` returns reject; the ones outside the watched path are ignored. Paths match on whole path components: excluding
 `/home/nsfw/dir2/build` does not exclude `/home/nsfw/dir2/build-tools`. Trailing separators are dropped.
 You can update the excludedPaths array without restarting the service using the `updateExcludedPaths` function, which
 handles the paths the same way and resolves with the paths that call set, without the ignored ones.
 `getExcludedPaths` resolves with the current ones.
+To migrate, write each path relative to the watched directory with a leading `/`, which anchors it there:
+`path.join(dir, 'node_modules')` becomes `'/node_modules'` and `path.join(dir, 'a', 'b')` becomes `'/a/b'`, with `/`
+as separator on every platform. Escape with `\` the characters patterns treat specially (`*`, `?`, `[`, `\`, a leading
+`!` or `#`, trailing spaces). Unlike `excludedPaths`, patterns don't apply to a watched file.
 - excludedPatterns: array of glob patterns, with the syntax of `.gitignore` files, relative to the watched directory.
 What they match is not reported: `*.log` matches at any depth, `/dist` only at the top, `build/` only directories,
 `**` spans directories (`src/**/*.gen.ts`) and `!` includes again what an earlier pattern excluded (`!keep.log`).

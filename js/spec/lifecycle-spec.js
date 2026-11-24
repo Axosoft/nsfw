@@ -1,19 +1,20 @@
+const { afterEach, beforeEach, describe } = require('node:test');
 const assert = require('assert');
 const cp = require('child_process');
-const fse = require('fs-extra');
+const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
+const { it, remove } = require('./common');
 
 describe('Directory watcher lifecycle recovery', function() {
-  this.timeout(25000);
   let directory;
 
   beforeEach(async function() {
-    directory = await fse.mkdtemp(path.join(os.tmpdir(), 'nsfw-lifecycle-'));
+    directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'nsfw-lifecycle-'));
   });
 
   afterEach(async function() {
-    await fse.remove(directory);
+    await remove(directory);
   });
 
   function runChild(mode, env = {}) {

@@ -1,13 +1,13 @@
+const { describe } = require('node:test');
 const assert = require('assert');
 const fs = require('fs');
-const fse = require('fs-extra');
+const fsp = require('fs/promises');
 const path = require('path');
 const nsfw = require('../../dist');
-const { countInotifyWatches, sleep, watchCountReaches } = require('../common');
+const { countInotifyWatches, it, mkdirp, remove, sleep, watchCountReaches } = require('../common');
 const fixture = require('./fixture');
 
-describe('inotify restoration (slow)', function() {
-  this.timeout(120000);
+describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, function() {
   const {
     watchedPath, outsidePath, markerSignal, touch, watchWhile,
     waitFor, checkReturnState, waitingPath, untilLoopWaits, whileHeld,
@@ -19,11 +19,11 @@ describe('inotify restoration (slow)', function() {
       const blocked = path.join(watchedPath, 'z-blocked');
       const deep = path.join(blocked, 'deep');
       const kept = path.join(watchedPath, 'zz-kept');
-      await fse.ensureDir(deep);
-      await fse.ensureDir(kept);
-      await fse.symlink(deep, path.join(watchedPath, 'a-deep'));
-      await fse.symlink(blocked, path.join(watchedPath, 'b-whole'));
-      await fse.symlink(kept, path.join(blocked, 'keep-link'));
+      await mkdirp(deep);
+      await mkdirp(kept);
+      await fsp.symlink(deep, path.join(watchedPath, 'a-deep'));
+      await fsp.symlink(blocked, path.join(watchedPath, 'b-whole'));
+      await fsp.symlink(kept, path.join(blocked, 'keep-link'));
 
       await watchWhile(async (events, watch) => {
         assert.deepStrictEqual(await reportedIn(events, deep, ['before.file']), ['a-deep/before.file']);
@@ -56,8 +56,8 @@ describe('inotify restoration (slow)', function() {
   describe('found again in passes', function() {
     it('does not report what a directory queued while excluded once it took the place of one a scan finds next',
       async function() {
-        await fse.ensureDir(path.join(watchedPath, 'x', 'd2'));
-        await fse.ensureDir(path.join(watchedPath, 'P', 'b'));
+        await mkdirp(path.join(watchedPath, 'x', 'd2'));
+        await mkdirp(path.join(watchedPath, 'P', 'b'));
         touch(path.join('x', 'd2', 'secret.file'));
 
         await watchWhile(async (events, watch) => {
@@ -84,7 +84,7 @@ describe('inotify restoration (slow)', function() {
     it('watches a directory created in one found again after its find, before the marker of its pass',
       async function() {
         for (const name of ['b1', 'b2', 'b3']) {
-          await fse.ensureDir(path.join(watchedPath, 'P', name));
+          await mkdirp(path.join(watchedPath, 'P', name));
         }
 
         await watchWhile(async (events, watch) => {
@@ -107,9 +107,9 @@ describe('inotify restoration (slow)', function() {
 
   it('does not report what an excluded directory queued once it moved into one that came back with a new watch',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'd'));
-      await fse.ensureDir(path.join(watchedPath, 's2'));
-      await fse.ensureDir(path.join(watchedPath, 'x'));
+      await mkdirp(path.join(watchedPath, 'd'));
+      await mkdirp(path.join(watchedPath, 's2'));
+      await mkdirp(path.join(watchedPath, 'x'));
       fs.writeFileSync(path.join(watchedPath, 's2', 'secret.file'), 'Secret');
 
       await watchWhile(async (events, watch) => {
@@ -126,7 +126,7 @@ describe('inotify restoration (slow)', function() {
         touch('nsfw-test-resume-event-loop');
 
         await barrier(events);
-        await fse.writeFile(path.join(watchedPath, 'e', 's2', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(watchedPath, 'e', 's2', 'top.file'), 'Top');
         const created = event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(watchedPath, 'e', 's2') && event.file === 'top.file';
         await waitFor(events, created, 'creation in s2');
@@ -136,17 +136,17 @@ describe('inotify restoration (slow)', function() {
 
   it('watches a directory moved out and back after a change outside and a deletion',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'round', 'trip'));
+      await mkdirp(path.join(watchedPath, 'round', 'trip'));
       touch(path.join('round', 'trip', 'existing.file'));
 
       await watchWhile(async events => {
         await whileHeld(async () => {
-          await fse.rename(path.join(watchedPath, 'round'), path.join(outsidePath, 'round'));
+          await fsp.rename(path.join(watchedPath, 'round'), path.join(outsidePath, 'round'));
           // Events on trip's watch read before the move back: the creation ends the pending move out, which drops
           // trip, and the modification comes once it is dropped. trip keeps that watch all the same.
-          await fse.writeFile(path.join(outsidePath, 'round', 'trip', 'outside.file'), 'Outside');
-          await fse.rename(path.join(outsidePath, 'round'), path.join(watchedPath, 'round'));
-          await fse.remove(path.join(watchedPath, 'round', 'trip', 'existing.file'));
+          await fsp.writeFile(path.join(outsidePath, 'round', 'trip', 'outside.file'), 'Outside');
+          await fsp.rename(path.join(outsidePath, 'round'), path.join(watchedPath, 'round'));
+          await remove(path.join(watchedPath, 'round', 'trip', 'existing.file'));
         });
         const existingPath = path.join(watchedPath, 'round', 'trip', 'existing.file');
         await checkReturnState(events, path.dirname(existingPath), 'existing.file', false, true);
@@ -155,8 +155,8 @@ describe('inotify restoration (slow)', function() {
 
   it('does not report what a directory moved into an excluded one queued before updateExcludedPaths() includes it',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'x'));
-      await fse.ensureDir(path.join(watchedPath, 'q'));
+      await mkdirp(path.join(watchedPath, 'x'));
+      await mkdirp(path.join(watchedPath, 'q'));
       touch(path.join('x', 'gone.file'));
       const excludedPath = path.join(watchedPath, 'q');
 
@@ -170,7 +170,7 @@ describe('inotify restoration (slow)', function() {
         touch('nsfw-test-resume-event-loop');
 
         await barrier(events);
-        await fse.writeFile(path.join(excludedPath, 'x', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(excludedPath, 'x', 'top.file'), 'Top');
         const created = event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(excludedPath, 'x') && event.file === 'top.file';
         await waitFor(events, created, 'creation in x');
@@ -183,8 +183,8 @@ describe('inotify restoration (slow)', function() {
 
   it('does not report what a directory moved into an excluded one queued, once its old parent is seen elsewhere',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'a', 'b'));
-      await fse.ensureDir(path.join(watchedPath, 'q'));
+      await mkdirp(path.join(watchedPath, 'a', 'b'));
+      await mkdirp(path.join(watchedPath, 'q'));
       touch(path.join('a', 'b', 'gone.file'));
       const excludedPath = path.join(watchedPath, 'q');
 
@@ -199,7 +199,7 @@ describe('inotify restoration (slow)', function() {
         touch('nsfw-test-resume-event-loop');
 
         await barrier(events);
-        await fse.writeFile(path.join(excludedPath, 'b', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(excludedPath, 'b', 'top.file'), 'Top');
         const created = event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(excludedPath, 'b') && event.file === 'top.file';
         await waitFor(events, created, 'creation in b');
@@ -213,7 +213,7 @@ describe('inotify restoration (slow)', function() {
   it('queues one marker for every directory updateExcludedPaths() includes again', async function() {
     const names = ['a1', 'a2', 'a3', 'd1', 'd2', 'd3'];
     for (const name of names) {
-      await fse.ensureDir(path.join(watchedPath, name));
+      await mkdirp(path.join(watchedPath, name));
     }
 
     await watchWhile(async (events, watch) => {
@@ -237,8 +237,8 @@ describe('inotify restoration (slow)', function() {
     const parent = path.join(watchedPath, 'parent');
     const children = ['first', 'second'].map(name => path.join(parent, name));
     for (const child of children) {
-      await fse.ensureDir(child);
-      await fse.writeFile(path.join(child, 'existing.file'), '');
+      await mkdirp(child);
+      await fsp.writeFile(path.join(child, 'existing.file'), '');
     }
 
     await watchWhile(async (events, watch) => {
@@ -274,12 +274,12 @@ describe('inotify restoration (slow)', function() {
     const alias = path.join(watchedPath, 'alias');
     const target = path.join(outsidePath, 'blocked');
     const parent = path.join(watchedPath, 'P');
-    await fse.ensureDir(target);
-    await fse.writeFile(path.join(target, 'existing.file'), '');
-    await fse.symlink(outsidePath, portal);
-    await fse.symlink(target, alias);
-    await fse.ensureDir(path.join(parent, 'first'));
-    await fse.ensureDir(path.join(parent, 'second'));
+    await mkdirp(target);
+    await fsp.writeFile(path.join(target, 'existing.file'), '');
+    await fsp.symlink(outsidePath, portal);
+    await fsp.symlink(target, alias);
+    await mkdirp(path.join(parent, 'first'));
+    await mkdirp(path.join(parent, 'second'));
 
     await watchWhile(async (events, watch) => {
       await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
@@ -309,11 +309,11 @@ describe('inotify restoration (slow)', function() {
     const holder = path.join(watchedPath, 'holder');
     const target = path.join(outsidePath, 'blocked');
     const parent = path.join(watchedPath, 'P');
-    await fse.ensureDir(target);
-    await fse.ensureDir(holder);
-    await fse.symlink(outsidePath, portal);
-    await fse.symlink(target, path.join(holder, 'alias'));
-    await fse.ensureDir(path.join(parent, 'a', 'b', 'c', 'd'));
+    await mkdirp(target);
+    await mkdirp(holder);
+    await fsp.symlink(outsidePath, portal);
+    await fsp.symlink(target, path.join(holder, 'alias'));
+    await mkdirp(path.join(parent, 'a', 'b', 'c', 'd'));
 
     await watchWhile(async (events, watch) => {
       await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
@@ -351,11 +351,11 @@ describe('inotify restoration (slow)', function() {
       const blocked = path.join(parent, 'second', 'blocked');
       const original = path.join(outsidePath, 'original');
       const moving = path.join(watchedPath, 'moving.file');
-      await fse.ensureDir(path.join(parent, 'first'));
-      await fse.ensureDir(path.join(parent, 'second'));
-      await fse.ensureDir(path.join(original, 'deep'));
-      await fse.symlink(path.join(original, 'deep'), path.join(watchedPath, 'a-link'));
-      await fse.writeFile(moving, '');
+      await mkdirp(path.join(parent, 'first'));
+      await mkdirp(path.join(parent, 'second'));
+      await mkdirp(path.join(original, 'deep'));
+      await fsp.symlink(path.join(original, 'deep'), path.join(watchedPath, 'a-link'));
+      await fsp.writeFile(moving, '');
 
       await watchWhile(async (events, watch) => {
         assert.deepStrictEqual(await reportedIn(events, original, ['deep/before.file']), ['a-link/before.file']);
@@ -363,7 +363,7 @@ describe('inotify restoration (slow)', function() {
           // The read that pauses ends with half of a move, so second isn't given its marker after it: the arrival
           // and the write at the link are read while its events are still dropped.
           await untilLoopWaits('nsfw-test-hold-event-loop', 'nsfw-test-release-event-loop');
-          await fse.remove(waitingPath);
+          await remove(waitingPath);
           touch('nsfw-test-pause-before-lock');
           touch('nsfw-test-release-event-loop');
           fs.renameSync(moving, path.join(outsidePath, 'moved.file'));
@@ -396,10 +396,10 @@ describe('inotify restoration (slow)', function() {
     const target = path.join(outsidePath, 'blocked');
     const parent = path.join(watchedPath, 'container');
     const moved = path.join(watchedPath, 'moved');
-    await fse.ensureDir(parent);
-    await fse.ensureDir(target);
-    await fse.symlink(outsidePath, portal);
-    await fse.symlink(target, path.join(parent, 'link'));
+    await mkdirp(parent);
+    await mkdirp(target);
+    await fsp.symlink(outsidePath, portal);
+    await fsp.symlink(target, path.join(parent, 'link'));
 
     await watchWhile(async (events, watch) => {
       await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
@@ -420,8 +420,8 @@ describe('inotify restoration (slow)', function() {
     fs.writeFileSync(markerSignal, '');
     const parent = path.join(watchedPath, 'parent');
     const child = path.join(parent, 'child');
-    await fse.ensureDir(child);
-    await fse.ensureDir(path.join(parent, 'sibling'));
+    await mkdirp(child);
+    await mkdirp(path.join(parent, 'sibling'));
     await watchWhile(async (events, watch) => {
       await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
       touch('before.file');
@@ -456,15 +456,15 @@ describe('inotify restoration (slow)', function() {
     const moved = path.join(watchedPath, 'y');
     const branch = path.join('a', 'b', 'c', 'd', 'e', 'f');
     const child = path.join(moved, branch, 'child');
-    await fse.ensureDir(path.join(top, branch, 'child'));
-    await fse.writeFile(path.join(top, branch, 'visible.file'), '');
-    await fse.writeFile(path.join(top, branch, 'child', 'old.file'), '');
+    await mkdirp(path.join(top, branch, 'child'));
+    await fsp.writeFile(path.join(top, branch, 'visible.file'), '');
+    await fsp.writeFile(path.join(top, branch, 'child', 'old.file'), '');
     await watchWhile(async (events, watch) => {
       await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
       const outside = path.join(outsidePath, 'away');
       fs.renameSync(top, outside);
       fs.renameSync(outside, moved);
-      await fse.remove(waitingPath);
+      await remove(waitingPath);
       touch('nsfw-test-hold-event-loop');
       touch('nsfw-test-resume-event-loop');
       for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) await sleep(50);
@@ -472,9 +472,9 @@ describe('inotify restoration (slow)', function() {
 
       // Pause the following read outside the event mutex so the update can see the unfinished scan.
       for (const name of ['nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop']) {
-        await fse.remove(path.join(watchedPath, name));
+        await remove(path.join(watchedPath, name));
       }
-      await fse.remove(waitingPath);
+      await remove(waitingPath);
       touch('nsfw-test-pause-before-lock');
       touch('nsfw-test-release-event-loop');
       try {
@@ -501,9 +501,9 @@ describe('inotify restoration (slow)', function() {
   // dropped: a child of it found in the same pass may leave without its parent's events telling.
   it('does not report under its old path what a directory included again queued once it moved, with its parent ' +
     'included again in the same call', async function() {
-    await fse.ensureDir(path.join(watchedPath, 'a', 'b'));
-    await fse.ensureDir(path.join(watchedPath, 'c'));
-    await fse.ensureDir(path.join(watchedPath, 'x'));
+    await mkdirp(path.join(watchedPath, 'a', 'b'));
+    await mkdirp(path.join(watchedPath, 'c'));
+    await mkdirp(path.join(watchedPath, 'x'));
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
     await watchWhile(async (events, watch) => {
@@ -520,7 +520,7 @@ describe('inotify restoration (slow)', function() {
       touch('nsfw-test-resume-event-loop');
 
       await barrier(events);
-      await fse.writeFile(at('x/b/inside.file'), 'Inside');
+      await fsp.writeFile(at('x/b/inside.file'), 'Inside');
       await sleep(1000);
       await barrier(events);
       assert.deepStrictEqual(events.filter(event => event.directory.startsWith(at('a/b'))), []);
@@ -531,7 +531,7 @@ describe('inotify restoration (slow)', function() {
   // handled: like updateExcludedPaths(), the ones found again with their old watches share one marker.
   it('queues one marker for every directory a move includes again', async function() {
     for (const name of ['a1', 'a2', 'a3', 'x/k1/nm', 'x/k2/nm', 'x/k3/nm']) {
-      await fse.ensureDir(path.join(watchedPath, ...name.split('/')));
+      await mkdirp(path.join(watchedPath, ...name.split('/')));
     }
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
@@ -544,7 +544,7 @@ describe('inotify restoration (slow)', function() {
       // y/k1/nm, y/k2/nm and y/k3/nm aren't excluded: the move includes them again, with their old watches. The
       // hold file, after the move in the same read, keeps the loop there once the move is handled.
       fs.renameSync(at('x'), at('y'));
-      await fse.remove(waitingPath);
+      await remove(waitingPath);
       touch('nsfw-test-hold-event-loop');
       touch('nsfw-test-resume-event-loop');
       for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
@@ -563,7 +563,7 @@ describe('inotify restoration (slow)', function() {
   // A directory found again is scanned after its marker: one below it that a move includes again in the same
   // handling is found by that scan, not before, see createChild().
   it('watches nested directories a move includes again', async function() {
-    await fse.ensureDir(path.join(watchedPath, 'x', 'a', 'b'));
+    await mkdirp(path.join(watchedPath, 'x', 'a', 'b'));
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
     await watchWhile(async (events, watch) => {
@@ -583,10 +583,10 @@ describe('inotify restoration (slow)', function() {
   // must not hang below the node, which the queued rename then moves with them.
   it('does not watch what a directory that took the path of one included again holds, below that one',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'a'));
-      await fse.ensureDir(path.join(watchedPath, 'c'));
-      await fse.ensureDir(path.join(watchedPath, 'e'));
-      await fse.ensureDir(path.join(outsidePath, 'X', 'k'));
+      await mkdirp(path.join(watchedPath, 'a'));
+      await mkdirp(path.join(watchedPath, 'c'));
+      await mkdirp(path.join(watchedPath, 'e'));
+      await mkdirp(path.join(outsidePath, 'X', 'k'));
       const at = relative => path.join(watchedPath, ...relative.split('/'));
 
       await watchWhile(async (events, watch) => {
@@ -612,11 +612,11 @@ describe('inotify restoration (slow)', function() {
   // and a is scanned by its path with no check of what's there now (rewatch() has one, see the spec above).
   it('does not watch what a directory that took the path of one included again holds, with another marker',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'a'));
-      await fse.ensureDir(path.join(watchedPath, 'c'));
-      await fse.ensureDir(path.join(watchedPath, 'e'));
-      await fse.ensureDir(path.join(watchedPath, 'z'));
-      await fse.ensureDir(path.join(outsidePath, 'X', 'k'));
+      await mkdirp(path.join(watchedPath, 'a'));
+      await mkdirp(path.join(watchedPath, 'c'));
+      await mkdirp(path.join(watchedPath, 'e'));
+      await mkdirp(path.join(watchedPath, 'z'));
+      await mkdirp(path.join(outsidePath, 'X', 'k'));
       const at = relative => path.join(watchedPath, ...relative.split('/'));
 
       await watchWhile(async (events, watch) => {
@@ -639,8 +639,8 @@ describe('inotify restoration (slow)', function() {
     });
 
   it('preserves an existing watch when another directory replaces a child being installed', async function() {
-    await fse.ensureDir(path.join(watchedPath, 'P', 'child'));
-    await fse.ensureDir(path.join(watchedPath, 'S'));
+    await mkdirp(path.join(watchedPath, 'P', 'child'));
+    await mkdirp(path.join(watchedPath, 'S'));
     const child = path.join(watchedPath, 'Q', 'child');
     await watchWhile(async events => {
       fs.renameSync(path.join(watchedPath, 'P'), path.join(watchedPath, 'Q'));
@@ -659,10 +659,10 @@ describe('inotify restoration (slow)', function() {
   // takes to other. other/sub then checks that c's node, moved there, still watches what is created in it.
   it('does not scan a directory found again whose path leads to another one by then', async function() {
     for (const name of ['a', 'c', 'e', 'g', 'z']) {
-      await fse.ensureDir(path.join(watchedPath, name));
+      await mkdirp(path.join(watchedPath, name));
     }
-    await fse.writeFile(path.join(watchedPath, 'c', 'old.file'), 'Old');
-    await fse.ensureDir(path.join(outsidePath, 'X', 'k'));
+    await fsp.writeFile(path.join(watchedPath, 'c', 'old.file'), 'Old');
+    await mkdirp(path.join(outsidePath, 'X', 'k'));
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
     await watchWhile(async (events, watch) => {
@@ -693,11 +693,11 @@ describe('inotify restoration (slow)', function() {
   // add (500 ms each in the slow build), so d1 moves on before its scan. Its rescan after that rename reports what it
   // held, once and under its new path; a scan of it before the move would report it under Q/d1.
   it('reports what a directory found again holds when it moves on before its scan', async function() {
-    await fse.ensureDir(path.join(watchedPath, 'd1', 'sub'));
-    await fse.writeFile(path.join(watchedPath, 'd1', 'old.file'), 'Old');
-    await fse.writeFile(path.join(watchedPath, 'd1', 'sub', 'deep.file'), 'Deep');
+    await mkdirp(path.join(watchedPath, 'd1', 'sub'));
+    await fsp.writeFile(path.join(watchedPath, 'd1', 'old.file'), 'Old');
+    await fsp.writeFile(path.join(watchedPath, 'd1', 'sub', 'deep.file'), 'Deep');
     for (const name of ['m1', 'm2', 'm3', 'm4']) {
-      await fse.ensureDir(path.join(outsidePath, 'Q', name));
+      await mkdirp(path.join(outsidePath, 'Q', name));
     }
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
@@ -730,7 +730,7 @@ describe('inotify restoration (slow)', function() {
   it('queues one marker for the directories a scan saw elsewhere once the directory they left goes',
     async function() {
       for (const name of ['a1', 'a2', 'a3', 'd1', 'd2', 'd3']) {
-        await fse.ensureDir(path.join(watchedPath, 'S', name));
+        await mkdirp(path.join(watchedPath, 'S', name));
       }
 
       await watchWhile(async events => {
@@ -743,7 +743,7 @@ describe('inotify restoration (slow)', function() {
         for (const name of ['d1', 'd2', 'd3']) {
           fs.renameSync(path.join(outsidePath, 'S', name), path.join(watchedPath, 'Q', name));
         }
-        await fse.remove(waitingPath);
+        await remove(waitingPath);
         touch('nsfw-test-hold-event-loop');
         touch('nsfw-test-resume-event-loop');
         for (let i = 0; i < 200 && !fs.existsSync(waitingPath); ++i) {
@@ -761,8 +761,8 @@ describe('inotify restoration (slow)', function() {
 
   it('watches a directory moved back when a namesake is created in an excluded one',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'src', 'D'));
-      await fse.ensureDir(path.join(watchedPath, 'node_modules', 'pkg'));
+      await mkdirp(path.join(watchedPath, 'src', 'D'));
+      await mkdirp(path.join(watchedPath, 'node_modules', 'pkg'));
       touch(path.join('src', 'D', 'existing.file'));
 
       await watchWhile(async (events, watch) => {
@@ -782,8 +782,8 @@ describe('inotify restoration (slow)', function() {
 
   it('does not report what an excluded directory queued once it moved into a directory that arrived before it',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'E', 'D'));
-      await fse.ensureDir(path.join(outsidePath, 'X'));
+      await mkdirp(path.join(watchedPath, 'E', 'D'));
+      await mkdirp(path.join(outsidePath, 'X'));
 
       await watchWhile(async (events, watch) => {
         await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
@@ -797,7 +797,7 @@ describe('inotify restoration (slow)', function() {
         touch('nsfw-test-resume-event-loop');
 
         await barrier(events);
-        await fse.writeFile(path.join(watchedPath, 'X', 'D', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(watchedPath, 'X', 'D', 'top.file'), 'Top');
         const created = event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(watchedPath, 'X', 'D') && event.file === 'top.file';
         await waitFor(events, created, 'creation in D');
@@ -815,10 +815,10 @@ describe('inotify restoration (slow)', function() {
   ]) {
     it(`does not report what a directory moved ${description} queued while it couldn't be watched once it moved ` +
       'into a directory that arrived before it', async function() {
-      await fse.ensureDir(path.join(watchedPath, 'D'));
+      await mkdirp(path.join(watchedPath, 'D'));
       touch(path.join('D', 'secret.file'));
-      await fse.ensureDir(path.join(watchedPath, 'E'));
-      await fse.ensureDir(path.join(outsidePath, 'X'));
+      await mkdirp(path.join(watchedPath, 'E'));
+      await mkdirp(path.join(outsidePath, 'X'));
       const awayPath = away ? path.join(watchedPath, ...away) : path.join(outsidePath, 'D');
       const wrapperPath = path.join(watchedPath, 'X');
 
@@ -836,7 +836,7 @@ describe('inotify restoration (slow)', function() {
         });
 
         await barrier(events);
-        await fse.writeFile(path.join(wrapperPath, 'D', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(wrapperPath, 'D', 'top.file'), 'Top');
         await waitFor(events, event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(wrapperPath, 'D') && event.file === 'top.file', 'creation in D');
         assert.deepStrictEqual(events.filter(event => event.file === 'secret.file'), []);
@@ -851,7 +851,7 @@ describe('inotify restoration (slow)', function() {
     it('reports what a directory holds when it comes back after its watches were removed, like one that ' +
       `${left ? 'left' : 'was never watched'}`, async function() {
       const existing = left ? path.join(watchedPath, 'd') : path.join(outsidePath, 'd');
-      await fse.ensureDir(path.join(existing, 'trip'));
+      await mkdirp(path.join(existing, 'trip'));
       for (const file of ['existing.file', 'other.file']) {
         fs.writeFileSync(path.join(existing, 'trip', file), 'Existing');
       }
@@ -874,7 +874,7 @@ describe('inotify restoration (slow)', function() {
         const created = (directory, file) => event => event.action === nsfw.actions.CREATED &&
           event.directory === directory && event.file === file;
         await waitFor(events, created(tripPath, 'other.file'), 'creation of what it holds');
-        await fse.remove(path.join(tripPath, 'other.file'));
+        await remove(path.join(tripPath, 'other.file'));
         await waitFor(events, event => event.action === nsfw.actions.DELETED && event.directory === tripPath &&
           event.file === 'other.file', 'deletion inside');
         await barrier(events);
@@ -892,7 +892,7 @@ describe('inotify restoration (slow)', function() {
   }
 
   it('watches an excluded directory moved to a visible path after a deletion', async function() {
-    await fse.ensureDir(path.join(watchedPath, 'x', 'd'));
+    await mkdirp(path.join(watchedPath, 'x', 'd'));
     touch(path.join('x', 'd', 'existing.file'));
 
     await watchWhile(async (events, watch) => {
@@ -909,9 +909,9 @@ describe('inotify restoration (slow)', function() {
 
   it('does not report what a directory queued outside once it moved into one found behind a marker',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'a', 'D'));
-      await fse.ensureDir(path.join(watchedPath, 'E'));
-      await fse.ensureDir(path.join(outsidePath, 'x'));
+      await mkdirp(path.join(watchedPath, 'a', 'D'));
+      await mkdirp(path.join(watchedPath, 'E'));
+      await mkdirp(path.join(outsidePath, 'x'));
       fs.writeFileSync(path.join(watchedPath, 'E', 'secret.file'), 'Secret');
 
       await watchWhile(async (events, watch) => {
@@ -927,7 +927,7 @@ describe('inotify restoration (slow)', function() {
         touch('nsfw-test-resume-event-loop');
 
         await barrier(events);
-        await fse.writeFile(path.join(watchedPath, 'x', 'D', 'E', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(watchedPath, 'x', 'D', 'E', 'top.file'), 'Top');
         const created = event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(watchedPath, 'x', 'D', 'E') && event.file === 'top.file';
         await waitFor(events, created, 'creation in E');
@@ -937,8 +937,8 @@ describe('inotify restoration (slow)', function() {
 
   it('does not report what a directory queued in an excluded one once the move out of its old place is handled',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'old', 'H', 'sub'));
-      await fse.ensureDir(path.join(watchedPath, 'q'));
+      await mkdirp(path.join(watchedPath, 'old', 'H', 'sub'));
+      await mkdirp(path.join(watchedPath, 'q'));
       const excludedPath = path.join(watchedPath, 'q');
 
       await watchWhile(async (events, watch) => {
@@ -951,7 +951,7 @@ describe('inotify restoration (slow)', function() {
         touch('nsfw-test-resume-event-loop');
 
         await barrier(events);
-        await fse.writeFile(path.join(excludedPath, 'H', 'sub', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(excludedPath, 'H', 'sub', 'top.file'), 'Top');
         const created = event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(excludedPath, 'H', 'sub') && event.file === 'top.file';
         await waitFor(events, created, 'creation in sub');
@@ -961,8 +961,8 @@ describe('inotify restoration (slow)', function() {
 
   it('does not report what a directory queued outside once it moved into a removed watch read reads later',
     async function() {
-      await fse.ensureDir(path.join(watchedPath, 'R', 'P'));
-      await fse.ensureDir(path.join(watchedPath, 'C'));
+      await mkdirp(path.join(watchedPath, 'R', 'P'));
+      await mkdirp(path.join(watchedPath, 'C'));
 
       await watchWhile(async (events, watch) => {
         await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
@@ -985,7 +985,7 @@ describe('inotify restoration (slow)', function() {
         touch('nsfw-test-resume-event-loop');
 
         await barrier(events);
-        await fse.writeFile(path.join(watchedPath, 'R', 'Q', 'C', 'top.file'), 'Top');
+        await fsp.writeFile(path.join(watchedPath, 'R', 'Q', 'C', 'top.file'), 'Top');
         const created = event => event.action === nsfw.actions.CREATED &&
           event.directory === path.join(watchedPath, 'R', 'Q', 'C') && event.file === 'top.file';
         await waitFor(events, created, 'creation in C');
@@ -995,24 +995,24 @@ describe('inotify restoration (slow)', function() {
     });
 
   it('watches a directory moved into one that is renamed while it is scanned', async function() {
-    await fse.ensureDir(path.join(watchedPath, 'moving', 'inner'));
+    await mkdirp(path.join(watchedPath, 'moving', 'inner'));
 
     await watchWhile(async events => {
       await whileHeld(async () => {
-        await fse.ensureDir(path.join(watchedPath, 'archive'));
-        await fse.rename(path.join(watchedPath, 'moving'), path.join(watchedPath, 'archive', 'moving'));
+        await mkdirp(path.join(watchedPath, 'archive'));
+        await fsp.rename(path.join(watchedPath, 'moving'), path.join(watchedPath, 'archive', 'moving'));
       });
       // archive's scan reports moving just before it builds moving's node, which the slow build takes 500 ms to do
       // before adding its watch.
       await waitFor(events, event => event.action === nsfw.actions.CREATED &&
         event.directory === path.join(watchedPath, 'archive') && event.file === 'moving', 'scan of archive');
-      await fse.rename(path.join(watchedPath, 'archive'), path.join(watchedPath, 'archived'));
+      await fsp.rename(path.join(watchedPath, 'archive'), path.join(watchedPath, 'archived'));
       // Until the rescan after the rename watches it.
       const insideDirectory = path.join(watchedPath, 'archived', 'moving', 'inner');
       const reported = () => events.some(event => event.action === nsfw.actions.CREATED &&
         event.directory === insideDirectory && event.file.startsWith('inside'));
       for (let i = 0; i < 20 && !reported(); ++i) {
-        await fse.writeFile(path.join(insideDirectory, `inside-${i}.file`), 'Inside');
+        await fsp.writeFile(path.join(insideDirectory, `inside-${i}.file`), 'Inside');
         await sleep(500);
       }
       assert.ok(reported(), `No creation inside in ${JSON.stringify(events)}`);

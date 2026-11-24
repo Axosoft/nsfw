@@ -1,11 +1,12 @@
 /* global FinalizationRegistry, SharedArrayBuffer, Atomics */
 // Runs in a child process (and, for 'worker-error', in a worker thread inside it) so that a watcher that keeps the
-// event loop alive, or aborts during teardown, cannot hang or crash the mocha process.
+// event loop alive, or aborts during teardown, cannot hang or crash the test process.
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const { createHook } = require('async_hooks');
 const fs = require('fs');
-const fse = require('fs-extra');
+const fsp = require('fs/promises');
 const path = require('path');
+const { mkdirp, remove } = require('./common');
 
 const nsfw = require('../dist');
 
@@ -56,11 +57,11 @@ async function restartAfterError() {
   for (let i = 0; i < 5; i++) {
     const restarted = new Promise((resolve, reject) => {
       onError = () => {
-        fse.mkdirSync(watchDir);
+        fs.mkdirSync(watchDir);
         watch.start().then(resolve, reject);
       };
     });
-    await fse.remove(watchDir);
+    await remove(watchDir);
     await restarted;
     const file = `after-error-${i}`;
     const received = new Promise(resolve => {
@@ -68,7 +69,7 @@ async function restartAfterError() {
         if (events.some(event => event.file === file)) resolve();
       };
     });
-    await fse.writeFile(path.join(watchDir, file), 'restarted');
+    await fsp.writeFile(path.join(watchDir, file), 'restarted');
     await received;
   }
   await watch.stop();
@@ -82,7 +83,7 @@ async function discardStoppedRunError() {
   const drained = new Promise(resolve => { resolveDrained = resolve; });
   const marker = path.join(watchDir, 'stop-completed');
   const directory = path.join(watchDir, 'watched');
-  await fse.mkdir(directory);
+  await fsp.mkdir(directory);
   const watch = await nsfw(directory, () => {}, { errorCallback: () => { errors++; } });
   const resources = [];
   let capturing = true;
@@ -118,7 +119,7 @@ async function discardStoppedRunError() {
   if (resources.length !== 3) throw new Error(`unexpected start resources: ${resources.length}`);
   const errorResource = resources[2];
   await started;
-  fse.removeSync(directory);
+  fs.rmSync(directory, { recursive: true, force: true });
   await drained;
   await stopped;
   await markerCreated;
@@ -134,7 +135,7 @@ async function collectErroredWatchers() {
     let resolveError;
     const errored = new Promise(resolve => { resolveError = resolve; });
     const directory = path.join(watchDir, String(i));
-    await fse.mkdir(directory);
+    await fsp.mkdir(directory);
     const eventCallback = () => watch;
     const errorCallback = () => {
       resolveError();
@@ -145,7 +146,7 @@ async function collectErroredWatchers() {
     registry.register(eventCallback);
     registry.register(errorCallback);
     await watch.start();
-    await fse.remove(directory);
+    await remove(directory);
     await errored;
   };
   for (let i = 0; i < 10; i++) await createWatcher(i);
@@ -185,7 +186,7 @@ async function errorWithoutStop() {
   const errored = new Promise(resolve => { resolveError = resolve; });
   const watch = await nsfw(watchDir, () => {}, { errorCallback: resolveError });
   await watch.start();
-  await fse.remove(watchDir);
+  await remove(watchDir);
   await errored;
 }
 
@@ -234,7 +235,7 @@ async function updateExcludedPathsUnderLoad() {
   const excludedDirs = [];
   for (let i = 0; i < 20; i++) {
     excludedDirs.push(path.join(watchDir, `excluded${i}`));
-    await fse.mkdirp(path.join(watchDir, `excluded${i}`, 'nested'));
+    await mkdirp(path.join(watchDir, `excluded${i}`, 'nested'));
   }
 
   const watches = [];
@@ -250,10 +251,10 @@ async function updateExcludedPathsUnderLoad() {
     for (let i = 0; writing; i++) {
       const dir = path.join(excludedDirs[i % excludedDirs.length], 'nested', `dir${i % 5}`);
       try {
-        await fse.mkdirp(dir);
-        await fse.writeFile(path.join(dir, 'file'), String(i));
-        await fse.writeFile(path.join(watchDir, `file${i % 20}`), String(i));
-        await fse.remove(dir);
+        await mkdirp(dir);
+        await fsp.writeFile(path.join(dir, 'file'), String(i));
+        await fsp.writeFile(path.join(watchDir, `file${i % 20}`), String(i));
+        await remove(dir);
         writes++;
       } catch (error) {
         // Only here to keep the watchers busy: a transient failure (EBUSY or EPERM on Windows while something else
@@ -294,7 +295,7 @@ async function terminateBusyWorkers() {
     let writing = true;
     const writer = (async () => {
       while (writing) {
-        await fse.writeFile(path.join(watchDir, `file${counter++ % 20}`), String(counter));
+        await fsp.writeFile(path.join(watchDir, `file${counter++ % 20}`), String(counter));
       }
     })();
     await sleep(20 + Math.floor(Math.random() * 60));

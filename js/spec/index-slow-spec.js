@@ -1,30 +1,32 @@
+const { after, afterEach, beforeEach, describe } = require('node:test');
 const assert = require('assert');
 const fs = require('fs');
-const fse = require('fs-extra');
+const fsp = require('fs/promises');
 const path = require('path');
 
 const {
-  DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, sleep
+  DEBOUNCE, TIMEOUT_PER_STEP, WORKDIR: workDir, it, mkdirp, remove, sleep
 } = require('./common');
 
 const nsfw = require('../dist');
 
 describe('Node Sentinel File Watcher (slow)', function() {
-  this.timeout(120000);
 
   assert.ok(nsfw._native.NSFW_TEST_SLOW === true, 'NSFW should be built in slow mode');
 
-  beforeEach(function() {
-    return fse.mkdir(workDir, { recursive: true });
+  // Node 22 runs no afterEach hook after a test calls t.skip().
+  beforeEach(async function() {
+    await remove(workDir);
+    await fsp.mkdir(workDir, { recursive: true });
   });
 
   afterEach(function() {
-    return fse.remove(workDir);
+    return remove(workDir);
   });
 
   // Created by the hooks of the slow build once the event loop waits, see untilLoopWaits().
   after(function() {
-    return fse.remove(`/tmp/nsfw-test-waiting-${process.pid}`);
+    return remove(`/tmp/nsfw-test-waiting-${process.pid}`);
   });
 
   it('can listen for the creation of a deeply nested file', async function () {
@@ -70,8 +72,8 @@ describe('Node Sentinel File Watcher (slow)', function() {
     try {
       await watch.start();
       await sleep(TIMEOUT_PER_STEP);
-      await fse.mkdirp(directory);
-      await fse.close(await fse.open(filePath, 'w'));
+      await mkdirp(directory);
+      await fsp.writeFile(filePath, '');
       await Promise.race([
         sleep(folders.length * 500 * 1.5),
         promise,
@@ -88,14 +90,8 @@ describe('Node Sentinel File Watcher (slow)', function() {
   });
 
   // The slow build has test hooks in the Linux backend, triggered by files with these names in the watched directory.
-  describe('inotify errors', function() {
-    before(function() {
-      // FreeBSD builds the same backend on libinotify, which these hooks weren't written for and has no /proc limit.
-      if (process.platform !== 'linux') {
-        this.skip();
-      }
-    });
-
+  // FreeBSD builds the same backend on libinotify, which these hooks weren't written for and has no /proc limit.
+  describe('inotify errors', { skip: process.platform !== 'linux' }, function() {
     const touch = file => fs.closeSync(fs.openSync(path.join(workDir, file), 'w'));
 
     async function createWatcher() {
@@ -154,7 +150,7 @@ describe('Node Sentinel File Watcher (slow)', function() {
         overflowWhileHeld(maxQueuedEvents);
         // The hold file lets the loop go once the directory is gone. Whichever comes first, the poll thread noticing
         // the missing root or the loop reading the overflow, the root path error is the one reported.
-        await fse.remove(workDir);
+        await remove(workDir);
 
         assert.strictEqual(
           await expectError(errored, 30000),

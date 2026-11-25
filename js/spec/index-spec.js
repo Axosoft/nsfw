@@ -8,7 +8,7 @@ const { isDeepStrictEqual, promisify } = require('util');
 
 const {
   DEBOUNCE, WORKDIR: workDir, barrier, countInotifyWatches, it, mkdirp, outputFile, remove, sleep, untilNextSecond,
-  waitUntil, watchCountReaches
+  waitForEvent, waitUntil, watchCountReaches
 } = require('./common');
 
 const nsfw = require('../dist');
@@ -590,51 +590,43 @@ describe('Node Sentinel File Watcher', function() {
 
   describe('Pausing', function () {
     it('can pause and resume event reporting', async function () {
-      const file = 'another_test.file';
       const inPath = path.resolve(workDir, 'test2', 'folder2');
-      let eventFound = false;
-
-      function findEvent(element) {
-        if (
-          (
-            element.action === nsfw.actions.CREATED ||
-            element.action === nsfw.actions.MODIFIED
-          ) &&
-          element.directory === path.resolve(inPath) &&
-          element.file === file
-        ) {
-          eventFound = true;
-        }
-      }
-
       const events = [];
-      let watch = await nsfw(
-        workDir,
-        batch => {
-          batch.forEach(findEvent);
-          events.push(...batch);
-        },
-        { debounceMS: DEBOUNCE }
-      );
-      // Once this one reports the write made while paused, the paused watcher has had it too: FSEvents only delivers
-      // it after its latency, which can be after resume() otherwise.
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+      // Once this one reports a change made while paused, the paused watcher has likely had it too: FSEvents only
+      // delivers it after its latency, which can be after resume() otherwise.
       const witnessEvents = [];
       const witness = await nsfw(workDir, batch => witnessEvents.push(...batch), { debounceMS: DEBOUNCE });
+      const isFor = file => event => event.directory === inPath && (event.file === file || event.newFile === file);
+      const reported = (list, file) => list.some(isFor(file));
 
       try {
         await witness.start();
         await watch.start();
-        await watch.pause();
-        await fsp.writeFile(path.join(inPath, file), 'You will not see me.');
-        await waitUntil(() => witnessEvents.some(event => event.file === file),
-          { message: () => `No write in ${JSON.stringify(witnessEvents)}` });
-        await watch.resume();
-        // Whatever the pause held back would come before the barrier.
-        await barrier(events, workDir);
-        assert.ok(!eventFound);
+        // A write can raise more than one notification (a creation, then a modification once the file is closed),
+        // and the paused watcher's thread can read them later than the witness's. Within the watcher, though, they
+        // come in order: if it reports the write, it read it after resume(), and the marker after it. Only an
+        // attempt whose marker isn't reported shows pause() dropping events.
+        let file;
+        for (let attempt = 0; ; ++attempt) {
+          file = `paused-${attempt}.file`;
+          const marker = `paused-${attempt}.marker`;
+          await watch.pause();
+          await fsp.writeFile(path.join(inPath, file), 'You will not see me.');
+          await fsp.writeFile(path.join(inPath, marker), 'Marker');
+          await waitForEvent(witnessEvents, isFor(marker), marker);
+          await watch.resume();
+          // Whatever the pause held back would come before the barrier.
+          await barrier(events, workDir);
+          if (!reported(events, marker)) {
+            assert.ok(!reported(events, file), `${file} reported: ${JSON.stringify(events)}`);
+            break;
+          }
+          assert.ok(attempt < 4, `Every write made while paused was read after resume: ${JSON.stringify(events)}`);
+        }
 
         await fsp.writeFile(path.join(inPath, file), 'But you will see me.');
-        await waitUntil(() => eventFound, { message: 'No event after resume' });
+        await waitUntil(() => reported(events, file), { message: 'No event after resume' });
       } finally {
         await Promise.all([watch.stop(), witness.stop()]);
         watch = null;
@@ -720,6 +712,54 @@ describe('Node Sentinel File Watcher', function() {
         watch = null;
       }
     });
+
+    it('reports the first events at once and an error without waiting out debounceMS', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const debounceMS = 10000;
+      const events = [];
+      let error = null;
+      let watch = await nsfw(inPath, batch => events.push(...batch), {
+        debounceMS,
+        errorCallback(err) { error = err; }
+      });
+      try {
+        await watch.start();
+        await fsp.writeFile(path.join(inPath, 'first.file'), 'First');
+        await waitUntil(() => events.some(event => event.file === 'first.file'),
+          { timeout: debounceMS / 2, message: 'The first event waited for debounceMS' });
+        // A delivery just happened: whatever comes next waits until debounceMS after it, except an error.
+        await fsp.rename(inPath, path.join(workDir, 'test4_renamed'));
+        await waitUntil(() => error !== null, { timeout: debounceMS / 2, message: 'The error waited for debounceMS' });
+        assert.equal(error.message, 'Service shutdown: root path changed (renamed or deleted)');
+      } finally {
+        await watch.stop().catch(() => {});
+        watch = null;
+      }
+    });
+
+    if (process.platform === 'linux') {
+      it('Report error on a directory above the watched folder replaced by another at the same path', async function() {
+        const parentPath = path.join(workDir, 'test4');
+        const inPath = path.join(parentPath, 'test4_watched');
+        let errorOk = false;
+        let watch;
+        try {
+          await fsp.mkdir(inPath);
+          watch = await nsfw(inPath, () => {}, {
+            errorCallback(error) {
+              errorOk = error.message === 'Service shutdown: root path changed (renamed or deleted)';
+            }
+          });
+          await watch.start();
+          await fsp.rename(parentPath, path.join(workDir, 'test4_renamed'));
+          await fsp.mkdir(inPath, { recursive: true });
+          await waitUntil(() => errorOk, { message: 'No shutdown error' });
+        } finally {
+          await watch.stop().catch(() => {});
+          watch = null;
+        }
+      });
+    }
 
     if (process.platform !== 'win32') {
       it('Report error on delete watched folder', async function() {

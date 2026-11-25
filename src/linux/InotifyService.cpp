@@ -25,7 +25,8 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
   }
 
   const uint64_t beforeScan = mFilter->generation();
-  mTree = new InotifyTree(mInotifyInstance, path, excludedPaths, mFilter);
+  mTree = new InotifyTree(mInotifyInstance, path, excludedPaths, mFilter,
+    [queue]() { queue->wake(EventQueue::WAKE_ERROR); });
   // The scan used the rules as they are. One that changed meanwhile (read again after failing) may have decided some
   // directories by other rules: it stays to commit, and the event loop applies it then, like any change.
   mCommittedGeneration = mExcludedGeneration = mSeenGeneration = mFilter->commit(beforeScan);

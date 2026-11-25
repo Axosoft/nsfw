@@ -122,8 +122,43 @@ void EventQueue::push(
   const std::string &toDirectory,
   const std::string &toFile
 ) {
-  std::lock_guard<std::mutex> lock(mutex);
-  queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile)));
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile)));
+  }
+  wake(WAKE_EVENTS);
+}
+
+void EventQueue::wake(unsigned reasons) {
+  bool waiting;
+  {
+    std::lock_guard<std::mutex> lock(mWakeMutex);
+    const unsigned added = reasons & ~mWakes;
+    mWakes |= reasons;
+    // A burst of events notifies once, and none while the delivery thread waits out the debounce for other reasons.
+    waiting = (added & mWaitingFor) != 0;
+  }
+  if (waiting) mWakeCondition.notify_one();
+}
+
+unsigned EventQueue::waitForWake(unsigned reasons, std::chrono::steady_clock::time_point deadline) {
+  std::unique_lock<std::mutex> lock(mWakeMutex);
+  mWaitingFor = reasons;
+  auto woken = [this, reasons]() { return (mWakes & reasons) != 0; };
+  if (deadline == std::chrono::steady_clock::time_point::max()) {
+    mWakeCondition.wait(lock, woken);
+  } else {
+    mWakeCondition.wait_until(lock, deadline, woken);
+  }
+  mWaitingFor = 0;
+  const unsigned taken = mWakes & reasons;
+  mWakes &= ~taken;
+  return taken;
+}
+
+void EventQueue::resetWakes() {
+  std::lock_guard<std::mutex> lock(mWakeMutex);
+  mWakes = 0;
 }
 
 void EventQueue::setFilter(std::shared_ptr<PathFilter> filter, bool watcherNotesEntries) {

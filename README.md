@@ -73,6 +73,12 @@ return nsfw(
 - errorCallback(errors): the library will call this callback when an error happens.
 On Linux that includes an overflow of the inotify event queue (`fs.inotify.max_queued_events`), which means events
 were lost: restart the watcher and rescan what you track.
+It also includes the watched directory being renamed or deleted, a directory above it included
+(`Service shutdown: root path changed (renamed or deleted)`): from then on its path leads elsewhere. On Linux, a rename
+of a directory above it is noticed before the watcher handles any further batch of events, which it then drops, before
+it delivers any further events, or within about 1 s while the watcher is idle. On Windows, a rename of the watched
+directory is noticed at once, or within about 1 s where the directory that holds it can't be watched. Events already
+being delivered when the rename happens may still reach `eventCallback` under the old path, before the error.
 A directory watcher retires the failed run and releases that run's native resources before calling `errorCallback`.
 Errors queued by a run that has already been explicitly stopped or replaced are discarded.
 After fixing the cause (for example, recreating a deleted directory), call `start()` to watch again;

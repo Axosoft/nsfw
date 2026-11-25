@@ -100,6 +100,7 @@ Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
     mOverlapped.hEvent = this;
     resizeBuffers(1024 * 1024);
     mWatchedPath = getWatchedPathFromHandle();
+    openParent();
     start();
   }
 }
@@ -111,6 +112,10 @@ Watcher::~Watcher() {
     CancelIo(mDirectoryHandle);
     CloseHandle(mDirectoryHandle);
   }
+  if (mParentHandle != INVALID_HANDLE_VALUE) {
+    CancelIo(mParentHandle);
+    CloseHandle(mParentHandle);
+  }
 }
 
 void Watcher::resizeBuffers(std::size_t size) {
@@ -120,8 +125,54 @@ void Watcher::resizeBuffers(std::size_t size) {
 
 void Watcher::run() {
   while(mRunning) {
-    SleepEx(INFINITE, true);
+    if (!mPollWatchedPath) {
+      SleepEx(INFINITE, true);
+    } else if (SleepEx(1000, true) == 0 && mRunning && !hasError()) {
+      checkWatchedPath();
+    }
   }
+}
+
+// The parent of the directory the handle leads to, not of the path as given: through a junction, a symlink or a
+// subst drive, renaming the directory changes a name in that one.
+void Watcher::openParent() {
+  std::wstring path;
+  {
+    std::lock_guard<std::mutex> lock(mHandleMutex);
+    DWORD length = GetFinalPathNameByHandleW(mDirectoryHandle, NULL, 0, VOLUME_NAME_DOS);
+    if (length != 0) {
+      path.resize(length);
+      length = GetFinalPathNameByHandleW(mDirectoryHandle, &path[0], length, VOLUME_NAME_DOS);
+      path.resize(length < path.size() ? length : 0);
+    }
+  }
+  // \\?\C:\dir or \\?\UNC\server\share\dir. A drive or share root has no parent, and can't be renamed.
+  const std::wstring unc = L"\\\\?\\UNC\\";
+  const std::size_t rootSeparators = path.compare(0, unc.size(), unc) == 0 ? 5 : 3;
+  const auto last = path.find_last_not_of(L"\\");
+  const auto separator = last == std::wstring::npos ? last : path.find_last_of(L"\\", last);
+  std::size_t separators = 0;
+  for (std::size_t i = 0; separator != std::wstring::npos && i <= separator; ++i) {
+    if (path[i] == L'\\') ++separators;
+  }
+  if (!path.empty() && separators <= rootSeparators) {
+    return;
+  }
+  if (separator != std::wstring::npos) {
+    mParentHandle = openDirectory(path.substr(0, separator + 1));
+  }
+  if (mParentHandle == INVALID_HANDLE_VALUE) {
+    mPollWatchedPath = true;
+    return;
+  }
+  ZeroMemory(&mParentOverlapped, sizeof(OVERLAPPED));
+  mParentOverlapped.hEvent = this;
+  mParentBuffer.resize(4096);
+}
+
+bool Watcher::hasError() {
+  std::lock_guard<std::mutex> lock(mErrorMutex);
+  return !mError.empty();
 }
 
 bool Watcher::pollDirectoryChanges() {
@@ -187,6 +238,53 @@ void Watcher::reopenWathedFolder() {
   pollDirectoryChanges();
 }
 
+// Only the directory names in the parent: what renames the watched directory, or moves it out. Each change has the
+// path the watched directory's handle leads to compared again, instead of checking it on a timer.
+void Watcher::watchParent() {
+  std::lock_guard<std::mutex> lock(mHandleMutex);
+  if (mParentHandle == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  DWORD bytes = 0;
+  if (!ReadDirectoryChangesW(
+    mParentHandle,
+    mParentBuffer.data(),
+    static_cast<DWORD>(mParentBuffer.size()),
+    FALSE,
+    FILE_NOTIFY_CHANGE_DIR_NAME,
+    &bytes,
+    &mParentOverlapped,
+    [](DWORD errorCode, DWORD numBytes, LPOVERLAPPED overlapped) {
+      auto watcher = reinterpret_cast<Watcher*>(overlapped->hEvent);
+      watcher->parentChanged(errorCode);
+    }))
+  {
+    CloseHandle(mParentHandle);
+    mParentHandle = INVALID_HANDLE_VALUE;
+    mPollWatchedPath = true;
+  }
+}
+
+void Watcher::parentChanged(DWORD errorCode) {
+  if (errorCode == ERROR_OPERATION_ABORTED || !isRunning()) {
+    return;
+  }
+  checkWatchedPath();
+  if (hasError()) {
+    return;
+  }
+  // An overflow only lost names: the check above covers them. Any other failure, the parent being deleted say, ends
+  // its watch, so the handle doesn't keep it from going, and the path is checked on a timer instead.
+  if (errorCode != ERROR_SUCCESS && errorCode != ERROR_NOTIFY_ENUM_DIR) {
+    std::lock_guard<std::mutex> lock(mHandleMutex);
+    CloseHandle(mParentHandle);
+    mParentHandle = INVALID_HANDLE_VALUE;
+    mPollWatchedPath = true;
+    return;
+  }
+  watchParent();
+}
+
 void Watcher::eventCallback(DWORD errorCode) {
   if (errorCode != ERROR_SUCCESS) {
     if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
@@ -211,6 +309,11 @@ void Watcher::eventCallback(DWORD errorCode) {
 
   std::swap(mWriteBuffer, mReadBuffer);
   pollDirectoryChanges();
+  // Not under a path that leads elsewhere now: the run ends with the error, and the batch with it.
+  checkWatchedPath();
+  if (hasError()) {
+    return;
+  }
   handleEvents();
 }
 
@@ -328,6 +431,8 @@ void Watcher::start() {
   QueueUserAPC([](__in ULONG_PTR self) {
     auto watcher = reinterpret_cast<Watcher*>(self);
     watcher->pollDirectoryChanges();
+    // From this thread: the completion routines run on the one that issued the read.
+    watcher->watchParent();
     watcher->mHasStartedSemaphore.signal();
   }, mRunner.native_handle(), (ULONG_PTR)this);
 
@@ -347,8 +452,11 @@ void Watcher::stop() {
 }
 
 void Watcher::setError(const std::string &error) {
-  std::lock_guard<std::mutex> lock(mErrorMutex);
-  mError = error;
+  {
+    std::lock_guard<std::mutex> lock(mErrorMutex);
+    mError = error;
+  }
+  mQueue->wake(EventQueue::WAKE_ERROR);
 }
 
 std::string Watcher::getError() {

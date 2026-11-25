@@ -43,8 +43,9 @@ class InotifyTree {
     }
   };
 public:
+  // errorRecorded: called once, by the thread that records the first error, outside the tree's locks.
   InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths,
-    std::shared_ptr<PathFilter> filter);
+    std::shared_ptr<PathFilter> filter, std::function<void()> errorRecorded);
 
   void addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent = nullptr);
   std::string getError();
@@ -311,15 +312,17 @@ private:
   void findStaleLinksByTarget(std::map<Directory, int> &stale, EmitCreatedEvent emitCreatedEvent);
   bool discardStaleLinkAt(const PhysicalExclusion &excluded, const std::string &path, const Directory &identity,
     int watchDescriptor, EmitCreatedEvent emitCreatedEvent);
-  bool existWatchedPath();
+  bool leadsToWatchedDirectory();
   bool isWatchedPathGone();
 
   // mError: the event loop thread records errors while it handles events, and so do the threads that add watches outside it
-  // (the initial scan on start, updateExcludedPaths()). The poll thread reads it in getError(), and any thread calling
-  // hasErrored() (the poll thread, inotifyInit() on the others) records the root path error there. Nothing else is
-  // locked while holding this mutex, so it can't take part in a lock order problem with the event loop mutex.
+  // (the initial scan on start, updateExcludedPaths()). The delivery thread reads it in getError(), and any thread
+  // calling hasErrored() (the event loop thread before handling each read and while idle, the delivery thread,
+  // inotifyInit() on the others) records the root path error there. Nothing else is locked while holding this mutex,
+  // so it can't take part in a lock order problem with the event loop mutex.
   std::string mError;
   std::mutex mErrorMutex;
+  std::function<void()> mErrorRecorded;
   const int mInotifyInstance;
   std::unordered_map<int, InotifyNode *> mInotifyNodeByWatchDescriptor;
   // A null value reserves a directory while its node is being constructed.
@@ -425,7 +428,7 @@ private:
       }
     }
   };
-  // Read by the poll thread through isRootAlive() while the event loop thread clears it in removeDirectory().
+  // Read by the delivery thread through isRootAlive() while the event loop thread clears it in removeDirectory().
   std::atomic<InotifyNode *> mRoot;
   // The nodes that missed a directory a rename still queued may have moved: one that went away while they scanned or
   // added it, or one they couldn't add because their path leads elsewhere, see rescanIncomplete(). Forgotten once no

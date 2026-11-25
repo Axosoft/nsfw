@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.1.1
 
 ### Fixed
 - A watched file outlives its directory again, as it did up to 3.0.x. Since 3.1.0, when the directory holding the file

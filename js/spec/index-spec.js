@@ -552,6 +552,411 @@ describe('Node Sentinel File Watcher', function() {
     });
   });
 
+  describe('Single file', function() {
+    const inPath = () => path.join(workDir, 'test1');
+    const file = 'testing1.file';
+    const filePath = () => path.join(inPath(), file);
+
+    // The native addon, telling when it hands an error over: the file watcher may keep it from the caller.
+    function errorSpy() {
+      const Native = require('node-gyp-build')(path.join(__dirname, '..', '..'));
+      const taken = [];
+      class Spy extends Native {
+        constructor(watchPath, callback, options) {
+          super(watchPath, callback, { ...options, errorCallback: error => {
+            taken.push(error);
+            options.errorCallback(error);
+          } });
+        }
+      }
+      return { nativeBinding: Spy, taken };
+    }
+
+    async function watchFile(watchPath, options = {}) {
+      const events = [];
+      const errors = [];
+      const watch = await nsfw(watchPath, batch => events.push(...batch),
+        { debounceMS: DEBOUNCE, errorCallback: error => errors.push(error), ...options });
+      return { watch, events, errors };
+    }
+
+    const describeEvents = events => () => JSON.stringify(events);
+
+    // Waits for an event with action about name in directory.
+    const reported = (events, action, directory = inPath(), name = file) => waitForEvent(events,
+      event => event.action === action && event.directory === directory && event.file === name,
+      `action ${action} for ${name}`);
+
+    // Modifies the watched file and waits for it to be reported: events are delivered in order, so whatever happened
+    // before has been reported too.
+    async function modified(events, watchedPath = filePath(), directory = inPath(), name = file) {
+      const offset = events.length;
+      await fsp.appendFile(watchedPath, 'barrier');
+      await waitUntil(() => events.slice(offset).some(event => event.action === nsfw.actions.MODIFIED &&
+        event.directory === directory && event.file === name),
+      { message: () => `No modification of ${name} in ${JSON.stringify(events)}` });
+    }
+
+    it('reports neither its siblings nor what its directory holds', async function() {
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        await fsp.writeFile(path.join(inPath(), 'sibling.file'), 'sibling');
+        await fsp.writeFile(path.join(inPath(), 'folder1', file), 'same name below');
+        await fsp.mkdir(path.join(inPath(), 'folder1', 'nested'));
+        await fsp.writeFile(path.join(inPath(), 'folder1', 'nested', file), 'deeper');
+        await fsp.rename(path.join(inPath(), 'sibling.file'), path.join(inPath(), 'folder1', 'moved.file'));
+        await modified(events);
+        assert.ok(events.every(event => event.action === nsfw.actions.MODIFIED && event.directory === inPath() &&
+          event.file === file), describeEvents(events)());
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('holds a single inotify watch, whatever its directory holds', async function(t) {
+      if (process.platform !== 'linux') return t.skip();
+      for (let i = 0; i < 20; i++) {
+        await mkdirp(path.join(inPath(), `sub${i}`, 'nested'));
+      }
+      const before = countInotifyWatches();
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        assert.strictEqual(countInotifyWatches(), before + 1);
+        await mkdirp(path.join(inPath(), 'created', 'nested'));
+        await fsp.rename(path.join(inPath(), 'sub0'), path.join(inPath(), 'renamed'));
+        await modified(events);
+        assert.strictEqual(countInotifyWatches(), before + 1);
+      } finally {
+        await watch.stop();
+      }
+      await watchCountReaches(before);
+    });
+
+    it('does not poll the file', async function() {
+      const fsPromises = require('fs').promises;
+      const { stat, lstat } = fsPromises;
+      const calls = [];
+      const { watch, events } = await watchFile(filePath(), { debounceMS: 1 });
+      fsPromises.stat = (...args) => {
+        calls.push(['stat', args[0]]);
+        return stat.apply(fsPromises, args);
+      };
+      fsPromises.lstat = (...args) => {
+        calls.push(['lstat', args[0]]);
+        return lstat.apply(fsPromises, args);
+      };
+      try {
+        await watch.start();
+        calls.length = 0;
+        // Nothing looks at the file while it is watched, however long that is.
+        await sleep(500);
+        await modified(events);
+        assert.deepStrictEqual(calls, []);
+      } finally {
+        fsPromises.stat = stat;
+        fsPromises.lstat = lstat;
+        await watch.stop();
+      }
+    });
+
+    it('reports a file renamed over it as modified', async function() {
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        const temporary = path.join(inPath(), 'testing1.file.tmp');
+        await fsp.writeFile(temporary, 'saved atomically');
+        await fsp.rename(temporary, filePath());
+        await reported(events, nsfw.actions.MODIFIED);
+        await modified(events);
+        assert.ok(events.every(event => event.action === nsfw.actions.MODIFIED), describeEvents(events)());
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('reports it renamed away as deleted, and renamed back as created', async function() {
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        const away = path.join(inPath(), 'away.file');
+        await fsp.rename(filePath(), away);
+        await reported(events, nsfw.actions.DELETED);
+        await fsp.rename(away, filePath());
+        await reported(events, nsfw.actions.CREATED);
+        await modified(events);
+        assert.deepStrictEqual(events.map(event => event.action).filter(action => action !== nsfw.actions.MODIFIED),
+          [nsfw.actions.DELETED, nsfw.actions.CREATED]);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('uses a removal received while the startup stat settles to classify a later creation', async function() {
+      const Native = require('node-gyp-build')(path.join(__dirname, '..', '..'));
+      let removed = false;
+      class Spy extends Native {
+        constructor(watchPath, callback, options) {
+          super(watchPath, batch => {
+            callback(batch);
+            removed ||= batch.some(event => event.file === file && event.action === nsfw.actions.DELETED);
+          }, options);
+        }
+      }
+      const { watch, events } = await watchFile(filePath(), { nativeBinding: Spy });
+      const { stat } = fsp;
+      let observed = false;
+      let release;
+      const held = new Promise(resolve => { release = resolve; });
+      fsp.stat = async (...args) => {
+        const snapshot = await stat(...args);
+        if (path.basename(args[0]) === file) {
+          observed = true;
+          await held;
+        }
+        return snapshot;
+      };
+      try {
+        const started = watch.start();
+        await waitUntil(() => observed, { message: 'start() did not stat the watched file' });
+        await fsp.unlink(filePath());
+        await waitUntil(() => removed, { message: 'Native watcher did not report the removal' });
+        release();
+        await started;
+        assert.deepStrictEqual(events, []);
+        await fsp.writeFile(filePath(), 'back');
+        await waitUntil(() => events.length > 0, { message: 'No event after the file was recreated' });
+        assert.strictEqual(events[0].action, nsfw.actions.CREATED);
+      } finally {
+        fsp.stat = stat;
+        release();
+        await watch.stop();
+      }
+    });
+
+    it('takes a name with the characters of patterns literally', async function() {
+      const name = process.platform === 'win32' ? '[ab] !#x.file' : '[ab] !#*?\\x.file';
+      const watchedPath = path.join(inPath(), name);
+      await fsp.writeFile(watchedPath, 'special');
+      // What the name matches as a pattern, which is not the file.
+      const lookalike = process.platform === 'win32' ? 'a !#x.file' : 'a !#yzx.file';
+      const { watch, events } = await watchFile(watchedPath);
+      try {
+        await watch.start();
+        await fsp.writeFile(path.join(inPath(), lookalike), 'lookalike');
+        await modified(events, watchedPath, inPath(), name);
+        assert.ok(events.every(event => event.file === name), describeEvents(events)());
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('watches the file a symlink leads to, under the symlink\'s name', async function(t) {
+      if (process.platform === 'win32') return t.skip();
+      const target = path.join(workDir, 'test2', 'testing2.file');
+      const link = path.join(inPath(), 'link.file');
+      await fsp.symlink(target, link, 'file');
+      const { watch, events } = await watchFile(link);
+      try {
+        await watch.start();
+        await untilNextSecond(target);
+        await fsp.writeFile(target, 'through the target');
+        await reported(events, nsfw.actions.MODIFIED, inPath(), 'link.file');
+        await fsp.writeFile(path.join(workDir, 'test2', 'sibling.file'), 'sibling');
+        await modified(events, link, inPath(), 'link.file');
+        assert.ok(events.every(event => event.directory === inPath() && event.file === 'link.file'),
+          describeEvents(events)());
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('reports the removal of its directory, then an error', async function(t) {
+      // Windows doesn't let a directory go while it is watched.
+      if (process.platform === 'win32') return t.skip();
+      const { watch, events, errors } = await watchFile(filePath());
+      try {
+        await watch.start();
+        await remove(inPath());
+        await waitUntil(() => errors.length > 0, { message: 'No error' });
+        assert.strictEqual(errors[0].message, 'Service shutdown: root path changed (renamed or deleted)');
+        assert.deepStrictEqual(events.map(event => event.action), [nsfw.actions.DELETED]);
+        await mkdirp(inPath());
+        await watch.start();
+        await fsp.writeFile(filePath(), 'back');
+        await reported(events, nsfw.actions.CREATED);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('reports the error, not the removal, of its directory while paused', async function(t) {
+      // Windows doesn't let a directory go while it is watched.
+      if (process.platform === 'win32') return t.skip();
+      const { watch, events, errors } = await watchFile(filePath());
+      try {
+        await watch.start();
+        await watch.pause();
+        await remove(inPath());
+        await waitUntil(() => errors.length > 0, { message: 'No error' });
+        assert.deepStrictEqual(events, []);
+        await mkdirp(inPath());
+        await fsp.writeFile(filePath(), 'back');
+        await watch.start();
+        await modified(events);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('delivers nothing once stopped, even as its directory goes', async function(t) {
+      // Windows doesn't let a directory go while it is watched.
+      if (process.platform === 'win32') return t.skip();
+      const fsPromises = require('fs').promises;
+      const { stat } = fsPromises;
+      const { watch, events, errors } = await watchFile(filePath());
+      // Holds the look the error takes at the file, so that stop() comes between the error and its delivery.
+      let looked = false;
+      let release;
+      const held = new Promise(resolve => { release = resolve; });
+      try {
+        await watch.start();
+        fsPromises.stat = async (...args) => {
+          if (args[0] === filePath()) {
+            looked = true;
+            await held;
+          }
+          return stat.apply(fsPromises, args);
+        };
+        await remove(inPath());
+        await waitUntil(() => looked, { message: 'The error was not delivered' });
+        // What the native watcher reported before the error, the file's own removal among them, may be delivered.
+        const delivered = events.length;
+        const stopped = watch.stop();
+        release();
+        await stopped;
+        await sleep(DEBOUNCE * 4);
+        assert.deepStrictEqual([events.slice(delivered), errors], [[], []]);
+      } finally {
+        fsPromises.stat = stat;
+        release();
+        await watch.stop();
+      }
+    });
+
+    for (const [when, paused] of [['resumed', true], ['started', false]]) {
+      it(`does not deliver an error once stop() was called before it, on a watcher being ${when}`, async function(t) {
+        // Windows doesn't let a directory go while it is watched.
+        if (process.platform === 'win32') return t.skip();
+        const fsPromises = require('fs').promises;
+        const { stat } = fsPromises;
+        const spy = errorSpy();
+        const { watch, events, errors } = await watchFile(filePath(), { nativeBinding: spy.nativeBinding });
+        let looked = false;
+        let release;
+        const held = new Promise(resolve => { release = resolve; });
+        try {
+          if (paused) {
+            await watch.start();
+            await watch.pause();
+          }
+          // Holds the look start() takes at the file, so that stop() waits behind it while the directory goes.
+          fsPromises.stat = async (...args) => {
+            if (args[0] === filePath()) {
+              looked = true;
+              await held;
+            }
+            return stat.apply(fsPromises, args);
+          };
+          const started = watch.start();
+          const stopping = watch.stop();
+          await waitUntil(() => looked, { message: 'start() did not look at the file' });
+          const delivered = events.length;
+          await remove(inPath());
+          await waitUntil(() => spy.taken.length > 0, { message: 'The removal of the directory was not reported' });
+          release();
+          await Promise.all([started, stopping]);
+          await sleep(DEBOUNCE * 4);
+          assert.deepStrictEqual([events.slice(delivered), errors], [[], []]);
+        } finally {
+          fsPromises.stat = stat;
+          release();
+          await watch.stop();
+        }
+      });
+    }
+
+    it('delivers an error before a resume() called before it', async function(t) {
+      // Windows doesn't let a directory go while it is watched.
+      if (process.platform === 'win32') return t.skip();
+      const fsPromises = require('fs').promises;
+      const { stat } = fsPromises;
+      const spy = errorSpy();
+      const { watch, errors } = await watchFile(filePath(), { nativeBinding: spy.nativeBinding });
+      let looked = false;
+      let release;
+      const held = new Promise(resolve => { release = resolve; });
+      try {
+        // Holds the look start() takes at the file, so that resume() waits behind it while the directory goes.
+        fsPromises.stat = async (...args) => {
+          if (args[0] === filePath()) {
+            looked = true;
+            await held;
+          }
+          return stat.apply(fsPromises, args);
+        };
+        const started = watch.start();
+        await waitUntil(() => looked, { message: 'start() did not look at the file' });
+        const resumed = watch.resume().then(() => null, error => error);
+        await remove(inPath());
+        await waitUntil(() => spy.taken.length > 0, { message: 'The removal of the directory was not reported' });
+        release();
+        await started;
+        // The error comes first, then resume() starts the watcher again, which fails or fails later as the directory
+        // is gone, depending on the system.
+        await resumed;
+        assert.ok(errors.length > 0, 'The error was not delivered');
+        assert.strictEqual(errors[0].message, 'Service shutdown: root path changed (renamed or deleted)');
+      } finally {
+        fsPromises.stat = stat;
+        release();
+        await watch.stop();
+      }
+    });
+
+    it('starts, stops, pauses and resumes whatever state it is in', async function() {
+      const { watch, events } = await watchFile(filePath());
+      await watch.stop();
+      await watch.pause();
+      await watch.resume();
+      try {
+        await watch.start();
+        await modified(events);
+        await watch.pause();
+        await watch.pause();
+        const offset = events.length;
+        await fsp.appendFile(filePath(), 'unseen');
+        await sleep(DEBOUNCE * 4);
+        assert.deepStrictEqual(events.slice(offset), []);
+        await watch.stop();
+        await watch.start();
+        await modified(events);
+        await Promise.all([watch.stop(), watch.start()]);
+        await modified(events);
+      } finally {
+        await watch.stop();
+        await watch.stop();
+      }
+    });
+
+    it('takes a debounce longer than a directory watcher does', async function() {
+      const watch = await nsfw(filePath(), () => {}, { debounceMS: 120000 });
+      await watch.start();
+      await watch.stop();
+    });
+  });
+
   describe('Recursive', function() {
     it('can listen for the destruction of a directory and its subtree', async function() {
       const inPath = path.resolve(workDir, 'test4');
@@ -1322,7 +1727,7 @@ describe('Node Sentinel File Watcher', function() {
       const alias = path.join(workDir, 'type-alias');
       await fsp.symlink(file, alias, 'file');
       // The alias names the directory while realpath() runs and the file again before anything else reads it, so
-      // neither the directory nor the file poller is what the caller's path names throughout construction.
+      // neither the directory nor the file watcher is what the caller's path names throughout construction.
       const restore = stubRealpath(async (value, realpath) => {
         if (value !== alias) return realpath(value);
         await remove(alias);

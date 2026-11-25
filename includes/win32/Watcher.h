@@ -18,7 +18,7 @@ class Watcher
 {
   public:
     Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
-      const std::vector<std::wstring> &excludedPaths, std::shared_ptr<PathFilter> filter);
+      const std::vector<std::wstring> &excludedPaths, std::shared_ptr<PathFilter> filter, bool recursive = true);
     ~Watcher();
 
     bool isRunning() const { return mRunning; }
@@ -68,6 +68,7 @@ class Watcher
     std::wstring mWatchedPath;
 
     const std::wstring mPath;
+    const bool mRecursive;
     std::shared_ptr<EventQueue> mQueue;
     HANDLE mDirectoryHandle;
     // Read on the watcher thread, replaced from a worker thread by updateExcludedPaths.
@@ -80,6 +81,10 @@ class Watcher
     unsigned mAbortedReads = 0;
     // The old name of a rename whose new name hasn't been read yet, empty if none. Only used on the watcher thread.
     std::wstring mPendingOldName;
+    static constexpr ULONGLONG NO_DEADLINE = static_cast<ULONGLONG>(-1);
+    ULONGLONG mRenameDeadline = NO_DEADLINE;
+    ULONGLONG mRemovalDeadline = NO_DEADLINE;
+    void releaseRemoval();
     // The entries the scans of directories that appeared reported, by their lower-case path relative to the watched
     // one, with the number of the read they were found in: the system may report their creation too, see
     // forgetOldScans(). Only used on the watcher thread.

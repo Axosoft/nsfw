@@ -22,6 +22,30 @@
 - On Windows, a rename of the watched directory is noticed through the directory that holds it, as resolved through
   junctions, symlinks and subst drives, and before each batch of events is handled. Only where that directory can't
   be watched does the watcher check the path once a second.
+- Watching a single file no longer polls it (#134). Instead of a `stat()` of the file every `debounceMS`, costly on
+  network storage, the directory it is in is watched by the system, natively filtered down to the file's entry: on
+  Linux that takes a single inotify watch, whatever the directory holds (two while a directory takes the file's
+  name), and on Windows the directory is watched without its subdirectories. The events stay the same, `CREATED`,
+  `DELETED` and `MODIFIED` under the directory and name of the path given, including `MODIFIED` for a file renamed
+  over the watched one. What differs:
+  - When the file's directory is removed or renamed, the file's removal is reported (unless paused), then
+    `errorCallback` gets `Service shutdown: root path changed (renamed or deleted)` and the watcher stops, as a
+    directory watcher does; without an `errorCallback` that error is thrown. `start()` watches again once the
+    directory is back, and can reject with `NSFW was unable to start watching that directory.` until then. Before,
+    the removal was reported and the file kept being polled, so its creation was reported once the directory came
+    back.
+  - Changes are reported as they happen, as for a directory, instead of as one `stat()` per `debounceMS` saw
+    them: a removal and a creation that fall in two batches are reported as such, where one `stat()` could see
+    them as a single `MODIFIED`. A `debounceMS` above 60000 is taken as 60000.
+  - Writes through a hard link in another directory are not reported.
+  - On Windows, the watched directory is open while it is watched, which can keep the directories above it from being
+    renamed or removed; a watched symlink is followed once, when the watcher is created, as on Linux and macOS; and a
+    change of the file's attributes is reported as `MODIFIED`, as a change of its change time was.
+  - Any error of the watcher of the directory, such as its event queue overflowing under heavy activity in the
+    directory, stops the file watcher and reaches `errorCallback`, thrown without one, as for a directory. The poller
+    never failed. On Linux, the directory is checked once a second while idle, as a watched directory is.
+  - An `errorCallback` that is neither a function nor falsy makes `nsfw()` reject with `TypeError:
+    options.errorCallback must be a function.`, as for a directory. Before, a file watcher ignored it.
 
 ### Fixed
 - On Windows, a read of the watched directory that was aborted (`ERROR_OPERATION_ABORTED`, as when its pending I/O is

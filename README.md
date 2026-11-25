@@ -151,6 +151,29 @@ watched directories, not to a watched file.
 [Custom binary location](#custom-binary-location): the absolute path to its `.node` file, or the module a `require()`
 of that file returned.
 
+## Watching a single file
+
+`nsfw()` also takes the path of a file. It isn't polled: the directory it is in is watched by the system, natively
+filtered down to the file's own entry, so its siblings and what the directory holds cost nothing in JavaScript and, on
+Linux, the watcher takes a single inotify watch (two while a directory takes the file's name). As for a watched
+directory, the Linux watcher still checks the directory once a second while idle, and any error of the watcher of the
+directory, such as its event queue overflowing under heavy activity in the directory, stops the file watcher and
+reaches `errorCallback`. Events about the file are reported under the directory and name of the path given, a
+symlink's rather than its target's:
+- `CREATED` when it appears, by a rename onto it too, and `DELETED` when it goes, by a rename away too.
+- `MODIFIED` when it changes, its attributes included. A file renamed over it, as editors save, is reported as
+  `MODIFIED`, and so is a file removed and created again within the same batch of events (a removal and a creation
+  told apart, by a pause after the removal say, are reported as such).
+
+A symlink is followed once, when the watcher is created: the file it led to then is the one watched. Writes through a
+hard link in another directory are not reported. `start()`, `stop()`, `pause()` and `resume()` never reject over the
+watcher's state: starting or resuming a running watcher, and stopping or pausing one that isn't, do nothing, and
+`resume()` starts a stopped watcher. When the file's directory is removed or renamed, the file's removal is reported
+(unless paused), then `errorCallback` gets `Service shutdown: root path changed (renamed or deleted)` and the watcher
+stops, as a directory watcher does; `start()` watches again once the directory is back. On Windows the directory is
+open while it is watched, which can keep the directories above it from being renamed or removed. `debounceMS` above
+60000 is taken as 60000.
+
 ## Callback Argument
 
 An array of events as they have happened in a directory, it's children, or to a file.

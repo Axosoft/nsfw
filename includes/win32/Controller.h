@@ -10,7 +10,7 @@ class EventQueue;
 class Controller {
   public:
     Controller(std::shared_ptr<EventQueue> queue, const std::string &path, const std::vector<std::string> &excludedPaths,
-      std::shared_ptr<PathFilter> filter);
+      std::shared_ptr<PathFilter> filter, bool recursive = true);
 
     std::string getError();
     bool hasErrored();

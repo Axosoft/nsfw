@@ -1,8 +1,10 @@
 #include "../../includes/osx/FSEventsService.h"
+#include <cstring>
 #include <iostream>
 
-FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths):
-  mPath(path), mQueue(queue), mRootChanged(false) {
+FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
+  bool recursive):
+  mPath(path), mQueue(queue), mRootChanged(false), mRecursive(recursive) {
   mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
   mExcludedPaths = createExcludedPaths(excludedPaths);
   mRootExcluded = excludesRoot(mExcludedPaths);
@@ -73,6 +75,10 @@ void FSEventsServiceCallback(
       eventsService->mRootChanged = true;
       eventsService->mQueue->wake(EventQueue::WAKE_ERROR);
       break;
+    }
+    // FSEvents can't watch a single level: dropped before anything below costs a stat() or a filter lookup.
+    if (eventsService->isOutsideChildren(paths[i])) {
+      continue;
     }
     bool isCreated = (eventFlags[i] & kFSEventStreamEventFlagItemCreated) == kFSEventStreamEventFlagItemCreated;
     bool isRemoved = (eventFlags[i] & kFSEventStreamEventFlagItemRemoved) == kFSEventStreamEventFlagItemRemoved;
@@ -158,6 +164,16 @@ bool FSEventsService::isExcluded(std::string filePath) {
   }
   CFRelease(fileDirectory);
   return excluded;
+}
+
+// Whether a non-recursive watcher drops the event of filePath: the watched path itself or deeper than its entries.
+bool FSEventsService::isOutsideChildren(const char *filePath) const {
+  if (mRecursive) {
+    return false;
+  }
+  const size_t prefix = mPath == "/" ? 1 : mPath.size() + 1;
+  const size_t length = strlen(filePath);
+  return length <= prefix || memchr(filePath + prefix, '/', length - prefix) != NULL;
 }
 
 void FSEventsService::create(std::string path) {

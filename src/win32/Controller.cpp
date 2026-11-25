@@ -19,14 +19,14 @@ static std::wstring convertMultiByteToWideChar(const std::string &multiByte) {
 }
 
 Controller::Controller(std::shared_ptr<EventQueue> queue, const std::string &path,
-    const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter) {
+    const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter, bool recursive) {
   auto widePath = convertMultiByteToWideChar(path);
   std::vector<std::wstring> excludedWidePaths;
   for (const std::string &path : excludedPaths) {
     excludedWidePaths.push_back(convertMultiByteToWideChar(path));
   }
 
-  mWatcher.reset(new Watcher(queue, widePath, excludedWidePaths, filter));
+  mWatcher.reset(new Watcher(queue, widePath, excludedWidePaths, filter, recursive));
 }
 
 Controller::~Controller() {

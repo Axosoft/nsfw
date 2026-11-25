@@ -52,7 +52,7 @@ class NSFW::Run {
   private:
     void deliver();
     bool reportError();
-    void deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events);
+    void deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events, uint64_t epoch);
 
     std::unique_ptr<NativeInterface> mInterface;
     std::shared_ptr<EventQueue> mQueue;
@@ -84,9 +84,10 @@ void NSFW::Run::deliver() {
       // A watcher only notices some errors between its own reads (a directory above the root renamed, say), and one
       // read can take long: none of the events it queued go out under a path that is known to lead elsewhere.
       if (reportError()) break;
-      auto events = mQueue->dequeueAll();
+      uint64_t epoch;
+      auto events = mQueue->dequeueAll(epoch);
       if (events != nullptr) {
-        deliverEvents(std::move(events));
+        deliverEvents(std::move(events), epoch);
         quietUntil = Clock::now() + std::chrono::milliseconds(mDebounceMS);
       }
     }
@@ -120,10 +121,12 @@ bool NSFW::Run::reportError() {
   return true;
 }
 
-void NSFW::Run::deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events) {
-  auto callback = [](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
+void NSFW::Run::deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events, uint64_t epoch) {
+  // A single-file watcher uses these events to establish file state after restarting or resuming.
+  auto queue = mWatcher->mRecursive ? nullptr : mQueue;
+  auto callback = [queue, epoch](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
     std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(eventsRaw);
-    eventsRaw = nullptr;
+    if (queue && queue->epoch() != epoch) return;
 
     int numEvents = events->size();
     Napi::Array eventArray = Napi::Array::New(env, numEvents);
@@ -263,6 +266,15 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
     if (maybeRespectGitignore.IsBoolean()) {
       mFilterOptions.respectGitignore = maybeRespectGitignore.As<Napi::Boolean>().Value();
     }
+
+    // recursive: internal, the JavaScript layer sets it to watch a single file.
+    Napi::Value maybeRecursive = options["recursive"];
+    if (options.Has("recursive") && !maybeRecursive.IsBoolean()) {
+      throw Napi::TypeError::New(env, "options.recursive must be a boolean.");
+    }
+    if (maybeRecursive.IsBoolean()) {
+      mRecursive = maybeRecursive.As<Napi::Boolean>().Value();
+    }
   }
 
   // Between runs the callbacks are plain, non-enumerable properties of this object; each start() wraps them in
@@ -400,7 +412,7 @@ void NSFW::StartWorker::Execute() {
   try {
     mNSFW->mQueue->clear();
     std::unique_ptr<NativeInterface> nativeInterface(
-      new NativeInterface(mNSFW->mPath, excludedPaths, filterOptions, mNSFW->mQueue)
+      new NativeInterface(mNSFW->mPath, excludedPaths, filterOptions, mNSFW->mRecursive, mNSFW->mQueue)
     );
     if (!nativeInterface->isWatching()) {
       mStatus = COULD_NOT_START;

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.1.0
 
 ### Added
 - `nativeBinding` option and `NSFW_NATIVE_BINDING` environment variable, to load the addon from the absolute path of

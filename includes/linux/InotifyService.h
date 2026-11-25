@@ -28,8 +28,8 @@ private:
   void create(int wd, std::string name, bool fromInCreate);
   void createDirectory(int wd, std::string name, bool fromInCreate);
   void createDirectoryTree(std::string directoryTreePath);
-  void dispatch(EventType action, int wd, std::string name, bool fromInCreate = false,
-    PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
+  void dispatch(EventType action, int wd, std::string name, bool fromInCreate, PathFilter::Kind filterKind,
+    PathFilter::Kind kind);
   void dispatchRename(int fromWd, std::string fromName, int toWd, std::string toName);
   EmitCreatedEvent emitCreated();
   void watchIgnored(int wd);
@@ -37,7 +37,7 @@ private:
   void entryDropped(int wd, std::string name);
   void startRead(size_t bytesRead);
   void finishRead(int eventsRead, size_t bytesRead);
-  void modify(int wd, std::string name);
+  void modify(int wd, std::string name, bool isDirectory);
   void remove(int wd, std::string name, bool isDirectory);
   void removeDirectory(int wd);
   void forgetIncompleteScans();

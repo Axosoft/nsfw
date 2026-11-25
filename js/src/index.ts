@@ -360,7 +360,7 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
         action = nsfw.ActionType.MODIFIED;
       }
       if (action === nsfw.ActionType.MODIFIED && events[events.length - 1]?.action === action) continue;
-      events.push({ action, directory, file });
+      events.push({ action, kind: nsfw.EntryKind.FILE, directory, file });
     }
     if (events.length > 0 && !currentExcludedPaths.some(isExcluded)) eventCallback(events);
   };
@@ -622,6 +622,12 @@ namespace nsfw {
     RENAMED: ActionType.RENAMED
   };
 
+  export const kinds: typeof EntryKind = {
+    FILE: EntryKind.FILE,
+    DIRECTORY: EntryKind.DIRECTORY,
+    UNKNOWN: EntryKind.UNKNOWN
+  };
+
   export interface NSFW {
     /** Returns a Promise that resolves after NSFW has paused listening to events. */
     pause: () => Promise<void>;
@@ -660,6 +666,17 @@ namespace nsfw {
     RENAMED = 3
   }
 
+  /**
+   * What the entry of an event is: the entry itself, not what a symlink leads to. A symlink is a `FILE`, except on
+   * Windows, where a symlink or a junction to a directory is a `DIRECTORY`. `FILE` stands for anything that isn't a
+   * directory. `UNKNOWN` when the system can't tell, see the README.
+   */
+  export const enum EntryKind {
+    FILE = 0,
+    DIRECTORY = 1,
+    UNKNOWN = 2
+  }
+
   export type CreatedFileEvent = GenericFileEvent<ActionType.CREATED>;
   export type DeletedFileEvent = GenericFileEvent<ActionType.DELETED>;
   export type ModifiedFileEvent = GenericFileEvent<ActionType.MODIFIED>;
@@ -668,6 +685,8 @@ namespace nsfw {
   export interface RenamedFileEvent {
     /** the type of event that occurred */
     action: ActionType.RENAMED;
+    /** what the entry that moved is */
+    kind: EntryKind;
     /** the directory before a rename */
     directory: string;
     /**  the name of the file before a rename*/
@@ -681,6 +700,8 @@ namespace nsfw {
   export interface GenericFileEvent<T extends ActionType> {
     /** the type of event that occurred */
     action: T;
+    /** what the entry that changed is */
+    kind: EntryKind;
     /** the location the event took place */
     directory: string;
     /** the name of the file that was changed(Not available for rename events) */

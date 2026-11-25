@@ -35,7 +35,8 @@ class Watcher
     void eventCallback(DWORD errorCode, DWORD numBytes);
     void handleEvents();
     void handleArrival(const std::wstring &fileName);
-    void handleRemoval(const std::wstring &fileName);
+    // kind: what the entry was, when known, see Event::kind.
+    void handleRemoval(const std::wstring &fileName, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
     void handleRename(const std::wstring &oldFileName, const std::wstring &newFileName);
     void flushPendingRename();
     bool isIgnoredDirectory(const std::wstring &fileName);

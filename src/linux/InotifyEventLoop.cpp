@@ -75,7 +75,7 @@ void InotifyEventLoop::work() {
       return;
     }
 
-    inotifyService->modify(event->wd, event->len > 0 ? event->name : "");
+    inotifyService->modify(event->wd, event->len > 0 ? event->name : "", isDirectoryEvent);
   };
 
   auto remove = [&event, &isDirectoryRemoval, &isDirectoryEvent, &inotifyService]() {

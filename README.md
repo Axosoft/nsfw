@@ -181,21 +181,25 @@ An array of events as they have happened in a directory, it's children, or to a 
 [
   {
     "action": 2, // nsfw.actions.MODIFIED
+    "kind": 0, // nsfw.kinds.FILE
     "directory": "/home/nsfw/watchDir",
     "file": "file1.ext"
   },
   {
     "action": 0, // nsfw.actions.CREATED
+    "kind": 1, // nsfw.kinds.DIRECTORY
     "directory": "/home/nsfw/watchDir",
     "file": "folder"
   },
   {
     "action": 1, // nsfw.actions.DELETED
+    "kind": 0, // nsfw.kinds.FILE
     "directory": "home/nsfw/watchDir/testFolder",
     "file": "test.ext"
   },
   {
     "action": 3, // nsfw.actions.RENAMED
+    "kind": 0, // nsfw.kinds.FILE
     "directory": "home/nsfw/watchDir",
     "oldFile": "oldname.ext",
     "newDirectory": "home/nsfw/watchDir/otherDirectory"
@@ -218,6 +222,32 @@ nsfw.actions = {
   RENAMED: 3
 };
 ```
+
+What the entry of an event is, by the nsfw.kinds enumeration (for `RENAMED`, the entry that moved)
+```js
+nsfw.kinds = {
+  FILE: 0,
+  DIRECTORY: 1,
+  UNKNOWN: 2
+};
+```
+`kind` describes the entry itself, not what a symlink leads to: on Linux and macOS a symlink is `FILE`, whatever it
+leads to (it is removed as a file, though the watcher follows one to a directory); on Windows a symlink or a junction
+to a directory is `DIRECTORY`, as Windows tells it. `FILE` stands for anything that isn't a directory: a regular file,
+a symlink, a FIFO, a socket or a device. An event with an empty `file` is about the directory it names itself: on
+Linux, a directory a symlink leads to is reported at the symlink, so its own changes come as `FILE`. A watched file
+reports `FILE`. Windows looks the entry up when it reads the event, so an entry replaced meanwhile by one of the other
+kind (a file removed and a directory created at its path, say) is reported with the kind of the new one.
+
+It is `UNKNOWN` when the system can't tell:
+- On Windows, for a removal: the system doesn't tell what a removed entry was. Nor for any other event of an entry
+  that is already gone when its event is read (a file modified and removed right after, say).
+- On macOS, when FSEvents merged the events of entries of both kinds at the same path (a file replaced by a
+  directory, say): for their removal, and for any other event once the entry is gone.
+- On Linux, for an entry reported by the scan of a directory that appeared, when it is gone before the scan could
+  look it up and the filesystem didn't list its type.
+- On every platform, with `excludedPatterns` or `respectGitignore`, for the removal reported when an entry of another
+  kind takes the path of one they didn't ignore and they ignore the new one.
 
 ## Linux: inotify limits
 On Linux, nsfw watches each directory of the tree with an inotify watch. The kernel limits the number of watches

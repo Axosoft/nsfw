@@ -189,8 +189,9 @@ describe('A single file watched through its directory', function() {
     let events;
     await (await wrapper.nsfw('/file', batch => { events = batch; }, { excludedPatterns: ['*.log'] })).start();
     expectWatched(wrapper.native(), '/', 'file');
-    wrapper.native().callback([{ action: 2, directory: '/', file: 'file' }]);
-    assert.deepStrictEqual(Array.from(events, event => ({ ...event })), [{ action: 2, directory: '/', file: 'file' }]);
+    wrapper.native().callback([{ action: 2, kind: 0, directory: '/', file: 'file' }]);
+    assert.deepStrictEqual(Array.from(events, event => ({ ...event })),
+      [{ action: 2, kind: 0, directory: '/', file: 'file' }]);
   });
 
   it('escapes the name it matches', async function() {
@@ -210,9 +211,9 @@ describe('A single file watched through its directory', function() {
       let events;
       await (await wrapper.nsfw(input, batch => { events = batch; })).start();
       expectWatched(wrapper.native(), directory, name);
-      wrapper.native().callback([{ action: 2, directory, file: name.toUpperCase() }]);
+      wrapper.native().callback([{ action: 2, kind: 0, directory, file: name.toUpperCase() }]);
       assert.deepStrictEqual(Array.from(events, event => ({ ...event })),
-        [{ action: 2, directory: path.win32.dirname(input), file: path.win32.basename(input) }]);
+        [{ action: 2, kind: 0, directory: path.win32.dirname(input), file: path.win32.basename(input) }]);
     });
   }
 });

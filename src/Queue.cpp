@@ -77,6 +77,7 @@ void EventQueue::enqueue(
   const std::string &fromFile,
   const std::string &toDirectory,
   const std::string &toFile,
+  PathFilter::Kind filterKind,
   PathFilter::Kind kind
 ) {
   const auto eventEpoch = epoch();
@@ -88,7 +89,7 @@ void EventQueue::enqueue(
     watcherNotesEntries = mWatcherNotesEntries;
   }
   if (!filter || !filter->isActive()) {
-    push(eventEpoch, type, fromDirectory, fromFile, toDirectory, toFile);
+    push(eventEpoch, type, fromDirectory, fromFile, toDirectory, toFile, kind);
     return;
   }
 
@@ -113,34 +114,37 @@ void EventQueue::enqueue(
   }
 
   if (type == DELETED) {
-    if (!filter->isRemovalIgnored(fromDirectory, fromFile, kind)) push(eventEpoch, type, fromDirectory, fromFile);
+    if (!filter->isRemovalIgnored(fromDirectory, fromFile, filterKind)) {
+      push(eventEpoch, type, fromDirectory, fromFile, "", "", kind);
+    }
     return;
   }
   if (type != RENAMED) {
     bool replacedReported = false;
-    if (!filter->isReplacementIgnored(fromDirectory, fromFile, kind, replacedReported)) {
-      push(eventEpoch, type, fromDirectory, fromFile);
+    if (!filter->isReplacementIgnored(fromDirectory, fromFile, filterKind, replacedReported)) {
+      push(eventEpoch, type, fromDirectory, fromFile, "", "", kind);
     } else if (replacedReported) {
-      push(eventEpoch, DELETED, fromDirectory, fromFile);
+      // An entry of another kind the filter saw there, which the watcher didn't tell about.
+      push(eventEpoch, DELETED, fromDirectory, fromFile, "", "", PathFilter::Kind::UNKNOWN);
     }
     return;
   }
   // What left is what arrived, which can still be looked up.
-  if (kind == PathFilter::Kind::UNKNOWN) {
-    kind = PathFilter::kindOf(toDirectory, toFile);
+  if (filterKind == PathFilter::Kind::UNKNOWN) {
+    filterKind = PathFilter::kindOf(toDirectory, toFile);
   }
-  const bool fromIgnored = filter->isRemovalIgnored(fromDirectory, fromFile, kind);
+  const bool fromIgnored = filter->isRemovalIgnored(fromDirectory, fromFile, filterKind);
   bool replacedReported = false;
-  const bool toIgnored = filter->isReplacementIgnored(toDirectory, toFile, kind, replacedReported);
+  const bool toIgnored = filter->isReplacementIgnored(toDirectory, toFile, filterKind, replacedReported);
   if (toIgnored && replacedReported) {
-    push(eventEpoch, DELETED, toDirectory, toFile);
+    push(eventEpoch, DELETED, toDirectory, toFile, "", "", PathFilter::Kind::UNKNOWN);
   }
   if (!fromIgnored && !toIgnored) {
-    push(eventEpoch, RENAMED, fromDirectory, fromFile, toDirectory, toFile);
+    push(eventEpoch, RENAMED, fromDirectory, fromFile, toDirectory, toFile, kind);
   } else if (!toIgnored) {
-    push(eventEpoch, CREATED, toDirectory, toFile);
+    push(eventEpoch, CREATED, toDirectory, toFile, "", "", kind);
   } else if (!fromIgnored) {
-    push(eventEpoch, DELETED, fromDirectory, fromFile);
+    push(eventEpoch, DELETED, fromDirectory, fromFile, "", "", kind);
   }
 }
 
@@ -150,13 +154,14 @@ void EventQueue::push(
   const std::string &fromDirectory,
   const std::string &fromFile,
   const std::string &toDirectory,
-  const std::string &toFile
+  const std::string &toFile,
+  PathFilter::Kind kind
 ) {
   bool held;
   {
     std::lock_guard<std::mutex> lock(mutex);
     if (mPaused || epoch != mEpoch) return;
-    queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile)));
+    queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile, kind)));
     held = mHolding;
   }
   if (!held) wake(WAKE_EVENTS);

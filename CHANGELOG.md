@@ -6,6 +6,14 @@
 - `nativeBinding` option and `NSFW_NATIVE_BINDING` environment variable, to load the addon from the absolute path of
   a `.node` file of your choice, such as one an Electron app ships among its resources or one a bundler moved. The
   option also takes an addon that was already loaded, and takes precedence over the variable.
+- Every event tells what its entry is in a new `kind` field, from the new `nsfw.kinds` enumeration: `FILE`,
+  `DIRECTORY` or `UNKNOWN` when the system can't tell, as on Windows for a removal (#119). For `RENAMED`, it is the
+  entry that moved. A symlink is a `FILE` on Linux and macOS, whatever it leads to; on Windows a symlink or a junction
+  to a directory is a `DIRECTORY`. Windows looks the entry up for each event but a removal. Linux takes it from the
+  event, or for an entry the scan of a new directory reports, from what that scan already looked up. macOS takes it
+  from the event's flags or from what the watcher already looked up, and only looks the entry up when the flags don't
+  tell it, for a modification or an entry that moved elsewhere in the watched path. A watched file reports `FILE`.
+  The `FileChangeEvent` types have the field, so code that builds events of those types has to set it.
 
 ### Changed
 - The addon is loaded by the first `nsfw()` call instead of when nsfw is imported, so importing it no longer throws

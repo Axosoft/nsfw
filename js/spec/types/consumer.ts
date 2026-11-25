@@ -18,13 +18,15 @@ async function watch(): Promise<void> {
         case nsfw.actions.MODIFIED: {
           const changed: nsfw.CreatedFileEvent | nsfw.DeletedFileEvent | nsfw.ModifiedFileEvent = event;
           const file: string = changed.file;
-          void file;
+          const isDirectory: boolean = changed.kind === nsfw.kinds.DIRECTORY;
+          void [file, isDirectory];
           break;
         }
         case nsfw.ActionType.RENAMED: {
           const renamed: nsfw.RenamedFileEvent = event;
           const moved: string[] = [renamed.directory, renamed.oldFile, renamed.newDirectory, renamed.newFile];
-          void moved;
+          const kind: nsfw.EntryKind = renamed.kind;
+          void [moved, kind];
           break;
         }
         default: {
@@ -49,7 +51,8 @@ async function watch(): Promise<void> {
   const { stop } = watcher;
   await stop();
 
-  const generic: nsfw.GenericFileEvent<nsfw.ActionType.CREATED> = { action: 0, directory: '/', file: 'a' };
+  const generic: nsfw.GenericFileEvent<nsfw.ActionType.CREATED> =
+    { action: 0, kind: nsfw.EntryKind.FILE, directory: '/', file: 'a' };
   const renamedAction: nsfw.ActionType.RENAMED = nsfw.actions.RENAMED;
   void [generic, renamedAction];
 
@@ -67,6 +70,11 @@ async function watch(): Promise<void> {
   const missing: nsfw.RenamedFileEvent['file'] = '';
   // @ts-expect-error `actions` is read-only.
   nsfw.actions.CREATED = nsfw.ActionType.DELETED;
+  // @ts-expect-error `kinds` is read-only.
+  nsfw.kinds.FILE = nsfw.EntryKind.DIRECTORY;
+  // @ts-expect-error Every event tells its kind.
+  const unkinded: nsfw.DeletedFileEvent = { action: nsfw.actions.DELETED, directory: '/', file: 'a' };
+  void unkinded;
   // @ts-expect-error Internals are not part of the declarations.
   void nsfw._native;
   void missing;

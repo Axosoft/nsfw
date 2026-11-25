@@ -1,7 +1,7 @@
 on:
   push:
     branches:
-      - master
+      - main
       - release/*
   pull_request:
   # Run by release.yaml, which publishes the package this run packs.
@@ -12,7 +12,7 @@ name: Run Tests
 permissions:
   contents: read
 
-# A new push to a PR supersedes the previous run; master/release runs always finish.
+# A new push to a PR supersedes the previous run; main/release runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

@@ -1,5 +1,6 @@
 #include "../../includes/osx/FSEventsService.h"
-#include <cstring>
+#include <algorithm>
+#include <unordered_set>
 #include <iostream>
 #include <cerrno>
 #include <cstring>
@@ -115,7 +116,7 @@ void FSEventsServiceCallback(
     }
     events.push_back(std::move(event));
   }
-  eventsService->handle(events);
+  eventsService->handle(std::move(events));
 }
 
 namespace {
@@ -134,9 +135,16 @@ namespace {
     return true;
   }
 
-  // What a removed entry was, which the filter can't look up anymore. Not when the flags coalesce two entries. A
-  // symlink counts as a directory, which it most often leads to, as the filter follows it when it can, so its
-  // removal is judged like its creation was.
+  // What an entry is for the filter, which needs it once the entry is gone. A symlink counts as a directory, which it
+  // most often leads to, as the filter follows it when it can, so its removal is judged like its creation was.
+  PathFilter::Kind kindFromMode(mode_t mode) {
+    if (S_ISDIR(mode) || S_ISLNK(mode)) {
+      return PathFilter::Kind::DIRECTORY;
+    }
+    return PathFilter::Kind::FILE;
+  }
+
+  // As kindFromMode(), unless the flags coalesce two entries.
   PathFilter::Kind kindOf(FSEventStreamEventFlags flags) {
     const bool isDirectory = (flags & kFSEventStreamEventFlagItemIsDir) != 0;
     const bool isFile = (flags & kFSEventStreamEventFlagItemIsFile) != 0;
@@ -173,22 +181,247 @@ bool FSEventsService::readEventData(const void *data, std::string &path, uint64_
   return pathRef != NULL && toUTF8(pathRef, path);
 }
 
-void FSEventsService::handle(const std::vector<Event> &events) {
-  std::vector<std::string> renamedPaths;
-  std::map<std::string, PathFilter::Kind> renamedKinds;
-  for (const Event &event : events) {
-    const bool isRenamed = (event.flags & kFSEventStreamEventFlagItemRenamed) != 0;
-    const bool isOther = (event.flags & (kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved |
-      kModifiedFlags)) != 0;
-    if (isRenamed && !isOther) {
-      renamedPaths.push_back(event.path);
-      renamedKinds[event.path] = kindOf(event.flags);
-    } else {
-      classify(event, kindOf(event.flags));
+void FSEventsService::handle(std::vector<Event> events) {
+  std::vector<RenameSide> sides(events.size());
+  bool anyRenamed = false;
+  for (size_t i = 0; i < events.size(); ++i) {
+    if ((events[i].flags & kFSEventStreamEventFlagItemRenamed) == 0) {
+      continue;
+    }
+    anyRenamed = true;
+    RenameSide &side = sides[i];
+    side.renamed = true;
+    struct stat file;
+    if (lstat(events[i].path.c_str(), &file) == 0) {
+      side.exists = true;
+      side.inode = file.st_ino;
+      side.present = events[i].inode == 0 || events[i].inode == side.inode;
+      side.kind = kindFromMode(file.st_mode);
+      side.device = file.st_dev;
+    } else if (events[i].inode != 0) {
+      side.hardLinked = side.present && !S_ISDIR(file.st_mode) && file.st_nlink > 1;
+      // Only an entry FSEvents told the inode of is looked for by volume. The nearest directory still there: one gone
+      // too was on the same volume as its parent, unless it was a mount point.
+      std::string directory = events[i].path, name;
+      bool found = false;
+      while (!found && directory != "/") {
+        splitFilePath(directory, name, std::string(directory));
+        found = lstat(directory.c_str(), &file) == 0;
+      }
+      side.device = found ? file.st_dev : 0;
     }
   }
-  if (!mRootChanged) {
-    rename(renamedPaths, renamedKinds);
+  // The events of a path in the batch are handled together, where the first one is, or by a rename side of the path
+  // that follows them: their flags pile up anyway.
+  std::unordered_map<std::string, size_t> first;
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (sides[i].renamed) {
+      auto earlier = first.find(events[i].path);
+      if (earlier != first.end()) {
+        events[i].flags |= events[earlier->second].flags;
+        sides[earlier->second].repeated = true;
+        first.erase(earlier);
+      }
+      continue;
+    }
+    auto found = first.emplace(events[i].path, i);
+    if (!found.second) {
+      events[found.first->second].flags |= events[i].flags;
+      sides[i].repeated = true;
+    }
+  }
+  std::vector<bool> splitRenames(events.size(), false);
+  if (anyRenamed) {
+    pairRenames(events, sides);
+    // What took the place an entry left is reported by its own side when it has one, as the destination of another
+    // rename in the batch, say.
+    std::unordered_set<std::string> held;
+    for (size_t i = 0; i < events.size(); ++i) {
+      if (sides[i].present && !sides[i].repeated) {
+        held.insert(events[i].path);
+      }
+    }
+    for (size_t i = 0; i < events.size(); ++i) {
+      sides[i].replaced = sides[i].exists && !sides[i].present && held.count(events[i].path) != 0;
+    }
+
+    // Collapsing a chain can hide the temporary name that kept another rename's source intact.
+    std::unordered_map<std::string, size_t> sources;
+    for (size_t i = 0; i < events.size(); ++i) {
+      if (sides[i].from) {
+        sources.emplace(events[i].path, i);
+      }
+    }
+    for (size_t i = 0; i < events.size(); ++i) {
+      if (!sides[i].from) {
+        continue;
+      }
+      const size_t destination = sides[i].partner;
+      const auto other = sources.find(events[destination].path);
+      if (other != sources.end() && other->second > i) {
+        splitRenames[i] = splitRenames[destination] = true;
+        splitRenames[other->second] = splitRenames[sides[other->second].partner] = true;
+      }
+    }
+    for (size_t i = 0; i < events.size(); ++i) {
+      if (splitRenames[i] && sides[i].from && !mRootChanged) {
+        remove(events[i].path, sides[sides[i].partner].kind, events[i].inode);
+      }
+    }
+  }
+
+  for (size_t i = 0; i < events.size(); ++i) {
+    const Event &event = events[i];
+    const RenameSide &side = sides[i];
+    if (!side.renamed) {
+      if (!side.repeated) {
+        classify(event, kindOf(event.flags));
+      }
+    } else if (mRootChanged) {
+      // The paths no longer lead where they did.
+      continue;
+    } else if (splitRenames[i]) {
+      if (!side.from) {
+        create(event.path, side.inode, side.kind);
+      }
+    } else if (side.repeated) {
+      // A later side at the same path speaks for it.
+      continue;
+    } else if (side.transient) {
+      passThrough(event, side);
+    } else if (side.partner < 0) {
+      classify(event, kindOf(event.flags));
+    } else if (side.from) {
+      const RenameSide &to = sides[side.partner];
+      rename(event.path, events[side.partner].path, to.inode, to.kind);
+      // Something took the place the entry left.
+      if (side.exists && !side.replaced && side.inode != to.inode) {
+        create(event.path, side.inode, side.kind);
+      }
+    }
+  }
+}
+
+void FSEventsService::pairSides(std::vector<RenameSide> &sides, size_t from, size_t to) {
+  sides[from].partner = to;
+  sides[from].from = true;
+  sides[to].partner = from;
+  sides[to].from = false;
+}
+
+// FSEvents reports a rename as one event for each side, the source then the destination with the next event id, both
+// about the same inode. The flags of both can hold earlier changes too, and the sides can be in different directories.
+// An entry renamed more than once in the batch has a side for each place it passed through, in event id order.
+void FSEventsService::pairRenames(const std::vector<Event> &events, std::vector<RenameSide> &sides) {
+  // The sides about each entry, by its volume and inode: inodes are only unique within a volume.
+  std::map<std::pair<dev_t, uint64_t>, std::vector<size_t>> sidesByEntry;
+  std::unordered_map<FSEventStreamEventId, size_t> presentById;
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (!sides[i].renamed) {
+      continue;
+    }
+    if (sides[i].present) {
+      presentById[events[i].id] = i;
+    }
+    const uint64_t inode = sides[i].present ? sides[i].inode : events[i].inode;
+    if (inode != 0) {
+      sidesByEntry[{ sides[i].device, inode }].push_back(i);
+    }
+  }
+  auto byId = [&events](size_t a, size_t b) { return events[a].id < events[b].id; };
+
+  for (auto &entry : sidesByEntry) {
+    const uint64_t inode = entry.first.second;
+    std::vector<size_t> &candidates = entry.second;
+    std::sort(candidates.begin(), candidates.end(), byId);
+    // One side speaks for each place the entry was at, its latest, in the order the entry first was there.
+    const bool hardLinked = std::any_of(candidates.begin(), candidates.end(), [&](size_t i) {
+      return sides[i].hardLinked || (events[i].flags & kFSEventStreamEventFlagItemIsHardlink) != 0;
+    });
+    if (hardLinked) {
+      // Paths to a hard-linked inode can be renamed independently. Only pair adjacent sides of this inode.
+      for (size_t j = 1; j < candidates.size(); ++j) {
+        const size_t from = candidates[j - 1], to = candidates[j];
+        uint64_t reported;
+        const bool knownSource = lookUpReported(events[from].path, reported) && reported == inode;
+        if (!sides[from].present && sides[to].present && events[to].id == events[from].id + 1 &&
+          (candidates.size() == 2 || knownSource)) {
+          pairSides(sides, from, to);
+        }
+      }
+      continue;
+    }
+    std::vector<size_t> places;
+    std::unordered_map<std::string, size_t> placeOf;
+    for (size_t i : candidates) {
+      auto found = placeOf.find(events[i].path);
+      if (found == placeOf.end()) {
+        placeOf.emplace(events[i].path, places.size());
+        places.push_back(i);
+      } else {
+        sides[places[found->second]].repeated = true;
+        places[found->second] = i;
+      }
+    }
+    std::vector<size_t> present;
+    for (size_t i : places) {
+      if (sides[i].present) {
+        present.push_back(i);
+      }
+    }
+    // Two places hold the entry: not a rename of it.
+    if (present.size() > 1) {
+      continue;
+    }
+    // Where the entry was before the batch: where it was reported, else the first place it was at.
+    size_t source = places.front();
+    for (size_t i : places) {
+      uint64_t reported = 0;
+      if (lookUpReported(events[i].path, reported) && reported == inode) {
+        source = i;
+        break;
+      }
+    }
+    for (size_t i : places) {
+      sides[i].transient = !sides[i].present && i != source;
+    }
+    if (present.empty()) {
+      continue;
+    }
+    // A single place that holds the entry is where it arrived, from outside the batch or the watched path.
+    if (source == present.front() && places.size() > 1) {
+      sides[source].returned = true;
+    } else if (source != present.front()) {
+      pairSides(sides, source, present.front());
+    }
+  }
+
+  // FSEvents didn't tell what the side that left is about: the side with the next event id is its destination, unless
+  // that entry was already reported where it is.
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (!sides[i].renamed || sides[i].present || events[i].inode != 0) {
+      continue;
+    }
+    auto found = presentById.find(events[i].id + 1);
+    uint64_t reported = 0;
+    if (
+      found != presentById.end() && sides[found->second].partner < 0 &&
+      !(lookUpReported(events[found->second].path, reported) && reported == sides[found->second].inode)
+    ) {
+      pairSides(sides, i, found->second);
+    }
+  }
+}
+
+// A place an entry renamed again within the batch passed through: it was never reported there, so only what was
+// there before or is there now is news.
+void FSEventsService::passThrough(const Event &event, const RenameSide &side) {
+  uint64_t reported = 0;
+  const bool known = lookUpReported(event.path, reported);
+  if (side.exists && !side.replaced && !(known && reported == side.inode)) {
+    create(event.path, side.inode, side.kind);
+  } else if (!side.exists && (known || (event.flags & kFSEventStreamEventFlagItemRemoved) != 0)) {
+    remove(event.path, kindOf(event.flags));
   }
 }
 
@@ -369,10 +602,6 @@ void FSEventsService::create(const std::string &path, uint64_t inode, PathFilter
   noteReported(path, inode);
 }
 
-void FSEventsService::demangle(std::string path, PathFilter::Kind kind) {
-  classify(Event{path, 0, 0, 0}, kind);
-}
-
 void FSEventsService::dispatch(EventType action, std::string path, PathFilter::Kind kind) {
   std::string directory, name;
 
@@ -457,56 +686,20 @@ void FSEventsService::noteReported(const std::string &path, uint64_t inode) {
   mReported.erase(mReported.lower_bound(path + "/"), mReported.lower_bound(path + "0"));
 }
 
-// kinds: what each path was, for one that is gone.
-void FSEventsService::rename(std::vector<std::string> &paths, const std::map<std::string, PathFilter::Kind> &kinds) {
-  auto kindOf = [&kinds](const std::string &path) {
-    auto found = kinds.find(path);
-    return found == kinds.end() ? PathFilter::Kind::UNKNOWN : found->second;
-  };
-  auto *binNamesByPath = new std::map<std::string, std::vector<std::string> *>;
-
-  for (const std::string &path : paths) {
-    std::string directory, name;
-    splitFilePath(directory, name, path);
-    if (binNamesByPath->find(directory) == binNamesByPath->end()) {
-      (*binNamesByPath)[directory] = new std::vector<std::string>;
-    }
-    (*binNamesByPath)[directory]->push_back(name);
+void FSEventsService::rename(const std::string &from, const std::string &to, uint64_t inode, PathFilter::Kind kind) {
+  std::string fromDirectory, fromName, toDirectory, toName;
+  splitFilePath(fromDirectory, fromName, from);
+  splitFilePath(toDirectory, toName, to);
+  mQueue->enqueue(RENAMED, fromDirectory, fromName, toDirectory, toName, kind);
+  // What a directory holds moves along with it, over what the destination held.
+  noteReported(to, 0);
+  const std::vector<std::pair<std::string, uint64_t>> held(
+    mReported.lower_bound(from + "/"), mReported.lower_bound(from + "0"));
+  noteGone(from, inode);
+  for (const auto &entry : held) {
+    mReported[to + entry.first.substr(from.size())] = entry.second;
   }
-
-  for (auto binIterator = binNamesByPath->begin(); binIterator != binNamesByPath->end(); ++binIterator) {
-    if (binIterator->second->size() == 2) {
-      std::string sideA = (*binIterator->second)[0],
-                  sideB = (*binIterator->second)[1];
-      std::string fullSideA = binIterator->first + "/" + sideA,
-                  fullSideB = binIterator->first + "/" + sideB;
-      struct stat renameSideA, renameSideB;
-      bool sideAExists = stat(fullSideA.c_str(), &renameSideA) == 0,
-           sideBExists = stat(fullSideB.c_str(), &renameSideB) == 0;
-
-      if (sideAExists && !sideBExists) {
-        mQueue->enqueue(RENAMED, binIterator->first, sideB, binIterator->first, sideA);
-        noteReported(fullSideB, 0);
-        noteReported(fullSideA, renameSideA.st_ino);
-      } else if (!sideAExists && sideBExists) {
-        mQueue->enqueue(RENAMED, binIterator->first, sideA, binIterator->first, sideB);
-        noteReported(fullSideA, 0);
-        noteReported(fullSideB, renameSideB.st_ino);
-      } else {
-        demangle(fullSideA, kindOf(fullSideA));
-        demangle(fullSideB, kindOf(fullSideB));
-      }
-
-    } else {
-      for (auto pathIterator = binIterator->second->begin(); pathIterator != binIterator->second->end(); ++pathIterator) {
-        const std::string path = binIterator->first + "/" + *pathIterator;
-        demangle(path, kindOf(path));
-      }
-    }
-    delete binIterator->second;
-    binIterator->second = NULL;
-  }
-  delete binNamesByPath;
+  noteReported(to, inode);
 }
 
 void FSEventsService::splitFilePath(std::string &directory, std::string &name, const std::string &path) {

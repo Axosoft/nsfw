@@ -55,24 +55,49 @@ private:
     uint64_t inode;
   };
 
+  // What the path of an event with the renamed flag holds now, and the other side of its rename once paired.
+  struct RenameSide {
+    bool renamed = false;
+    bool exists = false;
+    // It holds the entry the event is about: FSEvents didn't tell which, or it is the same.
+    bool present = false;
+    uint64_t inode = 0;
+    PathFilter::Kind kind = PathFilter::Kind::UNKNOWN;
+    // The volume of the entry, or of the nearest directory still there above the place it left.
+    dev_t device = 0;
+    long partner = -1;
+    bool hardLinked = false;
+    bool from = false;
+    // A path the entry only passed through, in a chain of renames within the batch.
+    bool transient = false;
+    // The entry left the path and came back within the batch.
+    bool returned = false;
+    // Another event in the batch at the same path, about the same entry if renamed, speaks for this one.
+    bool repeated = false;
+    // What the path holds now is not the entry, and another side in the batch reports it.
+    bool replaced = false;
+  };
+
   static bool readEventData(const void *data, std::string &path, uint64_t &inode);
-  void handle(const std::vector<Event> &events);
+  void handle(std::vector<Event> events);
+  static void pairSides(std::vector<RenameSide> &sides, size_t from, size_t to);
+  void pairRenames(const std::vector<Event> &events, std::vector<RenameSide> &sides);
+  void passThrough(const Event &event, const RenameSide &side);
   bool isSinceStart(const struct timespec &time) const;
   bool readAddedTime(const std::string &path, uint64_t inode, struct timespec &added) const;
   bool appearedWhileWatching(const Event &event, const struct stat &file) const;
   void classify(const Event &event, PathFilter::Kind kind);
   void noteExcluded(const Event &event);
   void create(const std::string &path, uint64_t inode, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
-  void demangle(std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
   void dispatch(EventType action, std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
   void modify(std::string path);
   // inode: of the entry gone, 0 if unknown.
   void remove(std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN, uint64_t inode = 0);
   void noteGone(const std::string &path, uint64_t inode);
   bool wasReportedGone(const Event &event) const;
-  void rename(std::vector<std::string> &paths, const std::map<std::string, PathFilter::Kind> &kinds);
   void rememberMissing(const std::string &path, uint64_t inode, bool pendingCreation);
   void forgetGone(const std::string &path);
+  void rename(const std::string &from, const std::string &to, uint64_t inode, PathFilter::Kind kind);
   bool lookUpReported(const std::string &path, uint64_t &inode);
   void noteReported(const std::string &path, uint64_t inode);
   void splitFilePath(std::string &directory, std::string &name, const std::string &path);

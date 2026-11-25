@@ -84,6 +84,15 @@
   before the watcher started can still be misreported.
 - On macOS, a file created and removed before the watcher handled it is reported as `CREATED` and then `DELETED`, as
   on the other platforms, rather than as `DELETED` alone.
+- On macOS, more renames are reported as `RENAMED` (#78): FSEvents adds the flags of earlier changes to either side of
+  a rename, such as for a file created or modified shortly before, and only a side with nothing but the renamed flag
+  could be paired, so such a rename was reported as `MODIFIED` and `DELETED`, or `CREATED` and `DELETED`. The sides are
+  now paired by the inode FSEvents reports for each, or by their consecutive event ids when it doesn't report one, and
+  other renames in the same directory no longer break the pairing. Consecutive renames can be combined into a single
+  event. When combining them would overwrite another rename's source, the affected names are reported as deleted
+  and then created.
+- On macOS, a move between two directories of the watched path is reported as `RENAMED`, with `newDirectory` set to
+  the destination's, as on Linux (#150). Before, only renames within a directory were paired.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

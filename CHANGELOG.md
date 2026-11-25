@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.1
+
+Documentation only: the code and the prebuilt binaries are the same as in 3.0.0.
+
+### Changed
+- The README shows the status of the tests and the version on npm, instead of the badges of Travis CI and AppVeyor,
+  which the project no longer builds on.
+
 ## 3.0.0
 
 nsfw now ships prebuilt binaries for Linux, macOS and Windows on x64 and arm64, so installing it there needs no

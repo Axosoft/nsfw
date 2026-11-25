@@ -2479,8 +2479,9 @@ describe('Node Sentinel File Watcher', function() {
         await live.start();
         const file = reported + '/physical.file';
         await fsp.writeFile(file, 'physical');
-        for (let i = 0; i < 100 && actual.events.length === 0; i++) await sleep(50);
-        assert.ok(actual.events.some(event => event.file === 'physical.file' && event.directory === reported));
+        // FSEvents can first report what the fixture wrote before the watcher started.
+        await waitForEvent(actual.events, event => event.file === 'physical.file' && event.directory === reported,
+          'creation of physical.file');
       } finally {
         await live.stop();
       }

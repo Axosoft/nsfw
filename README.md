@@ -247,8 +247,10 @@ The [release workflow](.github/workflows/release.yaml) checks that the tag match
 changelog has notes for the version, builds and tests the binaries for every platform, publishes the package to npm
 with provenance, and creates the GitHub release of the tag with those notes and the package attached. A version with a
 prerelease suffix (`X.Y.Z-beta.1`) goes to npm's `next` dist-tag and is marked as a prerelease. One older than npm's
-`latest`, a patch of an earlier major, goes to `latest-<major>` and doesn't become the latest release. Running the
-workflow by hand on a branch is a dry run, which shows the notes in its summary.
+`latest`, a patch of an earlier major, goes to `latest-<major>` and doesn't become the latest release. After publishing, it
+installs the version from npm on every platform and watches a directory with it. Running the workflow by hand on a
+branch is a dry run, which shows the notes in its summary: run it on `master` before pushing the tag, with
+`gh workflow run release.yaml --ref master`.
 
 npm has to trust the workflow first: on npmjs.com, add `Axosoft/nsfw` with the workflow `release.yaml` as a trusted
 publisher of nsfw, or else store a granular access token as the `NPM_TOKEN` secret of the repository.

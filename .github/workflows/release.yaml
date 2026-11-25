@@ -2,8 +2,9 @@ name: Release
 
 # Pushing a vX.Y.Z tag runs the whole test workflow, which builds the binaries for every platform and tests them,
 # publishes to npm the package that workflow packed with them, then creates the GitHub release of the tag, with the
-# package attached and the tag's CHANGELOG.md section as its notes. Running it by hand on a branch or tag does the same
-# as a dry run: npm publish --dry-run, and the notes in the run summary instead of a release.
+# package attached and the tag's CHANGELOG.md section as its notes, and installs the version from npm on every platform
+# to check it. Running it by hand on a branch or tag does the same as a dry run: npm publish --dry-run, and the notes
+# in the run summary instead of a release, before pushing the tag.
 #
 # npm authenticates the publish through trusted publishing, which needs this workflow, release.yaml in Axosoft/nsfw,
 # registered as a trusted publisher of nsfw on npmjs.com; or else through an NPM_TOKEN secret.
@@ -167,3 +168,62 @@ jobs:
             gh release create "$TAG" nsfw-*.tgz --verify-tag --title "$TAG" --notes-file release-notes.md \
               --prerelease="$PRERELEASE" --latest="$LATEST"
           fi
+
+  # Installs the version from npm on every platform with a prebuilt binary, in an empty project, and watches a
+  # directory with it. Nothing can be undone by then, but a broken publish shows up here instead of in a user's
+  # install.
+  verify:
+    name: "Install from npm (${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.libc && format(', {0}', matrix.libc) || '' }})"
+    needs: [prepare, publish]
+    if: ${{ needs.prepare.outputs.dry-run == 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux, arch: x64, libc: glibc, runner: ubuntu-26.04 }
+          - { platform: linux, arch: arm64, libc: glibc, runner: ubuntu-26.04-arm }
+          - { platform: linux, arch: x64, libc: musl, runner: ubuntu-26.04 }
+          - { platform: linux, arch: arm64, libc: musl, runner: ubuntu-26.04-arm }
+          - { platform: darwin, arch: x64, runner: macos-26-intel }
+          - { platform: darwin, arch: arm64, runner: macos-26 }
+          - { platform: win32, arch: x64, runner: windows-2025 }
+          - { platform: win32, arch: arm64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The registry can take a while to serve a version just published.
+      - name: Wait for npm to serve the version
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          for attempt in $(seq 20); do
+            if [ "$(npm view "nsfw@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+              exit 0
+            fi
+            echo "attempt $attempt: nsfw@$VERSION not on npm yet"
+            sleep 15
+          done
+          exit 1
+
+      - name: Install nsfw from npm and watch a directory
+        if: ${{ matrix.libc != 'musl' }}
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node js/scripts/fresh-install-test.js prebuilt "nsfw@$VERSION"
+
+      # The runner can't run JavaScript actions in an Alpine container on arm64, so Alpine runs through docker.
+      - name: Install nsfw from npm and watch a directory, in Alpine
+        if: ${{ matrix.libc == 'musl' }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w node:24-alpine \
+            node js/scripts/fresh-install-test.js prebuilt "nsfw@$VERSION"

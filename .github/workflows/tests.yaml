@@ -94,6 +94,12 @@ jobs:
           path: prebuilds
           merge-multiple: true
 
+      # The package prebuild.yaml packed, which release.yaml publishes.
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+
       - name: Remove the prebuilt binaries for this platform
         if: ${{ matrix.binary == 'source' }}
         run: rm -r prebuilds/linux-${{ matrix.arch }}
@@ -122,12 +128,13 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm test
 
-      # Installs the packed package into an empty project without a lockfile, as `npm install nsfw` does, so
+      # Installs the package to publish into an empty project without a lockfile, as `npm install nsfw` does, so
       # dependency ranges resolve to their newest versions instead of the ones pnpm-lock.yaml pins above. Runs even
-      # when the tests failed, so both results show.
+      # when the tests failed, so both results show. Without a prebuilt binary for the platform, it packs the
+      # repository instead, whose prebuilds/ lacks it.
       - name: Install the packed package and watch a directory
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
-        run: node js/scripts/fresh-install-test.js ${{ matrix.binary }}
+        run: node js/scripts/fresh-install-test.js ${{ matrix.binary }} ${{ matrix.binary == 'prebuilt' && 'package/nsfw-*.tgz' || '' }}
 
   # The same against the musl binary, in Alpine, through docker: the runner can't run JavaScript actions in an Alpine
   # container on arm64.
@@ -150,6 +157,12 @@ jobs:
           path: prebuilds
           merge-multiple: true
 
+      # The package prebuild.yaml packed, which release.yaml publishes.
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+
       # The tests, then the fresh install even when they failed, as in linux-tests. The repository belongs to the
       # runner's user, so git, which the specs run, has to be told it is safe.
       - name: Run tests and install the packed package
@@ -161,7 +174,7 @@ jobs:
             pnpm install --frozen-lockfile
             status=0
             pnpm test || status=$?
-            node js/scripts/fresh-install-test.js prebuilt
+            node js/scripts/fresh-install-test.js prebuilt package/nsfw-*.tgz
             exit $status
           '
 
@@ -185,6 +198,12 @@ jobs:
           path: prebuilds
           merge-multiple: true
 
+      # The package prebuild.yaml packed, which release.yaml publishes.
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+
       - name: Use Node.js ${{ matrix.node }}
         uses: actions/setup-node@v7
         with:
@@ -204,7 +223,8 @@ jobs:
       # Same as in linux-tests.
       - name: Install the packed package and watch a directory
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
-        run: node js/scripts/fresh-install-test.js prebuilt
+        shell: bash
+        run: node js/scripts/fresh-install-test.js prebuilt package/nsfw-*.tgz
 
   windows-tests:
     name: "Windows Tests (${{ matrix.arch }}, Node ${{ matrix.node }})"
@@ -226,6 +246,12 @@ jobs:
           path: prebuilds
           merge-multiple: true
 
+      # The package prebuild.yaml packed, which release.yaml publishes.
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+
       - name: Use Node.js ${{ matrix.node }}
         uses: actions/setup-node@v7
         with:
@@ -245,7 +271,8 @@ jobs:
       # Same as in linux-tests.
       - name: Install the packed package and watch a directory
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
-        run: node js/scripts/fresh-install-test.js prebuilt
+        shell: bash
+        run: node js/scripts/fresh-install-test.js prebuilt package/nsfw-*.tgz
 
   # Single stable check for branch protection, so matrix changes don't require
   # editing the required status checks.

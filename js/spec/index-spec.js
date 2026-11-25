@@ -208,88 +208,227 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
-    if (process.platform !== 'darwin') {
-      // this test is super flakey on CI right now
-      it('can listen for a rename event', async function() {
-        const srcFile = 'testing.file';
-        const destFile = 'new-testing.file';
-        const inPath = path.resolve(workDir, 'test4');
-        let eventListening = false;
-        let deleteEventFound = false;
-        let createEventFound = false;
-        let renameEventFound = false;
-        let extraEventFound = false;
+    it('reports a file created and modified within the same second as created once', async function() {
+      const { CREATED, MODIFIED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test5');
+      const events = [];
+      const named = (action, file) => events.filter(event =>
+        event.action === action && event.directory === inPath && event.file === file);
 
-        function findEvent(element) {
-          if (!eventListening) {
-            return;
-          }
-          if (
-            element.action === nsfw.actions.RENAMED &&
-            element.directory === inPath &&
-            element.oldFile === srcFile &&
-            element.newDirectory === inPath &&
-            element.newFile === destFile
-          ) {
-            renameEventFound = true;
-          } else if (
-            element.action === nsfw.actions.DELETED &&
-            element.directory === path.resolve(inPath) &&
-            element.file === srcFile
-          ) {
-            deleteEventFound = true;
-          } else if (
-            element.action === nsfw.actions.CREATED &&
-            element.directory === path.resolve(inPath) &&
-            element.file === destFile
-          ) {
-            createEventFound = true;
-          } else {
-            if (element.directory === path.resolve(inPath)) {
-              extraEventFound = true;
-            }
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        // Both writes have to fall within one second, which a slow runner can miss: tried again from the start of
+        // the next one until they do.
+        let sameSecond = false;
+        for (let attempt = 0; attempt < 5 && !sameSecond; attempt++) {
+          const file = `created-then-modified-${attempt}.file`;
+          await sleep(1000 - Date.now() % 1000 + 10);
+          const writtenAt = Date.now();
+          await fsp.writeFile(path.join(inPath, file), 'Created');
+          await waitUntil(() => named(CREATED, file).length > 0,
+            { message: () => `No creation in ${JSON.stringify(events)}` });
+          await fsp.appendFile(path.join(inPath, file), ' and modified');
+          sameSecond = Math.floor(Date.now() / 1000) === Math.floor(writtenAt / 1000);
+          await waitUntil(() => named(MODIFIED, file).length > 0,
+            { message: () => `No modification in ${JSON.stringify(events)}` });
+          await barrier(events, workDir);
+          assert.equal(named(CREATED, file).length, 1, JSON.stringify(events));
+        }
+        assert.ok(sameSecond, 'The two writes never fell within one second');
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('reports a file created and removed at once as created before removed', async function() {
+      const { CREATED, DELETED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test8');
+      const file = 'short-lived.file';
+      const events = [];
+
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        await fsp.writeFile(path.join(inPath, file), 'Short-lived');
+        await fsp.unlink(path.join(inPath, file));
+        await barrier(events, workDir);
+        const actions = events.filter(event => event.directory === inPath && event.file === file)
+          .map(event => event.action);
+        if (process.platform === 'darwin') {
+          assert.deepStrictEqual(actions, [CREATED, DELETED], JSON.stringify(events));
+        } else {
+          // Some watchers see nothing of a file gone before they look.
+          const appearedAndLeft = actions.filter(action => action === CREATED || action === DELETED);
+          assert.ok(appearedAndLeft.length === 0 || isDeepStrictEqual(appearedAndLeft, [CREATED, DELETED]),
+            JSON.stringify(events));
+        }
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('reports renames in a row as renames that lead to the last name', async function() {
+      const { CREATED, DELETED, RENAMED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test9');
+      const events = [];
+      // Replays the events about the names in inPath onto the ones there before, failing on one that doesn't fit.
+      const replay = (names, start) => {
+        const present = new Set(start);
+        for (const event of events.filter(event => event.directory === inPath && names.some(name =>
+          name === event.file || name === event.oldFile || name === event.newFile))) {
+          assert.ok(![CREATED, DELETED].includes(event.action), JSON.stringify(events));
+          if (event.action === RENAMED) {
+            assert.ok(present.delete(event.oldFile) && event.newDirectory === inPath, JSON.stringify(events));
+            present.add(event.newFile);
           }
         }
+        return [...present].sort();
+      };
 
-        const events = [];
-        let watch = await nsfw(
-          workDir,
-          batch => {
-            batch.forEach(findEvent);
-            events.push(...batch);
-          },
-          { debounceMS: DEBOUNCE }
-        );
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
 
-        try {
-          await watch.start();
-          await outputFile(path.join(inPath, srcFile), '');
-          await barrier(events, workDir);
-          eventListening = true;
-          await fsp.rename(path.join(inPath, srcFile), path.join(inPath, destFile));
-          await waitUntil(() => renameEventFound || (deleteEventFound && createEventFound),
-            { message: () => `No rename in ${JSON.stringify(events)}` });
-          await barrier(events, workDir);
-          eventListening = false;
+      try {
+        await watch.start();
+        const [a, b, c, home, away] = ['chain-a.file', 'chain-b.file', 'chain-c.file', 'home.file', 'away.file']
+          .map(name => path.join(inPath, name));
+        // Created while watching: FSEvents may coalesce a round trip into one event per name, which only tells where
+        // the entry ends up, so where it started is where it was reported.
+        await fsp.writeFile(a, 'Chain');
+        await fsp.writeFile(home, 'Round trip');
+        await barrier(events, workDir);
+        const before = events.length;
+        await fsp.rename(a, b);
+        await fsp.rename(b, c);
+        await fsp.rename(home, away);
+        await fsp.rename(away, home);
+        await barrier(events, workDir);
+        events.splice(0, before);
+        assert.deepStrictEqual(replay(['chain-a.file', 'chain-b.file', 'chain-c.file'], ['chain-a.file']),
+          ['chain-c.file']);
+        assert.deepStrictEqual(replay(['home.file', 'away.file'], ['home.file']), ['home.file']);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
 
-          switch (process.platform) {
-            case 'darwin':
-              assert.ok(deleteEventFound && createEventFound !== renameEventFound);
-              break;
+    it('keeps both names when two files swap through a temporary name', async function() {
+      const { CREATED, DELETED, RENAMED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test9');
+      const names = ['swap-a.file', 'swap-b.file', 'swap-tmp.file'];
+      const [a, b, temp] = names.map(name => path.join(inPath, name));
+      const events = [];
+      let watch = await nsfw(inPath, batch => events.push(...batch), { debounceMS: DEBOUNCE });
 
-            default:
-              assert.ok(renameEventFound);
-              assert.ok(!deleteEventFound && !createEventFound);
-              break;
+      try {
+        await watch.start();
+        await fsp.writeFile(a, 'A');
+        await fsp.writeFile(b, 'B');
+        await barrier(events, inPath);
+        const beforeSwap = events.length;
+        fs.renameSync(a, temp);
+        fs.renameSync(b, a);
+        fs.renameSync(temp, b);
+        await barrier(events, inPath);
+
+        const swapEvents = events.slice(beforeSwap).filter(event => event.directory === inPath &&
+          names.includes(event.action === RENAMED ? event.oldFile : event.file));
+        const present = new Set(names.slice(0, 2));
+        for (const event of swapEvents) {
+          if (event.action === RENAMED) {
+            assert.ok(present.delete(event.oldFile), JSON.stringify(events));
+            assert.equal(event.newDirectory, inPath);
+            present.add(event.newFile);
+          } else if (event.action === CREATED) {
+            present.add(event.file);
+          } else if (event.action === DELETED) {
+            present.delete(event.file);
           }
-
-          assert.ok(!extraEventFound);
-        } finally {
-          await watch.stop();
-          watch = null;
         }
-      });
-    }
+        assert.deepStrictEqual([...present].sort(), names.slice(0, 2), JSON.stringify(events));
+        assert.ok(swapEvents.some(event => event.action === RENAMED || event.action === DELETED));
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('can listen for a rename event', async function() {
+      const srcFile = 'testing.file';
+      const destFile = 'new-testing.file';
+      const inPath = path.resolve(workDir, 'test4');
+      let eventListening = false;
+      let deleteEventFound = false;
+      let createEventFound = false;
+      let renameEventFound = false;
+      let extraEventFound = false;
+
+      function findEvent(element) {
+        if (!eventListening) {
+          return;
+        }
+        if (
+          element.action === nsfw.actions.RENAMED &&
+          element.directory === inPath &&
+          element.oldFile === srcFile &&
+          element.newDirectory === inPath &&
+          element.newFile === destFile
+        ) {
+          renameEventFound = true;
+        } else if (
+          element.action === nsfw.actions.DELETED &&
+          element.directory === path.resolve(inPath) &&
+          element.file === srcFile
+        ) {
+          deleteEventFound = true;
+        } else if (
+          element.action === nsfw.actions.CREATED &&
+          element.directory === path.resolve(inPath) &&
+          element.file === destFile
+        ) {
+          createEventFound = true;
+        } else {
+          if (element.directory === path.resolve(inPath)) {
+            extraEventFound = true;
+          }
+        }
+      }
+
+      const events = [];
+      let watch = await nsfw(
+        workDir,
+        batch => {
+          batch.forEach(findEvent);
+          events.push(...batch);
+        },
+        { debounceMS: DEBOUNCE }
+      );
+
+      try {
+        await watch.start();
+        await outputFile(path.join(inPath, srcFile), '');
+        await barrier(events, workDir);
+        eventListening = true;
+        await fsp.rename(path.join(inPath, srcFile), path.join(inPath, destFile));
+        await waitUntil(() => renameEventFound || (deleteEventFound && createEventFound),
+          { message: () => `No rename in ${JSON.stringify(events)}` });
+        await barrier(events, workDir);
+        eventListening = false;
+
+        assert.ok(renameEventFound, JSON.stringify(events));
+        assert.ok(!deleteEventFound && !createEventFound, JSON.stringify(events));
+
+        assert.ok(!extraEventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
 
     // A burst of renames fills reads up, so that the old name of some ends a read and their new name starts the next.
     it('reports each rename of a burst as one rename', async function(t) {
@@ -332,27 +471,58 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
-    // Windows reports as a rename only an entry that stays in its directory, so this only pins the shape of the event:
-    // both directories of a rename within one directory. macOS reports a rename as a removal and a creation, or as a
-    // rename, depending on timing.
-    it('reports the old and the new directory of a directory renamed in a subdirectory', async function(t) {
-      if (process.platform === 'darwin') return t.skip();
+    it('reports the old and the new directory of a directory renamed in a subdirectory', async function() {
       const inPath = path.join(workDir, 'test4', 'folder4');
       const events = [];
       let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
 
       try {
-        await fsp.mkdir(path.join(inPath, 'before'));
         await watch.start();
+        await fsp.mkdir(path.join(inPath, 'before'));
+        await waitForEvent(events, event => event.action === nsfw.actions.CREATED &&
+          event.directory === inPath && event.file === 'before', 'creation of the directory to rename');
+        const beforeRename = events.length;
         await fsp.rename(path.join(inPath, 'before'), path.join(inPath, 'after'));
         await barrier(events, workDir);
         // Windows also reports a renamed entry as modified.
         assert.deepStrictEqual(
-          events.filter(event => event.action !== nsfw.actions.MODIFIED &&
+          events.slice(beforeRename).filter(event => event.action !== nsfw.actions.MODIFIED &&
             [event.file, event.oldFile, event.newFile].some(name => name === 'before' || name === 'after')),
           [{ action: nsfw.actions.RENAMED, directory: inPath, oldFile: 'before', newDirectory: inPath,
             newFile: 'after' }]
         );
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('reports a rename that only changes the case of the name', async function() {
+      const { RENAMED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test6');
+      const oldFile = 'testing6.file';
+      const newFile = 'Testing6.file';
+      const events = [];
+      const about = () => events.filter(event => event.directory === inPath &&
+        [event.file, event.oldFile, event.newFile].some(name => name === oldFile || name === newFile));
+
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        await fsp.rename(path.join(inPath, oldFile), path.join(inPath, newFile));
+        await waitUntil(() => about().some(event => event.action === RENAMED),
+          { message: () => `No rename in ${JSON.stringify(events)}` });
+        await barrier(events, workDir);
+        const expected = { action: RENAMED, directory: inPath, oldFile, newDirectory: inPath, newFile };
+        const actual = about().map(event => ({ action: event.action, directory: event.directory,
+          oldFile: event.oldFile, newDirectory: event.newDirectory, newFile: event.newFile }));
+        // ReadDirectoryChangesW also reports a removal next to the rename.
+        if (process.platform === 'win32') {
+          assert.ok(actual.some(event => isDeepStrictEqual(event, expected)), JSON.stringify(events));
+        } else {
+          assert.deepStrictEqual(actual, [expected]);
+        }
       } finally {
         await watch.stop();
         watch = null;
@@ -422,19 +592,49 @@ describe('Node Sentinel File Watcher', function() {
         await barrier(events, workDir);
         eventListening = false;
 
-        switch (process.platform) {
-          case 'linux':
-            assert.ok(renameEventFound);
-            assert.ok(!deleteEventFound && !createEventFound);
-            break;
-
-          default:
-            assert.ok(deleteEventFound && createEventFound);
-            assert.ok(!renameEventFound);
-            break;
+        // ReadDirectoryChangesW only pairs the two names of a rename within a directory.
+        if (process.platform === 'win32') {
+          assert.ok(deleteEventFound && createEventFound, JSON.stringify(events));
+          assert.ok(!renameEventFound, JSON.stringify(events));
+        } else {
+          assert.ok(renameEventFound, JSON.stringify(events));
+          assert.ok(!deleteEventFound && !createEventFound, JSON.stringify(events));
         }
 
         assert.ok(!extraEventFound);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('reports a directory moved out as deleted, and moved back with what it holds as created', async function() {
+      // Moves to and from a directory outside the watched one, as moving to the Trash and restoring from it does.
+      const { CREATED, DELETED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test7');
+      const trash = path.resolve(workDir, 'trash');
+      const directory = path.join(inPath, 'trashed');
+      await outputFile(path.join(directory, 'inner.file'), 'Inner');
+      await outputFile(path.join(directory, 'nested', 'deep.file'), 'Deep');
+      await mkdirp(trash);
+      const events = [];
+      const reported = (action, eventDirectory, file, since = 0) => events.slice(since).some(event =>
+        event.action === action && event.directory === eventDirectory && event.file === file);
+
+      let watch = await nsfw(inPath, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        await fsp.rename(directory, path.join(trash, 'trashed'));
+        await waitUntil(() => reported(DELETED, inPath, 'trashed'),
+          { message: () => `No deletion in ${JSON.stringify(events)}` });
+        const movedOut = events.length;
+        await fsp.rename(path.join(trash, 'trashed'), directory);
+        const created = [[inPath, 'trashed'], [directory, 'inner.file'], [directory, 'nested'],
+          [path.join(directory, 'nested'), 'deep.file']];
+        await waitUntil(
+          () => created.every(([eventDirectory, file]) => reported(CREATED, eventDirectory, file, movedOut)),
+          { message: () => `Missing creations in ${JSON.stringify(events)}` });
       } finally {
         await watch.stop();
         watch = null;
@@ -1042,11 +1242,9 @@ describe('Node Sentinel File Watcher', function() {
 
     }
 
-    // FSEvents reports a directory moved in, but not what it holds.
     for (const how of ['moved', 'copied']) {
       it(`reports once each entry of a directory ${how} into the watched one, but not the ignored ones`,
-        async function(t) {
-          if (process.platform === 'darwin' && how === 'moved') return t.skip();
+        async function() {
           const inPath = path.join(workDir, 'test4');
           const source = path.join(workDir, 'test5', 'arriving');
           const target = path.join(inPath, 'arriving');
@@ -1075,13 +1273,9 @@ describe('Node Sentinel File Watcher', function() {
             }
             await barrier(events, inPath);
 
-            let reported = events.filter(event => event.action !== nsfw.actions.MODIFIED &&
+            const reported = events.filter(event => event.action !== nsfw.actions.MODIFIED &&
               !(event.directory === inPath && event.file?.startsWith('barrier-')))
               .map(event => `${event.action} ${path.relative(inPath, path.join(event.directory, event.file))}`);
-            // FSEvents can report a creation more than once, when it reports the flags of several events at a time.
-            if (process.platform === 'darwin') {
-              reported = [...new Set(reported)];
-            }
             const expected = ['arriving', ...entries.map(entry => path.join('arriving', entry))]
               .map(entry => `${nsfw.actions.CREATED} ${entry}`);
             assert.deepStrictEqual(reported.sort(), expected.sort());
@@ -3707,7 +3901,7 @@ describe('Node Sentinel File Watcher', function() {
       const inPath = path.join(workDir, 'test4');
       const isLinux = process.platform === 'linux';
 
-      // A file written over: macOS can report it as created, when it can't tell, see FSEventsService::demangle().
+      // A file written over: macOS can report it as created, as FSEvents merges the changes of a path.
       const CHANGED = [nsfw.actions.CREATED, nsfw.actions.MODIFIED];
 
       // The most inotify watches above before this process held while action ran, sampled every 10 ms.

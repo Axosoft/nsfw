@@ -64,7 +64,9 @@ void RunLoop::work() {
     pathsToWatch,
     kFSEventStreamEventIdSinceNow,
     latency,
-    kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot
+    // The extended data tells the inode of each event, which ties the two sides of a rename together.
+    kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagUseCFTypes |
+      kFSEventStreamCreateFlagUseExtendedData
   );
 
   FSEventStreamScheduleWithRunLoop(mEventStream, mRunLoop, kCFRunLoopDefaultMode);

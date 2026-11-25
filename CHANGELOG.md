@@ -77,6 +77,29 @@
   directory found are not reported again when their own creation comes in the next two reads of the system watcher;
   a rename to one of them is reported as it comes, as on Linux. A `DELETED` or `RENAMED` for one of them in between, or
   a read that fails, ends that, so that a later creation is reported.
+- On macOS, a file created and then changed within the same second is reported as `CREATED` once and then
+  `MODIFIED` (#5). FSEvents repeats the flags of a path's earlier changes with each new one, and the watcher told a
+  creation from a change by whether the file was born and last modified in the same second. It now remembers the
+  entries it reported, while they are there, and otherwise looks at when the entry was born. An entry created shortly
+  before the watcher started can still be misreported.
+- On macOS, a file created and removed before the watcher handled it is reported as `CREATED` and then `DELETED`, as
+  on the other platforms, rather than as `DELETED` alone.
+- On macOS, more renames are reported as `RENAMED` (#78): FSEvents adds the flags of earlier changes to either side of
+  a rename, such as for a file created or modified shortly before, and only a side with nothing but the renamed flag
+  could be paired, so such a rename was reported as `MODIFIED` and `DELETED`, or `CREATED` and `DELETED`. The sides are
+  now paired by the inode FSEvents reports for each, or by their consecutive event ids when it doesn't report one, and
+  other renames in the same directory no longer break the pairing. Consecutive renames can be combined into a single
+  event. When combining them would overwrite another rename's source, the affected names are reported as deleted
+  and then created.
+- On macOS, a move between two directories of the watched path is reported as `RENAMED`, with `newDirectory` set to
+  the destination's, as on Linux (#150). Before, only renames within a directory were paired.
+- On macOS, a rename that only changes the case of a name (`index.js` to `Index.js`) on a case-insensitive volume is
+  reported as `RENAMED` (#146), instead of as two `MODIFIED`.
+- On macOS, an entry moved into the watched path from outside, such as a folder restored from the Trash, is reported
+  as `CREATED`, and so is what a directory holds, as on Linux, except what the excluded patterns or the ignore files
+  exclude (#31). Before, it could be reported as `MODIFIED`, and what a directory held wasn't reported. An entry moved
+  out, such as to the Trash, is reported as `DELETED`, or as `RENAMED` when FSEvents delivers its other side in
+  another batch and the entry is still found below the watched path on the same volume.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

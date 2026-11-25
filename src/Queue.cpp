@@ -93,9 +93,9 @@ void EventQueue::enqueue(
   }
 
   // Also while paused: the rules have to follow their files whether or not their changes are reported. On macOS a
-  // modification counts as a replacement too: it reports a directory that moved in as modified when it can't tell,
-  // see FSEventsService::demangle(). Elsewhere it doesn't, so Windows reporting a directory as modified whenever an
-  // entry changes in it doesn't have its rules read again each time.
+  // modification counts as a replacement too: FSEvents merges the changes of a path into one event, and the watcher
+  // can't always tell an entry that took the place of another from one modified. Elsewhere it doesn't, so Windows
+  // reporting a directory as modified whenever an entry changes in it doesn't have its rules read again each time.
   if (!watcherNotesEntries) {
 #if defined(__APPLE__)
     const bool replaced = true;

@@ -45,7 +45,8 @@
                 "cflags+": ["-fvisibility-hidden"],
                 "sources": [
                     "src/osx/RunLoop.cpp",
-                    "src/osx/FSEventsService.cpp"
+                    "src/osx/FSEventsService.cpp",
+                    "src/osx/FSEventsContents.cpp"
                 ],
                 "xcode_settings": {
                     "GCC_SYMBOLS_PRIVATE_EXTERN": "YES", # -fvisibility=hidden

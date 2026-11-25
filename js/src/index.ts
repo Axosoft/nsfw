@@ -672,7 +672,7 @@ namespace nsfw {
     directory: string;
     /**  the name of the file before a rename*/
     oldFile: string;
-    /** the new location of the file(only useful on linux) */
+    /** the destination directory of the rename */
     newDirectory: string;
     /** the name of the file after a rename */
     newFile: string;

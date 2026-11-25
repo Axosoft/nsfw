@@ -11,9 +11,9 @@ NativeInterface::NativeInterface(const std::string &path, const std::vector<std:
   // recursive: the single file watcher excludes the subdirectories by patterns, so they cost no inotify watch.
   (void)recursive;
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter));
-#elif defined(_WIN32)
+#elif defined(_WIN32) || defined(__APPLE_CC__)
   mQueue->setFilter(mFilter);
-  // The Windows watcher skips the directories it ignores when it reports what a directory that appeared holds.
+  // These watchers skip the directories the filter ignores when they report what a directory that appeared holds.
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter, recursive));
 #else
   mQueue->setFilter(mFilter);

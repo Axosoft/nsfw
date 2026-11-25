@@ -286,6 +286,15 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
     if (maybeRecursive.IsBoolean()) {
       mRecursive = maybeRecursive.As<Napi::Boolean>().Value();
     }
+
+    // followFileSymlinks
+    Napi::Value maybeFollowFileSymlinks = options["followFileSymlinks"];
+    if (options.Has("followFileSymlinks") && !maybeFollowFileSymlinks.IsBoolean()) {
+      throw Napi::TypeError::New(env, "options.followFileSymlinks must be a boolean.");
+    }
+    if (maybeFollowFileSymlinks.IsBoolean()) {
+      mFollowFileSymlinks = maybeFollowFileSymlinks.As<Napi::Boolean>().Value();
+    }
   }
 
   // Between runs the callbacks are plain, non-enumerable properties of this object; each start() wraps them in
@@ -423,7 +432,8 @@ void NSFW::StartWorker::Execute() {
   try {
     mNSFW->mQueue->clear();
     std::unique_ptr<NativeInterface> nativeInterface(
-      new NativeInterface(mNSFW->mPath, excludedPaths, filterOptions, mNSFW->mRecursive, mNSFW->mQueue)
+      new NativeInterface(mNSFW->mPath, excludedPaths, filterOptions, mNSFW->mRecursive, mNSFW->mFollowFileSymlinks,
+        mNSFW->mQueue)
     );
     if (!nativeInterface->isWatching()) {
       mStatus = COULD_NOT_START;

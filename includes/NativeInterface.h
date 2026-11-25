@@ -21,7 +21,8 @@ class NativeInterface {
 public:
   // recursive: false only reports the entries of path itself.
   NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths,
-    const FilterOptions &filterOptions, bool recursive, std::shared_ptr<EventQueue> queue);
+    const FilterOptions &filterOptions, bool recursive, bool followFileSymlinks,
+    std::shared_ptr<EventQueue> queue);
   ~NativeInterface();
 
   std::string getError();
@@ -33,6 +34,7 @@ public:
 private:
   std::shared_ptr<EventQueue> mQueue;
   std::shared_ptr<PathFilter> mFilter;
+  std::shared_ptr<SymlinkIndex> mSymlinks;
   std::unique_ptr<NativeImplementation> mNativeInterface;
 };
 

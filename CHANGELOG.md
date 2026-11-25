@@ -14,6 +14,13 @@
   from the event's flags or from what the watcher already looked up, and only looks the entry up when the flags don't
   tell it, for a modification or an entry that moved elsewhere in the watched path. A watched file reports `FILE`.
   The `FileChangeEvent` types have the field, so code that builds events of those types has to set it.
+- A change to a file is also reported under each symlink below the watched path that leads to it, when the file is
+  below the watched path too: modified, deleted (the symlink dangles) and created again as the file is. Chains of
+  symlinks are followed, cycles, symlinks to directories, to paths outside the watched path and excluded ones aren't.
+  On Linux every such symlink is followed, found by the scan the watcher already does, with no extra inotify watch.
+  On macOS and Windows the ones created, renamed or retargeted while watching are, and with the new
+  `followFileSymlinks` option also the ones already there when the watcher starts, which costs a walk of the tree in
+  the background at `start()`. See "Symlinked files" in the README for what each platform looks up.
 
 ### Changed
 - The addon is loaded by the first `nsfw()` call instead of when nsfw is imported, so importing it no longer throws

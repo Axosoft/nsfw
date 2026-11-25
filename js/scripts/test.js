@@ -55,7 +55,7 @@ if (runsNormal) {
     }
   }
   exec(`${nodeTest} js/spec/canonical-path-spec.js js/spec/index-spec.js js/spec/lifecycle-spec.js \
-    js/spec/native-binding-spec.js`);
+    js/spec/native-binding-spec.js js/spec/symlinked-files-spec.js`);
 }
 
 /**

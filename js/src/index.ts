@@ -413,6 +413,7 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
     // Nothing below the entry either, should a directory replace the file.
     excludedPatterns: ['/*', '!' + pattern, pattern + '/*'],
     respectGitignore: false,
+    followFileSymlinks: false,
     recursive: false
   });
 
@@ -475,7 +476,8 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
   excludedPaths,
   excludedPatterns = [],
   nativeBinding,
-  respectGitignore = false
+  respectGitignore = false,
+  followFileSymlinks = false
 }: Partial<nsfw.Options> = {}): Promise<{ implementation: Implementation; context: PathContext }> {
   if (excludedPaths === undefined) {
     excludedPaths = [];
@@ -493,6 +495,9 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
   validateExcludedPatterns(excludedPatterns);
   if (typeof respectGitignore !== 'boolean') {
     throw new TypeError('respectGitignore must be a boolean.');
+  }
+  if (typeof followFileSymlinks !== 'boolean') {
+    throw new TypeError('followFileSymlinks must be a boolean.');
   }
   const NSFW = await resolveBinding(nativeBinding);
 
@@ -533,7 +538,8 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
         errorCallback,
         excludedPaths: effectivePaths,
         excludedPatterns: [...excludedPatterns],
-        respectGitignore
+        respectGitignore,
+        followFileSymlinks
       });
   } else if (stats.isFile()) {
     if (_errorCallback && typeof _errorCallback !== 'function') {
@@ -739,6 +745,15 @@ namespace nsfw {
      * file is loaded once per thread, and watchers created with different files are independent of each other.
      */
     nativeBinding?: string | NativeAddon;
+    /**
+     * Also follows, on macOS and Windows, the symlinks to files that were already below the watched path when the
+     * watcher started: a change to the file a symlink leads to is reported under the symlink too, see "Symlinked
+     * files" in the README. It walks the watched tree once, in the background, skipping excluded and ignored
+     * directories. Without it only the symlinks that appear while watching are followed there. On Linux every one is
+     * followed anyway, found by the scan the watcher already does, so it has no effect. Only for a watched directory.
+     * Defaults to false.
+     */
+    followFileSymlinks?: boolean;
   }
 
   /** The watcher class that nsfw's `.node` file exports. */

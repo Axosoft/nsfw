@@ -11,7 +11,8 @@
             "src/FilterPaths.cpp",
             "src/GitRepository.cpp",
             "src/GitignoreRules.cpp",
-            "src/PathFilter.cpp"
+            "src/PathFilter.cpp",
+            "src/SymlinkIndex.cpp"
         ],
         "include_dirs": [
             "includes",

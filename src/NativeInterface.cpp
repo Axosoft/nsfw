@@ -1,29 +1,57 @@
 #include "../includes/NativeInterface.h"
 
-NativeInterface::NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths,
-  const FilterOptions &filterOptions, bool recursive, std::shared_ptr<EventQueue> queue):
-  mQueue(queue),
-  mFilter(std::make_shared<PathFilter>(path, filterOptions)) {
+namespace {
+
+// The Linux tree follows symlinks to directories, so it can report a path in the tree through one of them.
 #if defined(__linux__) || defined(__FreeBSD__)
+const bool FOLLOWS_DIRECTORY_LINKS = true;
+#else
+const bool FOLLOWS_DIRECTORY_LINKS = false;
+#endif
+
+}
+
+NativeInterface::NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths,
+  const FilterOptions &filterOptions, bool recursive, bool followFileSymlinks, std::shared_ptr<EventQueue> queue):
+  mQueue(queue),
+  mFilter(std::make_shared<PathFilter>(path, filterOptions)),
+  mSymlinks(std::make_shared<SymlinkIndex>(path, excludedPaths, mFilter->isCaseSensitive(), FOLLOWS_DIRECTORY_LINKS)) {
+  mQueue->setSymlinks(mSymlinks);
+#if defined(__linux__) || defined(__FreeBSD__)
+  // Its scan already finds every symlink.
+  (void)followFileSymlinks;
   mFilter->trackApplied();
   mQueue->setFilter(mFilter, true);
   // The Linux watcher also skips the directories it ignores, instead of watching them for nothing. It has no use for
-  // recursive: the single file watcher excludes the subdirectories by patterns, so they cost no inotify watch.
+  // recursive: the single file watcher excludes the subdirectories by patterns, so they cost no inotify watch. It lists
+  // every directory it watches, so it tells the symlinks it finds there.
   (void)recursive;
-  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter));
+  std::shared_ptr<SymlinkIndex> symlinks = mSymlinks;
+  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter,
+    [symlinks](const std::string &directory, const std::string &name) { symlinks->linkFound(directory, name); }));
 #elif defined(_WIN32) || defined(__APPLE_CC__)
   mQueue->setFilter(mFilter);
   // These watchers skip the directories the filter ignores when they report what a directory that appeared holds.
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter, recursive));
+  // After the watcher started, so a symlink created during the walk is followed from its event if not found by it.
+  if (followFileSymlinks && mNativeInterface->isWatching()) {
+    std::shared_ptr<PathFilter> filter = mFilter;
+    mSymlinks->walk([filter](const std::string &directory, const std::string &name) {
+      return filter->isActive() && filter->isIgnored(directory, name, PathFilter::Kind::DIRECTORY);
+    });
+  }
 #else
+  (void)followFileSymlinks;
   mQueue->setFilter(mFilter);
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, recursive));
 #endif
 }
 
 NativeInterface::~NativeInterface() {
+  mSymlinks->stopWalk();
   mNativeInterface.reset(nullptr);
   mQueue->setFilter(nullptr);
+  mQueue->setSymlinks(nullptr);
 }
 
 std::string NativeInterface::getError() {
@@ -39,6 +67,7 @@ bool NativeInterface::isWatching() {
 }
 
 std::future<bool> NativeInterface::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
+  mSymlinks->setExcludedPaths(excludedPaths);
 #if defined(__linux__) || defined(__FreeBSD__)
   return mNativeInterface->updateExcludedPaths(excludedPaths);
 #else

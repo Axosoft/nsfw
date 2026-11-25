@@ -38,6 +38,9 @@ public:
   // Whether any pattern or ignore file may apply. False makes every other call cheap.
   bool isActive() const { return mActive; }
 
+  // Whether the watched path's filesystem tells names apart by case.
+  bool isCaseSensitive() const { return mCaseSensitive; }
+
   // Replaces the excluded patterns in force. A watcher that keeps answers, the Linux one, commits them once it applied
   // them, see commit(); the others right away.
   void setPatterns(const std::vector<std::string> &patterns);

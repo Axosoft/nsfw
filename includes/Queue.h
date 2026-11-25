@@ -12,6 +12,7 @@
 #include <cstdint>
 
 #include "PathFilter.h"
+#include "SymlinkIndex.h"
 
 enum EventType {
   CREATED = 0,
@@ -87,10 +88,24 @@ public:
   // of its patterns can make it active. watcherNotesEntries: the watcher tells the filter about every entry change
   // itself, before it acts on it; otherwise the queue does, for the events it is given.
   void setFilter(std::shared_ptr<PathFilter> filter, bool watcherNotesEntries = false);
+  // Follows the symlinks that lead to files in the watched tree, and reports a change of such a file under them too,
+  // right after the change itself. Set and reset with the filter.
+  void setSymlinks(std::shared_ptr<SymlinkIndex> symlinks);
 
   EventQueue();
 
 private:
+  void judge(
+    uint64_t eventEpoch,
+    const EventType type,
+    const std::string &fromDirectory,
+    const std::string &fromFile,
+    const std::string &toDirectory,
+    const std::string &toFile,
+    PathFilter::Kind filterKind,
+    PathFilter::Kind kind
+  );
+  void judgeDerived(uint64_t eventEpoch, const SymlinkIndex::Derived &derived);
   void push(
     uint64_t epoch,
     const EventType type,
@@ -101,6 +116,7 @@ private:
     PathFilter::Kind kind
   );
   std::shared_ptr<PathFilter> mFilter;
+  std::shared_ptr<SymlinkIndex> mSymlinks;
   bool mWatcherNotesEntries = false;
   std::mutex mFilterMutex;
   std::deque<std::unique_ptr<Event>> queue;

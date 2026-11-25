@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 
 #include "PathFilter.h"
 
@@ -43,7 +44,8 @@ public:
   void clear();
   std::size_t count();
   std::unique_ptr<Event> dequeue();
-  std::unique_ptr<std::vector<std::unique_ptr<Event>>> dequeueAll();
+  std::unique_ptr<std::vector<std::unique_ptr<Event>>> dequeueAll(uint64_t &epoch);
+  uint64_t epoch() const { return mEpoch; }
   // kind: what the entry is, when the watcher knows: a removed one can't be looked up anymore.
   void enqueue(
     const EventType type,
@@ -54,12 +56,17 @@ public:
     PathFilter::Kind kind = PathFilter::Kind::UNKNOWN
   );
 
+  // Keep a native read together so a removal and its replacement can be delivered in one batch.
+  void holdEvents();
+  // Returns whether a removal was kept for the next read to pair with its replacement.
+  bool releaseEvents(bool keepTrailingRemoval = false);
+
   void pause();
   void resume();
 
   // What wakes the delivery thread of the run that watches, which sleeps until one of them comes instead of checking
-  // on a timer. WAKE_EVENTS comes with every event queued, WAKE_ERROR from the watcher when it records an error, and
-  // WAKE_STOP from the run when it ends.
+  // on a timer. WAKE_EVENTS comes with every event queued, or once a hold of them is released, WAKE_ERROR from the
+  // watcher when it records an error, and WAKE_STOP from the run when it ends.
   enum Wake : unsigned { WAKE_EVENTS = 1, WAKE_ERROR = 2, WAKE_STOP = 4 };
   void wake(unsigned reasons);
   // Blocks until a wake for one of reasons comes or the deadline passes, and takes the ones that came, which the
@@ -78,6 +85,7 @@ public:
 
 private:
   void push(
+    uint64_t epoch,
     const EventType type,
     const std::string &fromDirectory,
     const std::string &fromFile,
@@ -88,7 +96,12 @@ private:
   bool mWatcherNotesEntries = false;
   std::mutex mFilterMutex;
   std::deque<std::unique_ptr<Event>> queue;
+  // Under mutex: whether events are held, and how many at the front of the queue can be dequeued meanwhile.
+  bool mHolding = false;
+  std::size_t mHeldFrom = 0;
   std::mutex mutex;
+  // A pause or stop invalidates batches that have already left the queue for JavaScript.
+  std::atomic<uint64_t> mEpoch{0};
   std::atomic<bool> mPaused;
   std::mutex mWakeMutex;
   std::condition_variable mWakeCondition;

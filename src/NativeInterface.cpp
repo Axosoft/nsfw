@@ -1,21 +1,23 @@
 #include "../includes/NativeInterface.h"
 
 NativeInterface::NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths,
-  const FilterOptions &filterOptions, std::shared_ptr<EventQueue> queue):
+  const FilterOptions &filterOptions, bool recursive, std::shared_ptr<EventQueue> queue):
   mQueue(queue),
   mFilter(std::make_shared<PathFilter>(path, filterOptions)) {
 #if defined(__linux__) || defined(__FreeBSD__)
   mFilter->trackApplied();
   mQueue->setFilter(mFilter, true);
-  // The Linux watcher also skips the directories it ignores, instead of watching them for nothing.
+  // The Linux watcher also skips the directories it ignores, instead of watching them for nothing. It has no use for
+  // recursive: the single file watcher excludes the subdirectories by patterns, so they cost no inotify watch.
+  (void)recursive;
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter));
 #elif defined(_WIN32)
   mQueue->setFilter(mFilter);
   // The Windows watcher skips the directories it ignores when it reports what a directory that appeared holds.
-  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter));
+  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter, recursive));
 #else
   mQueue->setFilter(mFilter);
-  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths));
+  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, recursive));
 #endif
 }
 

@@ -4,8 +4,9 @@ import path = require('path');
 type Implementation = nsfw.NSFW;
 
 interface NativeBinding {
+  // recursive: internal, false only reports the entries of watchPath itself. Defaults to true.
   new (watchPath: string, eventCallback: EventCallback,
-    options: Required<Omit<nsfw.Options, 'nativeBinding'>>): Implementation;
+    options: Required<Omit<nsfw.Options, 'nativeBinding'>> & { recursive?: boolean }): Implementation;
   getAllocatedInstanceCount?: () => number;
 }
 
@@ -257,63 +258,204 @@ async function createPathContext(watchPath: string): Promise<PathContext> {
   };
 }
 
-function createFilePoller(watchPath: string, eventCallback: EventCallback, debounceMS: number,
-  excludedPaths: string[], reportedPath: string, isExcluded: (value: string) => boolean,
-  excludedPatterns: string[]): Implementation {
+// The most the native watcher takes. A watched file takes any debounce, so longer ones are capped to it.
+const MAX_NATIVE_DEBOUNCE_MS = 60000;
+
+// Escapes name into a pattern that matches it alone. A line break can't be escaped, so `?` stands for it: the
+// events of the other names it lets through are dropped by name.
+function escapePatternName(name: string): string {
+  return name.replace(/[\\*?[\]!# ]/g, '\\$&').replace(/[\r\n]/g, '?');
+}
+
+type FileChange = 'appeared' | 'gone' | 'changed';
+
+// Watches the directory of the file, natively filtered down to the file's own entry: its siblings are not reported
+// and, on Linux, its subdirectories cost no inotify watch.
+async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, reportedPath: string,
+  eventCallback: EventCallback, errorCallback: (error: unknown) => void, debounceMS: number, excludedPaths: string[],
+  isExcluded: (value: string) => boolean, excludedPatterns: string[]): Promise<Implementation> {
+  // Writes through a symlink notify the directory of the file it leads to. Elsewhere canonical paths are real already.
+  let target = watchedFile;
+  if (isWin32) {
+    try {
+      target = await canonicalPath(await fs.realpath(watchedFile));
+    } catch { /* Some filesystems can't tell the final path of a file: it is watched as named. */ }
+  }
+  let parent;
+  try {
+    parent = await canonicalPath(path.dirname(target));
+  } catch {
+    throw new Error('Path must be a valid path to a file or a directory.');
+  }
+  const name = path.basename(target);
+  const compare = (value: string): string => isWin32 || process.platform === 'darwin' ? value.toLowerCase() : value;
+  const isTarget = (value: string): boolean => compare(value) === compare(name);
   const directory = path.dirname(reportedPath);
   const file = path.basename(reportedPath);
-
-  let fileStatus: Stats | null = null;
-  let filePollerInterval: ReturnType<typeof setInterval> | undefined;
 
   let currentExcludedPaths = excludedPaths;
   // Kept, though only a watched directory applies them.
   let currentExcludedPatterns = excludedPatterns;
+  // Whether the file is there: a file renamed over the watched one, which the native watcher reports as created, is
+  // reported as modified.
+  let exists: boolean | undefined;
+  let observedDuringStat: boolean | undefined;
+  let running = false;
+  let paused = false;
+  // stop() calls whose job has not run yet: the caller no longer wants an error of the run it stops.
+  let pendingStops = 0;
+  // The error of the run, until delivered: before whatever job comes next, as the native watcher delivers an error
+  // before its next job runs, so that a start() called before it can't restart the watcher over it.
+  let failure: { error: unknown } | undefined;
 
-  const report = (action: nsfw.ActionType.CREATED | nsfw.ActionType.DELETED | nsfw.ActionType.MODIFIED): void => {
-    if (!currentExcludedPaths.some(isExcluded)) eventCallback([{ action, directory, file }]);
+  // The events still queued when the directory went are lost with the run, the removal of the file among them.
+  const deliverFailure = async (): Promise<void> => {
+    if (!failure) return;
+    const { error } = failure;
+    failure = undefined;
+    const found = await fileExists();
+    if (pendingStops > 0) return;
+    if (!found && !paused) uncaught(() => report(['gone']));
+    // eventCallback may have stopped the watcher.
+    if (pendingStops > 0) return;
+    uncaught(() => errorCallback(error));
   };
 
-  const getStatus = async (): Promise<void> => {
+  // One at a time in call order, as the native watcher runs them, so each finds the state the one before left: a pause
+  // can't be undone by a start called before it.
+  let jobs: Promise<unknown> = Promise.resolve();
+  const serial = <T>(job: () => Promise<T>): Promise<T> => {
+    const result = jobs.then(async () => {
+      await deliverFailure();
+      return job();
+    });
+    jobs = result.catch(() => {});
+    return result;
+  };
+  // A throw from a callback is uncaught, as for a directory, instead of ending what called it.
+  const uncaught = (callback: () => void): void => {
     try {
-      const status = await fs.stat(watchPath);
-      if (fileStatus === null) {
-        fileStatus = status;
-        report(nsfw.ActionType.CREATED);
-      } else if (
-        status.mtime.getTime() !== fileStatus.mtime.getTime() ||
-        status.ctime.getTime() !== fileStatus.ctime.getTime()
-      ) {
-        fileStatus = status;
-        report(nsfw.ActionType.MODIFIED);
-      }
-    } catch {
-      if (fileStatus !== null) {
-        fileStatus = null;
-        report(nsfw.ActionType.DELETED);
-      }
+      callback();
+    } catch (thrown) {
+      process.nextTick(() => { throw thrown; });
     }
   };
 
-  const start = async (): Promise<void> => {
-    try {
-      fileStatus = await fs.stat(watchPath);
-    } catch {
-      fileStatus = null;
+  const report = (changes: FileChange[]): void => {
+    const events: nsfw.FileChangeEvent[] = [];
+    for (const change of changes) {
+      let action: nsfw.ActionType.CREATED | nsfw.ActionType.DELETED | nsfw.ActionType.MODIFIED;
+      if (change === 'gone') {
+        if (!exists) continue;
+        action = nsfw.ActionType.DELETED;
+      } else if (!exists) {
+        action = nsfw.ActionType.CREATED;
+      } else {
+        action = nsfw.ActionType.MODIFIED;
+      }
+      exists = change !== 'gone';
+      // Replaced within a batch, say by a rename over it that Windows reports as a removal first: modified.
+      if (action === nsfw.ActionType.CREATED && events[events.length - 1]?.action === nsfw.ActionType.DELETED) {
+        events.pop();
+        action = nsfw.ActionType.MODIFIED;
+      }
+      if (action === nsfw.ActionType.MODIFIED && events[events.length - 1]?.action === action) continue;
+      events.push({ action, directory, file });
     }
-
-    filePollerInterval = setInterval(getStatus, debounceMS);
+    if (events.length > 0 && !currentExcludedPaths.some(isExcluded)) eventCallback(events);
   };
 
-  const stop = async (): Promise<void> => {
-    clearInterval(filePollerInterval);
+  const fileExists = (): Promise<boolean> => fs.stat(target).then(() => true, () => false);
+
+  // A single look once watching starts, as no event tells whether the file is there. Taken after the watch is armed:
+  // it sees what changed before, and start() resolves knowing the state every later change is told from.
+  const establish = async (): Promise<void> => {
+    observedDuringStat = undefined;
+    const found = await fileExists();
+    exists = observedDuringStat ?? found;
   };
+
+  const onEvents = (events: nsfw.FileChangeEvent[]): void => {
+    if (!running || paused) return;
+    const changes: FileChange[] = [];
+    for (const event of events) {
+      if (event.action === nsfw.ActionType.RENAMED) {
+        const from = isTarget(event.oldFile);
+        const to = isTarget(event.newFile);
+        // Both: renamed to another case of its name on a case-insensitive filesystem.
+        if (from || to) changes.push(from && to ? 'changed' : from ? 'gone' : 'appeared');
+      } else if (isTarget(event.file)) {
+        changes.push(event.action === nsfw.ActionType.CREATED ? 'appeared' :
+          event.action === nsfw.ActionType.DELETED ? 'gone' : 'changed');
+      }
+    }
+    if (exists !== undefined) {
+      report(changes);
+    } else if (changes.length > 0) {
+      // A callback can arrive after stat observed the file but before its result reaches JavaScript.
+      observedDuringStat = changes[changes.length - 1] !== 'gone';
+    }
+  };
+
+  const onError = (error: unknown): void => {
+    // A run being stopped.
+    if (!running || pendingStops > 0) return;
+    running = false;
+    failure = { error };
+    void serial(async () => {});
+  };
+
+  const pattern = '/' + escapePatternName(name);
+  const native = new NSFW(parent, onEvents, {
+    debounceMS: Math.min(debounceMS, MAX_NATIVE_DEBOUNCE_MS),
+    errorCallback: onError,
+    excludedPaths: [],
+    // Nothing below the entry either, should a directory replace the file.
+    excludedPatterns: ['/*', '!' + pattern, pattern + '/*'],
+    respectGitignore: false,
+    recursive: false
+  });
+
+  // Unlike a directory watcher's, these never reject over the state they find: starting or resuming a running watcher
+  // and stopping or pausing one that isn't do nothing, and resuming starts a stopped one.
+  const start = (): Promise<void> => serial(async () => {
+    if (running && !paused) return;
+    // An error while resuming is the next job's to deliver, not a stop to start over.
+    const wasRunning = running;
+    exists = undefined;
+    if (paused) {
+      await native.resume();
+      paused = false;
+    }
+    if (!wasRunning) {
+      // Before the run exists, so that its error is taken.
+      running = true;
+      await native.start().catch((error: unknown) => {
+        running = false;
+        throw error;
+      });
+    }
+    await establish();
+  });
 
   return {
     start,
-    stop,
-    pause: stop,
     resume: start,
+    stop() {
+      ++pendingStops;
+      return serial(async () => {
+        --pendingStops;
+        if (!running) return;
+        running = false;
+        // A run that failed meanwhile has stopped already.
+        await native.stop().catch(() => {});
+      });
+    },
+    pause: () => serial(async () => {
+      if (!running || paused) return;
+      paused = true;
+      await native.pause();
+    }),
     getExcludedPaths: async () => [...currentExcludedPaths],
     updateExcludedPaths: async paths => {
       currentExcludedPaths = paths;
@@ -394,8 +536,11 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
         respectGitignore
       });
   } else if (stats.isFile()) {
-    implementation = createFilePoller(context.watchPath, eventCallback, debounceMS, effectivePaths,
-      watchPath, context.isWatchPath, [...excludedPatterns]);
+    if (_errorCallback && typeof _errorCallback !== 'function') {
+      throw new TypeError('options.errorCallback must be a function.');
+    }
+    implementation = await createFileWatcher(NSFW, context.watchPath, watchPath, eventCallback, errorCallback,
+      debounceMS, effectivePaths, context.isWatchPath, [...excludedPatterns]);
   } else {
     throw new Error('Path must be a valid path to a file or a directory');
   }

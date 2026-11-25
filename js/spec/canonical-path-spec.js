@@ -11,7 +11,7 @@ function platformWrapper(platform, files = {}, methods = {}) {
   let native;
   class Native {
     constructor(watchPath, callback, options) {
-      native = { watchPath, callback, excludedPaths: options.excludedPaths };
+      native = { watchPath, callback, excludedPaths: options.excludedPaths, options };
     }
     async getExcludedPaths() { return native.excludedPaths; }
     async updateExcludedPaths(paths) { native.excludedPaths = paths; return paths; }
@@ -169,6 +169,53 @@ describe('Canonical Windows paths at the native boundary', function() {
   });
 });
 
+
+describe('A single file watched through its directory', function() {
+  const stat = async () =>
+    ({ dev: global.BigInt(1), ino: global.BigInt(1), isDirectory: () => false, isFile: () => true });
+
+  // Events reach a file watcher once it is started.
+  const started = { async start() {} };
+
+  function expectWatched(native, directory, name) {
+    assert.strictEqual(native.watchPath, directory);
+    assert.deepStrictEqual(Array.from(native.options.excludedPatterns), ['/*', '!/' + name, '/' + name + '/*']);
+    assert.strictEqual(native.options.recursive, false);
+    assert.strictEqual(native.options.respectGitignore, false);
+  }
+
+  it('watches / alone for a file in it', async function() {
+    const wrapper = platformWrapper('linux', { stat, realpath: async value => value }, started);
+    let events;
+    await (await wrapper.nsfw('/file', batch => { events = batch; }, { excludedPatterns: ['*.log'] })).start();
+    expectWatched(wrapper.native(), '/', 'file');
+    wrapper.native().callback([{ action: 2, directory: '/', file: 'file' }]);
+    assert.deepStrictEqual(Array.from(events, event => ({ ...event })), [{ action: 2, directory: '/', file: 'file' }]);
+  });
+
+  it('escapes the name it matches', async function() {
+    const wrapper = platformWrapper('linux', { stat, realpath: async value => value });
+    await wrapper.nsfw('/dir/ [a]*?\\!#\nb ', () => {});
+    assert.deepStrictEqual(Array.from(wrapper.native().options.excludedPatterns).slice(1),
+      ['!/\\ \\[a\\]\\*\\?\\\\\\!\\#?b\\ ', '/\\ \\[a\\]\\*\\?\\\\\\!\\#?b\\ /*']);
+  });
+
+  for (const [input, real, directory, name] of [
+    ['C:\\file', 'C:\\file', '\\\\?\\C:\\', 'file'],
+    ['C:\\link', 'C:\\dir\\target', '\\\\?\\C:\\dir', 'target'],
+    ['\\\\server\\share\\file', '\\\\server\\share\\file', '\\\\?\\UNC\\server\\share\\', 'file']
+  ]) {
+    it(`watches the directory of the file ${input} leads to on Windows`, async function() {
+      const wrapper = platformWrapper('win32', { stat, realpath: async () => real }, started);
+      let events;
+      await (await wrapper.nsfw(input, batch => { events = batch; })).start();
+      expectWatched(wrapper.native(), directory, name);
+      wrapper.native().callback([{ action: 2, directory, file: name.toUpperCase() }]);
+      assert.deepStrictEqual(Array.from(events, event => ({ ...event })),
+        [{ action: 2, directory: path.win32.dirname(input), file: path.win32.basename(input) }]);
+    });
+  }
+});
 
 describe('Watcher call submission order', function() {
   it('submits stop after canonicalization without waiting for native update completion', async function() {

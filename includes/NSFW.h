@@ -47,6 +47,8 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     std::mutex mExcludedPathsLock;
     std::vector<std::string> mExcludedPaths;
     FilterOptions mFilterOptions;
+    // Set at creation. False only reports the watched directory's own entries, for the watcher of a single file.
+    bool mRecursive = true;
     uint64_t mNextRunId = 0;
     uint64_t mRunId = 0;
     bool stopRun(uint64_t runId = 0);

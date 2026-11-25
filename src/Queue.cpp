@@ -6,6 +6,31 @@
 void EventQueue::clear() {
   std::lock_guard<std::mutex> lock(mutex);
   queue.clear();
+  mHeldFrom = 0;
+  ++mEpoch;
+}
+
+void EventQueue::holdEvents() {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (mHolding) return;
+  mHolding = true;
+  mHeldFrom = queue.size();
+}
+
+bool EventQueue::releaseEvents(bool keepTrailingRemoval) {
+  bool keptRemoval;
+  bool released;
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!mHolding) return false;
+    keptRemoval = keepTrailingRemoval && queue.size() > mHeldFrom && queue.back()->type == DELETED;
+    const std::size_t deliverable = queue.size() - (keptRemoval ? 1 : 0);
+    released = deliverable > mHeldFrom;
+    mHolding = keptRemoval;
+    mHeldFrom = keptRemoval ? deliverable : 0;
+  }
+  if (released) wake(WAKE_EVENTS);
+  return keptRemoval;
 }
 
 std::size_t EventQueue::count() {
@@ -15,9 +40,10 @@ std::size_t EventQueue::count() {
 
 std::unique_ptr<Event> EventQueue::dequeue() {
   std::lock_guard<std::mutex> lock(mutex);
-  if (queue.empty()) {
+  if (queue.empty() || (mHolding && mHeldFrom == 0)) {
     return nullptr;
   }
+  if (mHolding) --mHeldFrom;
 
   auto &front = queue.front();
   auto retVal = std::move(front);
@@ -26,19 +52,21 @@ std::unique_ptr<Event> EventQueue::dequeue() {
   return retVal;
 }
 
-std::unique_ptr<std::vector<std::unique_ptr<Event>>> EventQueue::dequeueAll() {
+std::unique_ptr<std::vector<std::unique_ptr<Event>>> EventQueue::dequeueAll(uint64_t &epoch) {
   std::lock_guard<std::mutex> lock(mutex);
-  if (queue.empty()) {
+  const auto queueSize = mHolding ? mHeldFrom : queue.size();
+  if (queueSize == 0) {
     return nullptr;
   }
 
-  const auto queueSize = queue.size();
   std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(new std::vector<std::unique_ptr<Event>>);
   for (size_t i = 0; i < queueSize; ++i) {
     auto &front = queue.front();
     events->emplace_back(std::move(front));
     queue.pop_front();
   }
+  mHeldFrom = 0;
+  epoch = mEpoch;
 
   return events;
 }
@@ -51,6 +79,7 @@ void EventQueue::enqueue(
   const std::string &toFile,
   PathFilter::Kind kind
 ) {
+  const auto eventEpoch = epoch();
   std::shared_ptr<PathFilter> filter;
   bool watcherNotesEntries;
   {
@@ -59,7 +88,7 @@ void EventQueue::enqueue(
     watcherNotesEntries = mWatcherNotesEntries;
   }
   if (!filter || !filter->isActive()) {
-    if (!mPaused) push(type, fromDirectory, fromFile, toDirectory, toFile);
+    push(eventEpoch, type, fromDirectory, fromFile, toDirectory, toFile);
     return;
   }
 
@@ -84,15 +113,15 @@ void EventQueue::enqueue(
   }
 
   if (type == DELETED) {
-    if (!filter->isRemovalIgnored(fromDirectory, fromFile, kind)) push(type, fromDirectory, fromFile);
+    if (!filter->isRemovalIgnored(fromDirectory, fromFile, kind)) push(eventEpoch, type, fromDirectory, fromFile);
     return;
   }
   if (type != RENAMED) {
     bool replacedReported = false;
     if (!filter->isReplacementIgnored(fromDirectory, fromFile, kind, replacedReported)) {
-      push(type, fromDirectory, fromFile);
+      push(eventEpoch, type, fromDirectory, fromFile);
     } else if (replacedReported) {
-      push(DELETED, fromDirectory, fromFile);
+      push(eventEpoch, DELETED, fromDirectory, fromFile);
     }
     return;
   }
@@ -104,29 +133,33 @@ void EventQueue::enqueue(
   bool replacedReported = false;
   const bool toIgnored = filter->isReplacementIgnored(toDirectory, toFile, kind, replacedReported);
   if (toIgnored && replacedReported) {
-    push(DELETED, toDirectory, toFile);
+    push(eventEpoch, DELETED, toDirectory, toFile);
   }
   if (!fromIgnored && !toIgnored) {
-    push(RENAMED, fromDirectory, fromFile, toDirectory, toFile);
+    push(eventEpoch, RENAMED, fromDirectory, fromFile, toDirectory, toFile);
   } else if (!toIgnored) {
-    push(CREATED, toDirectory, toFile);
+    push(eventEpoch, CREATED, toDirectory, toFile);
   } else if (!fromIgnored) {
-    push(DELETED, fromDirectory, fromFile);
+    push(eventEpoch, DELETED, fromDirectory, fromFile);
   }
 }
 
 void EventQueue::push(
+  uint64_t epoch,
   const EventType type,
   const std::string &fromDirectory,
   const std::string &fromFile,
   const std::string &toDirectory,
   const std::string &toFile
 ) {
+  bool held;
   {
     std::lock_guard<std::mutex> lock(mutex);
+    if (mPaused || epoch != mEpoch) return;
     queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile)));
+    held = mHolding;
   }
-  wake(WAKE_EVENTS);
+  if (!held) wake(WAKE_EVENTS);
 }
 
 void EventQueue::wake(unsigned reasons) {

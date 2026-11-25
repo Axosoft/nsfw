@@ -19,8 +19,9 @@ using NativeImplementation = InotifyService;
 
 class NativeInterface {
 public:
+  // recursive: false only reports the entries of path itself.
   NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths,
-    const FilterOptions &filterOptions, std::shared_ptr<EventQueue> queue);
+    const FilterOptions &filterOptions, bool recursive, std::shared_ptr<EventQueue> queue);
   ~NativeInterface();
 
   std::string getError();

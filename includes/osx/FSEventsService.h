@@ -25,7 +25,8 @@ class RunLoop;
 
 class FSEventsService {
 public:
-  FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths);
+  FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
+    bool recursive = true);
 
   friend void FSEventsServiceCallback(
     ConstFSEventStreamRef streamRef,
@@ -52,6 +53,7 @@ private:
   void rename(std::vector<std::string> &paths, const std::map<std::string, PathFilter::Kind> &kinds);
   void splitFilePath(std::string &directory, std::string &name, const std::string &path);
   bool isExcluded(std::string filePath);
+  bool isOutsideChildren(const char *filePath) const;
   std::vector<CFStringRef> createExcludedPaths(const std::vector<std::string> &excludedPaths) const;
   bool excludesRoot(const std::vector<CFStringRef> &excludedPaths) const;
   static void releaseExcludedPaths(const std::vector<CFStringRef> &excludedPaths);
@@ -65,6 +67,7 @@ private:
   bool mRootExcluded;
   bool mRootChanged;
   bool mCaseSensitive;
+  bool mRecursive;
 };
 
 #endif

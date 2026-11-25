@@ -1,5 +1,6 @@
 #include "../../includes/win32/Watcher.h"
 
+#include <algorithm>
 #include <cwctype>
 
 static
@@ -88,6 +89,7 @@ std::string getUTF8FileName(std::wstring path) {
 }
 
 static const unsigned MAX_ABORTED_READS = 3;
+static constexpr DWORD SPLIT_READ_WAIT_MS = 10;
 
 static std::string describeError(const std::string &message, DWORD errorCode) {
   LPWSTR text = NULL;
@@ -113,10 +115,11 @@ static std::string describeError(const std::string &message, DWORD errorCode) {
 }
 
 Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
-    const std::vector<std::wstring> &excludedPaths, std::shared_ptr<PathFilter> filter)
+    const std::vector<std::wstring> &excludedPaths, std::shared_ptr<PathFilter> filter, bool recursive)
   : mRunning(false),
-  mQueue(queue),
   mPath(path),
+  mRecursive(recursive),
+  mQueue(queue),
   mExcludedPaths(excludedPaths),
   mFilter(filter)
 {
@@ -153,11 +156,15 @@ void Watcher::resizeBuffers(std::size_t size) {
 
 void Watcher::run() {
   while(mRunning) {
-    // An old name that ended a read waits for its new name, which starts the next read and is due right away: when it
-    // doesn't come within a short wait, the old name is reported as removed.
-    if (!mPendingOldName.empty()) {
-      if (SleepEx(10, true) == 0) {
-        flushPendingRename();
+    // A split rename normally continues in the next read. The deadlines also bound the wait under unrelated APCs.
+    const ULONGLONG nextDeadline = (std::min)(mRenameDeadline, mRemovalDeadline);
+    if (nextDeadline != NO_DEADLINE) {
+      const ULONGLONG now = GetTickCount64();
+      if (now >= nextDeadline) {
+        if (now >= mRenameDeadline) flushPendingRename();
+        if (now >= mRemovalDeadline) releaseRemoval();
+      } else {
+        SleepEx(static_cast<DWORD>(nextDeadline - now), true);
       }
     } else if (!mPollWatchedPath) {
       SleepEx(INFINITE, true);
@@ -221,10 +228,12 @@ bool Watcher::pollDirectoryChanges() {
     mDirectoryHandle,
     mWriteBuffer.data(),
     static_cast<DWORD>(mWriteBuffer.size()),
-    TRUE,                           // recursive watching
+    mRecursive ? TRUE : FALSE,
     FILE_NOTIFY_CHANGE_FILE_NAME
     | FILE_NOTIFY_CHANGE_DIR_NAME
-    | FILE_NOTIFY_CHANGE_LAST_WRITE,
+    | FILE_NOTIFY_CHANGE_LAST_WRITE
+    // A change of a watched file's attributes alone moves its change time, so it is a modification of the file.
+    | (mRecursive ? 0 : FILE_NOTIFY_CHANGE_ATTRIBUTES),
     &bytes,                         // num bytes written
     &mOverlapped,
     [](DWORD errorCode, DWORD numBytes, LPOVERLAPPED overlapped) {
@@ -332,6 +341,7 @@ void Watcher::eventCallback(DWORD errorCode, DWORD numBytes) {
     // starts the next read: the pending old name can't be paired anymore. It may also be the removal of an entry a
     // scan found, whose creation that follows would be taken for the one the scan already reported.
     flushPendingRename();
+    releaseRemoval();
     mScannedEntries.clear();
     if (errorCode == ERROR_OPERATION_ABORTED) {
       // CancelIo() or closing the handle aborted the read. Whoever did it while stopping wants no more reads, and no
@@ -371,6 +381,7 @@ void Watcher::eventCallback(DWORD errorCode, DWORD numBytes) {
   if (hasError()) {
     // The run ends: an old name left waiting is not reported once its error is.
     mPendingOldName.clear();
+    mRenameDeadline = NO_DEADLINE;
     return;
   }
   handleEvents();
@@ -419,6 +430,7 @@ bool Watcher::isExcludedPath(const std::wstring &path) {
 
 void Watcher::handleEvents() {
   forgetOldScans();
+  if (!mRecursive) mQueue->holdEvents();
   BYTE *base = mReadBuffer.data();
   while (true) {
     PFILE_NOTIFY_INFORMATION info = (PFILE_NOTIFY_INFORMATION)base;
@@ -427,6 +439,7 @@ void Watcher::handleEvents() {
     if (info->Action == FILE_ACTION_RENAMED_NEW_NAME && !mPendingOldName.empty()) {
       handleRename(mPendingOldName, fileName);
       mPendingOldName.clear();
+      mRenameDeadline = NO_DEADLINE;
     } else {
       flushPendingRename();
       switch (info->Action) {
@@ -458,6 +471,16 @@ void Watcher::handleEvents() {
       break;
     }
     base += info->NextEntryOffset;
+  }
+  const ULONGLONG now = GetTickCount64();
+  if (!mPendingOldName.empty()) mRenameDeadline = now + SPLIT_READ_WAIT_MS;
+  if (!mRecursive) {
+    // Sibling notifications can keep reads coming without adding any events for the watched file.
+    if (!mQueue->releaseEvents(now < mRemovalDeadline)) {
+      mRemovalDeadline = NO_DEADLINE;
+    } else if (mRemovalDeadline == NO_DEADLINE) {
+      mRemovalDeadline = now + SPLIT_READ_WAIT_MS;
+    }
   }
 }
 
@@ -524,8 +547,9 @@ void Watcher::handleArrival(const std::wstring &fileName) {
   const EntryInfo info = entryInfo(joinPath(mPath, fileName));
   mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName), "", "", kindOf(info));
   // The system reports a directory moved in, not what it holds: report that too, as on Linux. A copy has the creation
-  // of each entry reported as well, which the scanned entries keep from being reported twice.
-  if (holdsWatchedEntries(info)) {
+  // of each entry reported as well, which the scanned entries keep from being reported twice. A watch of the
+  // directory's own entries has nothing below them to report.
+  if (mRecursive && holdsWatchedEntries(info)) {
     reportContents(fileName);
   }
 }
@@ -641,7 +665,7 @@ void Watcher::handleRename(const std::wstring &oldFileName, const std::wstring &
     // the rename. The queue is told it is a directory, so that it judges the old name as such too.
     const EntryInfo info = entryInfo(joinPath(mPath, newFileName));
     const bool isDirectory = kindOf(info) == PathFilter::Kind::DIRECTORY;
-    const bool fromIgnoredDirectory = holdsWatchedEntries(info) && isIgnoredDirectory(oldFileName);
+    const bool fromIgnoredDirectory = mRecursive && holdsWatchedEntries(info) && isIgnoredDirectory(oldFileName);
     mQueue->enqueue(
       RENAMED,
       getUTF8Directory(oldFileName),
@@ -660,6 +684,7 @@ void Watcher::flushPendingRename() {
   if (!mPendingOldName.empty()) {
     handleRemoval(mPendingOldName);
     mPendingOldName.clear();
+    mRenameDeadline = NO_DEADLINE;
   }
 }
 
@@ -701,6 +726,15 @@ void Watcher::stop() {
     // up, notice the changed `mRunning` and properly terminate the running loop
     QueueUserAPC([](__in ULONG_PTR) {}, mRunner.native_handle(), (ULONG_PTR)this);
     mRunner.join();
+  }
+  // The queue outlives the watcher.
+  releaseRemoval();
+}
+
+void Watcher::releaseRemoval() {
+  if (mRemovalDeadline != NO_DEADLINE) {
+    mRemovalDeadline = NO_DEADLINE;
+    mQueue->releaseEvents();
   }
 }
 

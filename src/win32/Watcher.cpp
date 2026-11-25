@@ -1,5 +1,7 @@
 #include "../../includes/win32/Watcher.h"
 
+#include <cwctype>
+
 static
 std::wstring getWStringFileName(LPWSTR cFileName, DWORD length) {
   LPWSTR nullTerminatedFileName = new WCHAR[length + 1]();
@@ -85,12 +87,38 @@ std::string getUTF8FileName(std::wstring path) {
   return utf8Directory;
 }
 
+static const unsigned MAX_ABORTED_READS = 3;
+
+static std::string describeError(const std::string &message, DWORD errorCode) {
+  LPWSTR text = NULL;
+  const DWORD length = FormatMessageW(
+    FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+    NULL,
+    errorCode,
+    0,
+    reinterpret_cast<LPWSTR>(&text),
+    0,
+    NULL
+  );
+  std::wstring description = length == 0 ? std::wstring() : std::wstring(text, length);
+  LocalFree(text);
+  const auto last = description.find_last_not_of(L" .\r\n");
+  description.erase(last == std::wstring::npos ? 0 : last + 1);
+
+  std::string result = message + ": ";
+  if (!description.empty()) {
+    result += filterpaths::fromWide(description) + " ";
+  }
+  return result + "(Windows error " + std::to_string(errorCode) + ")";
+}
+
 Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
-    const std::vector<std::wstring> &excludedPaths)
+    const std::vector<std::wstring> &excludedPaths, std::shared_ptr<PathFilter> filter)
   : mRunning(false),
   mQueue(queue),
   mPath(path),
-  mExcludedPaths(excludedPaths)
+  mExcludedPaths(excludedPaths),
+  mFilter(filter)
 {
   mDirectoryHandle = openDirectory(mPath);
   if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
@@ -125,7 +153,13 @@ void Watcher::resizeBuffers(std::size_t size) {
 
 void Watcher::run() {
   while(mRunning) {
-    if (!mPollWatchedPath) {
+    // An old name that ended a read waits for its new name, which starts the next read and is due right away: when it
+    // doesn't come within a short wait, the old name is reported as removed.
+    if (!mPendingOldName.empty()) {
+      if (SleepEx(10, true) == 0) {
+        flushPendingRename();
+      }
+    } else if (!mPollWatchedPath) {
       SleepEx(INFINITE, true);
     } else if (SleepEx(1000, true) == 0 && mRunning && !hasError()) {
       checkWatchedPath();
@@ -195,10 +229,11 @@ bool Watcher::pollDirectoryChanges() {
     &mOverlapped,
     [](DWORD errorCode, DWORD numBytes, LPOVERLAPPED overlapped) {
       auto watcher = reinterpret_cast<Watcher*>(overlapped->hEvent);
-      watcher->eventCallback(errorCode);
+      watcher->eventCallback(errorCode, numBytes);
     }))
   {
-    setError("Service shutdown unexpectedly");
+    const DWORD error = GetLastError();
+    setError(describeError("Service shutdown unexpectedly", error));
     return false;
   }
 
@@ -227,10 +262,11 @@ void Watcher::reopenWathedFolder() {
     CloseHandle(mDirectoryHandle);
     mDirectoryHandle = openDirectory(mPath);
     if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
+      const DWORD openError = GetLastError();
       if(GetFileAttributesW(mWatchedPath.data()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_PATH_NOT_FOUND) {
         setError("Service shutdown: root path changed (renamed or deleted)");
       } else {
-        setError("Service shutdown unexpectedly");
+        setError(describeError("Service shutdown unexpectedly", openError));
       }
       return;
     }
@@ -285,33 +321,56 @@ void Watcher::parentChanged(DWORD errorCode) {
   watchParent();
 }
 
-void Watcher::eventCallback(DWORD errorCode) {
+void Watcher::eventCallback(DWORD errorCode, DWORD numBytes) {
+  if (errorCode == ERROR_SUCCESS && numBytes == 0) {
+    // Nothing was written because more changed than the buffer holds: those changes are lost, as when the system says
+    // so with ERROR_NOTIFY_ENUM_DIR.
+    errorCode = ERROR_NOTIFY_ENUM_DIR;
+  }
   if (errorCode != ERROR_SUCCESS) {
-    if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
+    // What this read lost may be the new name of the pending rename, or the old name of another one whose new name
+    // starts the next read: the pending old name can't be paired anymore. It may also be the removal of an entry a
+    // scan found, whose creation that follows would be taken for the one the scan already reported.
+    flushPendingRename();
+    mScannedEntries.clear();
+    if (errorCode == ERROR_OPERATION_ABORTED) {
+      // CancelIo() or closing the handle aborted the read. Whoever did it while stopping wants no more reads, and no
+      // error either; if the watcher still runs, the read is issued again. Reads that keep being aborted are reported,
+      // instead of being issued again forever without a word.
+      if (isRunning()) {
+        if (++mAbortedReads < MAX_ABORTED_READS) {
+          pollDirectoryChanges();
+        } else {
+          setError(describeError("Service shutdown unexpectedly", errorCode));
+        }
+      }
+    } else if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
       setError("Buffer filled up and service needs a restart");
     } else if (errorCode == ERROR_INVALID_PARAMETER) {
       // resize the buffers because we're over the network, 64kb is the max buffer size for networked transmission
       resizeBuffers(64 * 1024);
 
-      if (!pollDirectoryChanges()) {
-        setError("failed resizing buffers for network traffic");
-      }
+      pollDirectoryChanges();
     } else if (errorCode == ERROR_ACCESS_DENIED) {
       // Access denied can happen when we try to delete the watched folder
       // In Windows Server 2019 and older the folder is not removed until folder handler is released
       // So the code will reopen the watched folder to release the handler and it will try to open it again
       reopenWathedFolder();
     } else {
-      setError("Service shutdown unexpectedly");
+      setError(describeError("Service shutdown unexpectedly", errorCode));
     }
     return;
   }
 
+  mAbortedReads = 0;
   std::swap(mWriteBuffer, mReadBuffer);
   pollDirectoryChanges();
+  ++mReads;
   // Not under a path that leads elsewhere now: the run ends with the error, and the batch with it.
   checkWatchedPath();
   if (hasError()) {
+    // The run ends: an old name left waiting is not reported once its error is.
+    mPendingOldName.clear();
     return;
   }
   handleEvents();
@@ -323,13 +382,10 @@ static bool isSeparator(wchar_t character) {
 
 bool Watcher::isExcluded(const std::wstring &fileName) {
   std::wstring::size_type found = fileName.rfind('\\');
+  return isExcludedPath(joinPath(mPath, found != std::wstring::npos ? fileName.substr(0, found) : fileName));
+}
 
-  std::wstring path;
-  if (found != std::wstring::npos) {
-    path = joinPath(mPath, fileName.substr(0, found));
-  } else {
-    path = joinPath(mPath, fileName);
-  }
+bool Watcher::isExcludedPath(const std::wstring &path) {
   std::lock_guard<std::mutex> lock(mExcludedPathsMutex);
   for (const std::wstring &excludePath : mExcludedPaths) {
     if (
@@ -362,44 +418,39 @@ bool Watcher::isExcluded(const std::wstring &fileName) {
 }
 
 void Watcher::handleEvents() {
+  forgetOldScans();
   BYTE *base = mReadBuffer.data();
   while (true) {
     PFILE_NOTIFY_INFORMATION info = (PFILE_NOTIFY_INFORMATION)base;
     std::wstring fileName = getWStringFileName(info->FileName, info->FileNameLength);
 
-    if (!isExcluded(fileName)) {
+    if (info->Action == FILE_ACTION_RENAMED_NEW_NAME && !mPendingOldName.empty()) {
+      handleRename(mPendingOldName, fileName);
+      mPendingOldName.clear();
+    } else {
+      flushPendingRename();
       switch (info->Action) {
-      case (FILE_ACTION_RENAMED_OLD_NAME):
-        if (info->NextEntryOffset != 0) {
-          base += info->NextEntryOffset;
-          info = (PFILE_NOTIFY_INFORMATION)base;
-          if (info->Action == FILE_ACTION_RENAMED_NEW_NAME) {
-            std::wstring fileNameNew = getWStringFileName(info->FileName, info->FileNameLength);
-
-            mQueue->enqueue(
-              RENAMED,
-              getUTF8Directory(fileName),
-              getUTF8FileName(fileName),
-              getUTF8Directory(fileName),
-              getUTF8FileName(fileNameNew)
-            );
-          } else {
-            mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-          }
-        } else {
-          mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-        }
+      case FILE_ACTION_RENAMED_OLD_NAME:
+        // Its new name follows, in this read or, when the old one ended it, at the start of the next one.
+        mPendingOldName = fileName;
         break;
       case FILE_ACTION_ADDED:
-      case FILE_ACTION_RENAMED_NEW_NAME: // in the case we just receive a new name and no old name in the buffer
-        mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        if (!consumeScanned(fileName)) {
+          handleArrival(fileName);
+        }
+        break;
+      case FILE_ACTION_RENAMED_NEW_NAME:
+        forgetScanned(fileName);
+        handleArrival(fileName);
         break;
       case FILE_ACTION_REMOVED:
-        mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        handleRemoval(fileName);
         break;
       case FILE_ACTION_MODIFIED:
       default:
-        mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        if (!isExcluded(fileName)) {
+          mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        }
       };
     }
 
@@ -407,6 +458,208 @@ void Watcher::handleEvents() {
       break;
     }
     base += info->NextEntryOffset;
+  }
+}
+
+static std::wstring scannedKey(const std::wstring &fileName) {
+  std::wstring key = fileName;
+  if (!key.empty()) {
+    CharLowerBuffW(&key[0], static_cast<DWORD>(key.size()));
+  }
+  return key;
+}
+
+namespace {
+  struct EntryInfo {
+    DWORD attributes;
+    // Only meaningful when the attributes have FILE_ATTRIBUTE_REPARSE_POINT.
+    DWORD reparseTag;
+  };
+}
+
+static EntryInfo entryInfo(const WIN32_FIND_DATAW &data) {
+  return { data.dwFileAttributes, data.dwReserved0 };
+}
+
+// GetFileAttributesW doesn't tell the reparse tag, which tells a link from a directory that is a placeholder of a
+// cloud provider, whose entries the system does watch.
+static EntryInfo entryInfo(const std::wstring &path) {
+  const DWORD attributes = GetFileAttributesW(path.data());
+  if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+    return { attributes, 0 };
+  }
+  WIN32_FIND_DATAW data;
+  HANDLE find = FindFirstFileW(path.data(), &data);
+  if (find == INVALID_HANDLE_VALUE) {
+    return { INVALID_FILE_ATTRIBUTES, 0 };
+  }
+  FindClose(find);
+  return entryInfo(data);
+}
+
+static bool isLink(const EntryInfo &info) {
+  return (info.attributes & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(info.reparseTag);
+}
+
+static PathFilter::Kind kindOf(const EntryInfo &info) {
+  // The filter follows a symlink to tell what it leads to.
+  if (info.attributes == INVALID_FILE_ATTRIBUTES || isLink(info)) {
+    return PathFilter::Kind::UNKNOWN;
+  }
+  return (info.attributes & FILE_ATTRIBUTE_DIRECTORY) ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE;
+}
+
+// The system watches what a directory holds, not what a symlink or a junction in it leads to. Listing a directory
+// whose entries a cloud provider hasn't brought locally would have it fetch them, on the watcher thread.
+static bool holdsWatchedEntries(const EntryInfo &info) {
+  return info.attributes != INVALID_FILE_ATTRIBUTES && (info.attributes & FILE_ATTRIBUTE_DIRECTORY) && !isLink(info) &&
+    !(info.attributes & (FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS));
+}
+
+void Watcher::handleArrival(const std::wstring &fileName) {
+  if (isExcluded(fileName)) {
+    return;
+  }
+
+  const EntryInfo info = entryInfo(joinPath(mPath, fileName));
+  mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName), "", "", kindOf(info));
+  // The system reports a directory moved in, not what it holds: report that too, as on Linux. A copy has the creation
+  // of each entry reported as well, which the scanned entries keep from being reported twice.
+  if (holdsWatchedEntries(info)) {
+    reportContents(fileName);
+  }
+}
+
+bool Watcher::isIgnoredDirectory(const std::wstring &fileName) {
+  if (isExcludedPath(joinPath(mPath, fileName))) {
+    return true;
+  }
+  return mFilter && mFilter->isDirectoryIgnored(getUTF8Directory(fileName), getUTF8FileName(fileName));
+}
+
+void Watcher::reportContents(const std::wstring &directory) {
+  std::vector<std::wstring> directories(1, directory);
+  // A large tree would otherwise hold stop() up until all of it is scanned.
+  while (!directories.empty() && isRunning()) {
+    const std::wstring relative = std::move(directories.back());
+    directories.pop_back();
+    // Asked once the entries next to it are reported, so that an ignore file among them applies.
+    if (isIgnoredDirectory(relative)) {
+      continue;
+    }
+    // The parent's watch can't tell of a rename of the watched directory while the scan holds this thread, and the
+    // path listed would then lead elsewhere.
+    checkWatchedPath();
+    if (hasError()) {
+      return;
+    }
+
+    WIN32_FIND_DATAW data;
+    HANDLE find = FindFirstFileW((joinPath(mPath, relative) + L"\\*").data(), &data);
+    if (find == INVALID_HANDLE_VALUE) {
+      continue;
+    }
+    do {
+      const std::wstring name = data.cFileName;
+      if (name == L"." || name == L"..") {
+        continue;
+      }
+      const std::wstring entry = relative + L"\\" + name;
+      mScannedEntries[scannedKey(entry)] = mReads;
+      const EntryInfo info = entryInfo(data);
+      mQueue->enqueue(CREATED, getUTF8Directory(entry), getUTF8FileName(entry), "", "", kindOf(info));
+      if (holdsWatchedEntries(info)) {
+        directories.push_back(entry);
+      }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+  }
+}
+
+// A short name has '~' and a digit in one of its components; matching more names than that only costs duplicates.
+static bool mayHoldShortName(const std::wstring &fileName) {
+  for (size_t tilde = fileName.find(L'~'); tilde != std::wstring::npos; tilde = fileName.find(L'~', tilde + 1)) {
+    if (tilde + 1 < fileName.size() && iswdigit(fileName[tilde + 1])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Only a creation can be the late report of an entry a scan found: an entry renamed there replaces it, and is reported
+// as the system tells.
+bool Watcher::consumeScanned(const std::wstring &fileName) {
+  return !mScannedEntries.empty() && mScannedEntries.erase(scannedKey(fileName)) != 0;
+}
+
+void Watcher::forgetScanned(const std::wstring &fileName) {
+  if (mScannedEntries.empty()) {
+    return;
+  }
+  // The system may name an entry by its short name, which the long names the scans found can't be matched with: a
+  // later creation of what it named must not be taken for the one a scan reported.
+  if (mayHoldShortName(fileName)) {
+    mScannedEntries.clear();
+    return;
+  }
+  const std::wstring key = scannedKey(fileName);
+  mScannedEntries.erase(key);
+  // ']' is the character after the backslash, so the keys below this one sort between these bounds.
+  mScannedEntries.erase(mScannedEntries.lower_bound(key + L"\\"), mScannedEntries.lower_bound(key + L"]"));
+}
+
+void Watcher::forgetOldScans() {
+  // The system recorded the creation of what a scan found before the scan ended, so its event comes at the latest in
+  // the read issued after the one pending during the scan. A creation read after those two is a new one.
+  for (auto entry = mScannedEntries.begin(); entry != mScannedEntries.end();) {
+    if (entry->second + 2 < mReads) {
+      entry = mScannedEntries.erase(entry);
+    } else {
+      ++entry;
+    }
+  }
+}
+
+void Watcher::handleRemoval(const std::wstring &fileName) {
+  forgetScanned(fileName);
+  if (!isExcluded(fileName)) {
+    mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+  }
+}
+
+void Watcher::handleRename(const std::wstring &oldFileName, const std::wstring &newFileName) {
+  forgetScanned(oldFileName);
+  forgetScanned(newFileName);
+  const bool oldExcluded = isExcluded(oldFileName);
+  const bool newExcluded = isExcluded(newFileName);
+  if (oldExcluded) {
+    handleArrival(newFileName);
+  } else if (newExcluded) {
+    handleRemoval(oldFileName);
+  } else {
+    // The listener never saw what a directory held under an excluded or ignored name, whatever the queue makes of
+    // the rename. The queue is told it is a directory, so that it judges the old name as such too.
+    const EntryInfo info = entryInfo(joinPath(mPath, newFileName));
+    const bool isDirectory = kindOf(info) == PathFilter::Kind::DIRECTORY;
+    const bool fromIgnoredDirectory = holdsWatchedEntries(info) && isIgnoredDirectory(oldFileName);
+    mQueue->enqueue(
+      RENAMED,
+      getUTF8Directory(oldFileName),
+      getUTF8FileName(oldFileName),
+      getUTF8Directory(newFileName),
+      getUTF8FileName(newFileName),
+      isDirectory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::UNKNOWN
+    );
+    if (fromIgnoredDirectory) {
+      reportContents(newFileName);
+    }
+  }
+}
+
+void Watcher::flushPendingRename() {
+  if (!mPendingOldName.empty()) {
+    handleRemoval(mPendingOldName);
+    mPendingOldName.clear();
   }
 }
 

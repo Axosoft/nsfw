@@ -291,6 +291,74 @@ describe('Node Sentinel File Watcher', function() {
       });
     }
 
+    // A burst of renames fills reads up, so that the old name of some ends a read and their new name starts the next.
+    it('reports each rename of a burst as one rename', async function(t) {
+      if (process.platform === 'darwin') return t.skip();
+      const inPath = path.join(workDir, 'test4', 'burst');
+      const count = 2000;
+      const oldName = i => `old-name-of-a-file-renamed-in-a-burst-${i}.file`;
+      const newName = i => `new-name-of-a-file-renamed-in-a-burst-${i}.file`;
+      await fsp.mkdir(inPath);
+      for (let i = 0; i < count; i++) {
+        await fsp.writeFile(path.join(inPath, oldName(i)), '');
+      }
+
+      const events = [];
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+      try {
+        await watch.start();
+        for (let i = 0; i < count; i += 100) {
+          const renames = [];
+          for (let j = i; j < Math.min(i + 100, count); j++) {
+            renames.push(fsp.rename(path.join(inPath, oldName(j)), path.join(inPath, newName(j))));
+          }
+          await Promise.all(renames);
+        }
+        await barrier(events, workDir);
+
+        const expected = [];
+        for (let i = 0; i < count; i++) {
+          expected.push(`${nsfw.actions.RENAMED} ${inPath} ${oldName(i)} ${inPath} ${newName(i)}`);
+        }
+        // Windows also reports renamed files as modified.
+        const actual = events.filter(event => event.directory === inPath && event.action !== nsfw.actions.MODIFIED)
+          .map(event => event.action === nsfw.actions.RENAMED ?
+            `${event.action} ${event.directory} ${event.oldFile} ${event.newDirectory} ${event.newFile}` :
+            `${event.action} ${event.directory} ${event.file}`);
+        assert.deepStrictEqual(actual.sort(), expected.sort());
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    // Windows reports as a rename only an entry that stays in its directory, so this only pins the shape of the event:
+    // both directories of a rename within one directory. macOS reports a rename as a removal and a creation, or as a
+    // rename, depending on timing.
+    it('reports the old and the new directory of a directory renamed in a subdirectory', async function(t) {
+      if (process.platform === 'darwin') return t.skip();
+      const inPath = path.join(workDir, 'test4', 'folder4');
+      const events = [];
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await fsp.mkdir(path.join(inPath, 'before'));
+        await watch.start();
+        await fsp.rename(path.join(inPath, 'before'), path.join(inPath, 'after'));
+        await barrier(events, workDir);
+        // Windows also reports a renamed entry as modified.
+        assert.deepStrictEqual(
+          events.filter(event => event.action !== nsfw.actions.MODIFIED &&
+            [event.file, event.oldFile, event.newFile].some(name => name === 'before' || name === 'after')),
+          [{ action: nsfw.actions.RENAMED, directory: inPath, oldFile: 'before', newDirectory: inPath,
+            newFile: 'after' }]
+        );
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     it('can listen for a move event', async function() {
       const file = 'testing.file';
       const srcInPath = path.resolve(workDir, 'test4', 'src');
@@ -569,6 +637,56 @@ describe('Node Sentinel File Watcher', function() {
 
     }
 
+    // FSEvents reports a directory moved in, but not what it holds.
+    for (const how of ['moved', 'copied']) {
+      it(`reports once each entry of a directory ${how} into the watched one, but not the ignored ones`,
+        async function(t) {
+          if (process.platform === 'darwin' && how === 'moved') return t.skip();
+          const inPath = path.join(workDir, 'test4');
+          const source = path.join(workDir, 'test5', 'arriving');
+          const target = path.join(inPath, 'arriving');
+          const entries = ['a.file', 'sub', path.join('sub', 'b.file'), path.join('sub', 'deeper'),
+            path.join('sub', 'deeper', 'c.file')];
+          for (let i = 0; i < 50; i++) {
+            entries.push(path.join('sub', `file-${i}.file`));
+          }
+          for (const entry of entries) {
+            if (path.extname(entry) === '.file') {
+              await outputFile(path.join(source, entry), 'Arriving');
+            }
+          }
+          await outputFile(path.join(source, 'ignored', 'd.file'), 'Ignored');
+          await outputFile(path.join(source, 'sub', 'ignored.log'), 'Ignored');
+
+          const events = [];
+          let watch = await nsfw(inPath, batch => events.push(...batch),
+            { debounceMS: DEBOUNCE, excludedPatterns: ['/arriving/ignored/', '*.log'] });
+          try {
+            await watch.start();
+            if (how === 'moved') {
+              await fsp.rename(source, target);
+            } else {
+              await fsp.cp(source, target, { recursive: true });
+            }
+            await barrier(events, inPath);
+
+            let reported = events.filter(event => event.action !== nsfw.actions.MODIFIED &&
+              !(event.directory === inPath && event.file?.startsWith('barrier-')))
+              .map(event => `${event.action} ${path.relative(inPath, path.join(event.directory, event.file))}`);
+            // FSEvents can report a creation more than once, when it reports the flags of several events at a time.
+            if (process.platform === 'darwin') {
+              reported = [...new Set(reported)];
+            }
+            const expected = ['arriving', ...entries.map(entry => path.join('arriving', entry))]
+              .map(entry => `${nsfw.actions.CREATED} ${entry}`);
+            assert.deepStrictEqual(reported.sort(), expected.sort());
+          } finally {
+            await watch.stop();
+            watch = null;
+          }
+        });
+    }
+
     it('does not loop endlessly when watching directories with recursive symlinks', async function () {
       await fsp.mkdir(path.join(workDir, 'test'));
       await fsp.symlink(path.join(workDir, 'test'), path.join(workDir, 'test', 'link'));
@@ -657,6 +775,36 @@ describe('Node Sentinel File Watcher', function() {
         await watch.start();
         await fsp.writeFile(path.join(inPath, 'after-recovery'), 'watching again');
         await received;
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('reports no error when stopped while changes are coming, and watches again once started', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const errors = [];
+      const events = [];
+      let watch = await nsfw(
+        inPath,
+        batch => events.push(...batch),
+        { debounceMS: DEBOUNCE, errorCallback(error) { errors.push(error); } }
+      );
+
+      try {
+        for (let run = 0; run < 20; run++) {
+          await watch.start();
+          // Stopping while these changes complete the pending read must neither report an error nor keep the next
+          // run from watching.
+          const writes = [];
+          for (let i = 0; i < 20; i++) {
+            writes.push(fsp.writeFile(path.join(inPath, `cancelled-${run}-${i}.file`), 'Cancelled'));
+          }
+          await Promise.all([watch.stop(), ...writes]);
+        }
+        await watch.start();
+        await barrier(events, inPath);
+        assert.deepStrictEqual(errors, []);
       } finally {
         await watch.stop();
         watch = null;

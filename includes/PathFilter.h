@@ -60,6 +60,10 @@ public:
   // Whether the removal of name in directory, or its rename away, is ignored: as its creation was, see judge().
   bool isRemovalIgnored(const std::string &directory, const std::string &name, Kind kind);
 
+  // Whether a directory named name in directory is ignored, or a directory it is in, by the rules alone: for a watcher
+  // that knows it is a directory, whose path may hold something else by now. Neither looks it up nor remembers it.
+  bool isDirectoryIgnored(const std::string &directory, const std::string &name);
+
   // isIgnored(), which also tells whether an entry of another kind seen there before was reported though this one
   // isn't: a symlink retargeted by renaming another over it, or a file a directory replaced whose removal comes
   // later, judged by what replaced it. That removal then has to be reported.
@@ -141,6 +145,7 @@ private:
   bool splitTrailing(std::string &directory, std::string &name) const;
   bool judge(const std::string &directory, const std::string &name, Kind kind, bool gone, bool tree,
     bool *replacedReported);
+  bool isAncestorIgnored(const std::string &path, bool tree);
   void dropSeenBelow(const std::string &key);
   void moveSeenBelow(const std::string &fromKey, const std::string &toKey);
   void seenMoved(const std::string &fromDirectory, const std::string &fromName, const std::string &toDirectory,

@@ -23,6 +23,37 @@
   junctions, symlinks and subst drives, and before each batch of events is handled. Only where that directory can't
   be watched does the watcher check the path once a second.
 
+### Fixed
+- On Windows, a read of the watched directory that was aborted (`ERROR_OPERATION_ABORTED`, as when its pending I/O is
+  cancelled) no longer stops the watcher with `Service shutdown unexpectedly`: while the watcher is stopping it is
+  ignored, otherwise the read is issued again, and only a third read aborted in a row is reported (#16). The other
+  unexpected failures say why: `Service shutdown unexpectedly: <system message> (Windows error <code>)`, for example
+  `Service shutdown unexpectedly: The specified network name is no longer available (Windows error 64)`, instead of
+  `Service shutdown unexpectedly` alone. A read that completed without writing anything, which means that more
+  changed than its buffer holds, is reported as `Buffer filled up and service needs a restart`, which stops the
+  watcher as when the system reports the overflow itself, instead of reporting the events of an earlier read again.
+- On Windows, a `RENAMED` event takes its `newDirectory` from the new path, not from the old one (#150). Windows reports
+  as a rename only an entry that stays in its directory, so both were the same in the events seen so far; a move to
+  another directory is still reported as `DELETED` and `CREATED`.
+- On Windows, a rename whose old name ends one read of the system watcher and whose new name starts the next is
+  reported as one `RENAMED`, as when both come in the same read, instead of `DELETED` for the old name and `CREATED`
+  for the new one (#26). The old name waits for the next read up to 10 ms, and is reported as `DELETED` when the next
+  read doesn't start with its new name, fails or overflows, or doesn't come in time. An old name followed by anything
+  but its new name in the same read no longer makes the watcher skip that next change. A rename from an included path
+  to a top-level one `excludedPaths` excludes is reported as `DELETED` instead of `RENAMED`, as for `excludedPatterns`.
+- On Windows, a directory that appears in the watched directory (moved in from outside it, moved from another directory
+  inside it, which Windows reports as a removal and a creation, or renamed from a path `excludedPaths`,
+  `excludedPatterns` or the ignore files exclude) has what it holds reported as `CREATED` too, after the directory
+  itself, as on Linux (#73); a directory that `excludedPaths` names deeper than the top level is itself reported, so its
+  rename to an included name stays a `RENAMED`, followed by what it holds. Before, only the directory was reported when
+  it was moved, so its files went unnoticed. The directories excluded by `excludedPaths`, `excludedPatterns` or the
+  ignore files are not looked into, and neither are symlinks and junctions, which the system doesn't watch through, nor
+  the directories whose entries a cloud provider hasn't brought locally, which listing them would fetch. A directory
+  copied in, whose entries Windows reports one by one, still has each reported once: the entries the scan of the
+  directory found are not reported again when their own creation comes in the next two reads of the system watcher;
+  a rename to one of them is reported as it comes, as on Linux. A `DELETED` or `RENAMED` for one of them in between, or
+  a read that fails, ends that, so that a later creation is reported.
+
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to
   exclude directories or raise the limit, and why nsfw doesn't fall back to polling.

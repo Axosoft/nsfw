@@ -79,6 +79,9 @@ of a directory above it is noticed before the watcher handles any further batch 
 it delivers any further events, or within about 1 s while the watcher is idle. On Windows, a rename of the watched
 directory is noticed at once, or within about 1 s where the directory that holds it can't be watched. Events already
 being delivered when the rename happens may still reach `eventCallback` under the old path, before the error.
+On Windows an overflow of the system watcher's buffer, which also means events were lost, reads `Buffer filled up and
+service needs a restart`, and another unexpected failure of the system watcher reads
+`Service shutdown unexpectedly: <system message> (Windows error <code>)`.
 A directory watcher retires the failed run and releases that run's native resources before calling `errorCallback`.
 Errors queued by a run that has already been explicitly stopped or replaced are discarded.
 After fixing the cause (for example, recreating a deleted directory), call `start()` to watch again;
@@ -177,6 +180,12 @@ An array of events as they have happened in a directory, it's children, or to a 
   }
 ]
 ```
+
+A directory that appears in the watched one is reported as `CREATED`, and so is what it holds, whether it was created,
+copied or moved in, on Linux and Windows: each entry once, except for the directories that are excluded, which are not
+looked into. On Windows a move from one directory to another inside the watched one is reported as `DELETED` and
+`CREATED`, so a directory moved that way has what it holds reported as `CREATED` again; on Linux it is a `RENAMED`
+alone. On macOS a directory moved in is reported alone, without what it holds.
 
 Event are enumerated by the nsfw.actions enumeration
 ```js

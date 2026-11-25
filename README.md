@@ -179,6 +179,25 @@ nsfw.actions = {
 };
 ```
 
+## Linux: inotify limits
+On Linux, nsfw watches each directory of the tree with an inotify watch. The kernel limits the number of watches
+per user (`fs.inotify.max_user_watches`, shared by every process of the user), and once the limit is reached the
+watcher stops and `errorCallback` gets `Inotify limit reached`. nsfw doesn't fall back to polling the directories that
+don't fit: polling would have to keep a snapshot of every entry in memory and read the whole tree again and again,
+which costs far more memory, CPU and disk access than the watches it replaces. Instead:
+
+- Exclude what you don't need to watch, such as `node_modules/`, build output or `.git`, with `excludedPatterns` or
+  `respectGitignore`. Excluded directories don't take a watch.
+- Raise the limit. Check it with `sysctl fs.inotify.max_user_watches`, raise it until the next reboot with
+  `sudo sysctl fs.inotify.max_user_watches=524288`, and keep it with a file in `/etc/sysctl.d/`, for example
+  `echo fs.inotify.max_user_watches=524288 | sudo tee /etc/sysctl.d/90-inotify.conf`. Each watch takes about 1 KB of
+  kernel memory on 64-bit systems.
+
+After raising the limit or excluding more, call `start()` again.
+The number of inotify instances per user (`fs.inotify.max_user_instances`, 128 by default on many distributions)
+limits how many watchers can run at once, and the event queue (`fs.inotify.max_queued_events`) how many events can
+wait to be read; see `errorCallback` above.
+
 ## Installation
 ```sh
 npm install nsfw

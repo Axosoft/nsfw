@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+- The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to
+  exclude directories or raise the limit, and why nsfw doesn't fall back to polling.
+
 ## 3.0.1
 
 Documentation only: the code and the prebuilt binaries are the same as in 3.0.0.

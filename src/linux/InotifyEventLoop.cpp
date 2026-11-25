@@ -170,6 +170,12 @@ void InotifyEventLoop::work() {
         timeout = timeout < 0 ? 50 : std::min(timeout, 50);
       }
     }
+    // Idle, the watched path can still come to lead elsewhere with no event in the tree (a directory above it renamed),
+    // so it is checked each second. On whole seconds of the monotonic clock, so every watcher wakes at the same time.
+    auto beforePoll = std::chrono::steady_clock::now();
+    auto rootCheckAt = std::chrono::time_point_cast<std::chrono::seconds>(beforePoll) + std::chrono::seconds(1);
+    int untilRootCheck = (int)std::chrono::ceil<std::chrono::milliseconds>(rootCheckAt - beforePoll).count();
+    timeout = timeout < 0 ? untilRootCheck : std::min(timeout, untilRootCheck);
     pollfd inputs[] = { { mInotifyInstance, POLLIN, 0 }, { mWakePipe[0], POLLIN, 0 } };
     int ready = poll(inputs, 2, timeout);
     if (ready == -1 && errno == EINTR) continue;
@@ -182,7 +188,10 @@ void InotifyEventLoop::work() {
       ssize_t consumed = read(mWakePipe[0], signals, sizeof(signals));
       (void)consumed;
     }
-    if (!inputs[0].revents) continue;
+    if (!inputs[0].revents) {
+      if (std::chrono::steady_clock::now() >= rootCheckAt && inotifyService->mTree->hasErrored()) break;
+      continue;
+    }
     ssize_t bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE);
     if (bytesRead == -1 && errno == EINTR) {
       continue;
@@ -195,6 +204,10 @@ void InotifyEventLoop::work() {
     #ifdef NSFW_TEST_SLOW_1
       pauseBeforeLock(buffer, bytesRead);
     #endif
+
+    // Not under a path that leads elsewhere now: the run ends with the error hasErrored() records, and the batch with
+    // it.
+    if (inotifyService->mTree->hasErrored()) break;
 
     std::unique_lock<std::mutex> syncWithDestructor(mMutex);
     inotifyService->startRead(bytesRead);
@@ -313,11 +326,11 @@ void InotifyEventLoop::work() {
     }
   }
 
-  // Errors are terminal: the poll thread reports this one (or the one recorded before it, or the root path error if the
-  // watched path is gone, see InotifyTree::getError()) through errorCallback and stops the watcher. isStarted() stays
-  // true, see its declaration.
+  // Errors are terminal: the delivery thread reports this one (or the one recorded before it, or the root path error if
+  // the watched path is gone, see InotifyTree::getError()) through errorCallback and stops the watcher. isStarted()
+  // stays true, see its declaration.
   auto lock = lockEventHandling();
-  inotifyService->setError(error);
+  if (!error.empty()) inotifyService->setError(error);
   inotifyService->mTree->cancelFound();
 }
 

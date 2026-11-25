@@ -7,6 +7,8 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 
 #include "PathFilter.h"
 
@@ -54,6 +56,18 @@ public:
 
   void pause();
   void resume();
+
+  // What wakes the delivery thread of the run that watches, which sleeps until one of them comes instead of checking
+  // on a timer. WAKE_EVENTS comes with every event queued, WAKE_ERROR from the watcher when it records an error, and
+  // WAKE_STOP from the run when it ends.
+  enum Wake : unsigned { WAKE_EVENTS = 1, WAKE_ERROR = 2, WAKE_STOP = 4 };
+  void wake(unsigned reasons);
+  // Blocks until a wake for one of reasons comes or the deadline passes, and takes the ones that came, which the
+  // later calls don't see. The wakes for other reasons stay for them, and don't interrupt this one.
+  unsigned waitForWake(unsigned reasons, std::chrono::steady_clock::time_point deadline =
+    std::chrono::steady_clock::time_point::max());
+  // Forgets the wakes a previous run left, so they don't reach the next one.
+  void resetWakes();
   // Drops the events of the paths it ignores, and turns a rename across its boundary into a creation or a removal.
   // Set by the run that watches, before its watcher starts, and reset after it stops. Kept while inactive: an update
   // of its patterns can make it active. watcherNotesEntries: the watcher tells the filter about every entry change
@@ -76,6 +90,10 @@ private:
   std::deque<std::unique_ptr<Event>> queue;
   std::mutex mutex;
   std::atomic<bool> mPaused;
+  std::mutex mWakeMutex;
+  std::condition_variable mWakeCondition;
+  unsigned mWakes = 0;
+  unsigned mWaitingFor = 0;
 };
 
 #endif

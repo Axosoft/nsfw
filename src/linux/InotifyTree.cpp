@@ -72,8 +72,9 @@ static void eraseFromIndex(Index &index, const typename Index::key_type &key,
 }
 
 InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths,
-  std::shared_ptr<PathFilter> filter):
+  std::shared_ptr<PathFilter> filter, std::function<void()> errorRecorded):
   mError(""),
+  mErrorRecorded(std::move(errorRecorded)),
   mInotifyInstance(inotifyInstance),
   mRoot(NULL),
   mFilter(std::move(filter)) {
@@ -148,14 +149,20 @@ InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vecto
   revalidateLinks(true, nullptr);
 }
 
-bool InotifyTree::existWatchedPath() {
+// By identity, not only existence: a directory above the watched path that is renamed, with another one put in its
+// place that holds the same path, has the path lead elsewhere without any event in the tree.
+bool InotifyTree::leadsToWatchedDirectory() {
   struct stat file;
-  return stat(mWatchedPath.c_str(), &file) >= 0;
+  return stat(mWatchedPath.c_str(), &file) == 0 &&
+    file.st_dev == mWatchedDirectory.first && file.st_ino == mWatchedDirectory.second;
 }
 
 bool InotifyTree::isWatchedPathGone() {
   struct stat file;
-  return stat(mWatchedPath.c_str(), &file) != 0 && (errno == ENOENT || errno == ENOTDIR);
+  if (stat(mWatchedPath.c_str(), &file) != 0) {
+    return errno == ENOENT || errno == ENOTDIR;
+  }
+  return file.st_dev != mWatchedDirectory.first || file.st_ino != mWatchedDirectory.second;
 }
 
 void InotifyTree::addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent) {
@@ -177,9 +184,10 @@ void InotifyTree::addNodeReferenceByWD(int wd, InotifyNode *node) {
 }
 
 std::string InotifyTree::getError() {
-  // A watched path that is gone explains the failure better than what was recorded first: restarting won't help, and
-  // an overflow may have dropped the root's own deletion events. Only when it's really gone, though: a stat() that
-  // fails for another reason (permissions, a network filesystem hiccup) mustn't hide the recorded cause.
+  // A watched path that is gone, or leads to another directory, explains the failure better than what was recorded
+  // first: restarting won't help, and an overflow may have dropped the root's own deletion events. Only when it's
+  // really so, though: a stat() that fails for another reason (permissions, a network filesystem hiccup) mustn't hide
+  // the recorded cause.
   if (isWatchedPathGone()) {
     return ROOT_CHANGED_ERROR;
   }
@@ -209,7 +217,7 @@ bool InotifyTree::hasErrored() {
   }
 
   // stat() outside the lock, so a slow filesystem doesn't hold up the other threads' error checks.
-  if (existWatchedPath()) {
+  if (leadsToWatchedDirectory()) {
     return false;
   }
 
@@ -232,7 +240,7 @@ void InotifyTree::removeDirectory(int wd, EmitCreatedEvent emitCreatedEvent) {
     InotifyNode *node = nodeIterator->second;
     InotifyNode *parent = node->getParent();
     if (parent == NULL) {
-      // The error goes first, so the poll thread never finds the root gone without it and reports a generic one.
+      // The error goes first, so the delivery thread never finds the root gone without it and reports a generic one.
       setError(ROOT_CHANGED_ERROR);
       delete mRoot.exchange(NULL);
     } else {
@@ -960,12 +968,19 @@ void InotifyTree::rescanIncomplete(InotifyNode *moved, EmitCreatedEvent emitCrea
 }
 
 void InotifyTree::setError(const std::string &error) {
-  std::lock_guard<std::mutex> lock(mErrorMutex);
-  // Errors are terminal and the poll thread reports only one, so the first is kept: it's the cause, and the ones after
-  // it tend to come from the same failure (say, the queue overflowing in the mkdir flood that hit the watch limit).
-  // getError() still reports a watched path that is gone over it.
-  if (mError.empty()) {
-    mError = error;
+  bool first;
+  {
+    std::lock_guard<std::mutex> lock(mErrorMutex);
+    // Errors are terminal and the delivery thread reports only one, so the first is kept: it's the cause, and the ones
+    // after it tend to come from the same failure (say, the queue overflowing in the mkdir flood that hit the watch
+    // limit). getError() still reports a watched path that is gone over it.
+    first = mError.empty();
+    if (first) {
+      mError = error;
+    }
+  }
+  if (first && mErrorRecorded) {
+    mErrorRecorded();
   }
 }
 

@@ -71,6 +71,7 @@ void FSEventsServiceCallback(
   for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
     if (eventIds[i] == 0 && (eventFlags[i] & kFSEventStreamEventFlagRootChanged) == kFSEventStreamEventFlagRootChanged) {
       eventsService->mRootChanged = true;
+      eventsService->mQueue->wake(EventQueue::WAKE_ERROR);
       break;
     }
     bool isCreated = (eventFlags[i] & kFSEventStreamEventFlagItemCreated) == kFSEventStreamEventFlagItemCreated;
@@ -194,6 +195,10 @@ std::string FSEventsService::getError() {
 
 bool FSEventsService::hasErrored() {
   return !isWatching() || mRootChanged;
+}
+
+void FSEventsService::runLoopExited() {
+  mQueue->wake(EventQueue::WAKE_ERROR);
 }
 
 bool FSEventsService::isWatching() {

@@ -38,6 +38,8 @@ public:
   std::string getError();
   bool hasErrored();
   bool isWatching();
+  // The run loop thread ended: on its own it can't report anything anymore, which hasErrored() tells.
+  void runLoopExited();
   void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
 
   ~FSEventsService();

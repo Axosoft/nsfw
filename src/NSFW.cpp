@@ -1,13 +1,12 @@
 #include "../includes/NSFW.h"
 
 #include <chrono>
-#include <condition_variable>
 #include <exception>
 #include <thread>
 
 // One run of the watcher, from a successful start() until stop(), a watcher error or teardown. It owns the native interface, the
-// poll thread and the thread-safe functions that thread calls, so a run is created and destroyed as one unit. The
-// poll thread releases the thread-safe functions when it ends, whether stopped or after a watcher error, and only
+// delivery thread and the thread-safe functions that thread calls, so a run is created and destroyed as one unit. The
+// delivery thread releases the thread-safe functions when it ends, whether stopped or after a watcher error, and only
 // then do they stop keeping the event loop alive.
 class NSFW::Run {
   public:
@@ -25,20 +24,18 @@ class NSFW::Run {
       mDebounceMS(debounceMS),
       mEventCallback(eventCallback),
       mErrorCallback(errorCallback),
-      mStopping(false),
       mWatcher(watcher),
       mRunId(runId)
     {
+      // A stop of the previous run must not end this one. Its other wakes would only cost a check, which the thread
+      // makes anyway when it starts.
+      mQueue->resetWakes();
       // Last, so that a failure leaves the thread-safe functions unreleased for the caller to release.
-      mThread = std::thread(&Run::poll, this);
+      mThread = std::thread(&Run::deliver, this);
     }
 
     ~Run() {
-      {
-        std::lock_guard<std::mutex> lock(mLock);
-        mStopping = true;
-      }
-      mWake.notify_one();
+      mQueue->wake(EventQueue::WAKE_STOP);
       mThread.join();
     }
 
@@ -53,82 +50,104 @@ class NSFW::Run {
     }
 
   private:
-    void poll();
+    void deliver();
+    bool reportError();
+    void deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events);
 
     std::unique_ptr<NativeInterface> mInterface;
     std::shared_ptr<EventQueue> mQueue;
     uint32_t mDebounceMS;
     Napi::ThreadSafeFunction mEventCallback;
     Napi::ThreadSafeFunction mErrorCallback;
-    // Guards mInterface and mStopping.
+    // Guards mInterface.
     std::mutex mLock;
-    std::condition_variable mWake;
-    bool mStopping;
     std::thread mThread;
     NSFW *mWatcher;
     uint64_t mRunId;
 };
 
-void NSFW::Run::poll() {
-  std::unique_lock<std::mutex> lock(mLock);
-  while (!mStopping) {
-    uint32_t sleepDuration = 50;
-
-    if (mInterface->hasErrored()) {
-      const std::string &error = mInterface->getError();
-      NSFW *watcher = mWatcher;
-      uint64_t runId = mRunId;
-      mErrorCallback.NonBlockingCall([error, watcher, runId](Napi::Env env, Napi::Function jsCallback) {
-        bool stopped = watcher->stopRun(runId);
-        watcher->resolveRetiredUpdates();
-        if (!stopped) return;
-        Napi::Value jsError = Napi::Error::New(env, error).Value();
-        jsCallback.Call({ jsError });
-      });
-      break;
-    }
-
-    if (mQueue->count() != 0) {
+// Sleeps until the queue wakes it: an idle watcher costs no wakeups. The first events after a quiet period are
+// delivered as they come; the ones that follow a delivery wait until debounceMS after it, and go together. An error is
+// reported as soon as it is recorded, even while they wait, and the events still queued are dropped with the run.
+void NSFW::Run::deliver() {
+  using Clock = std::chrono::steady_clock;
+  // What came before the thread waited, an error recorded while the watcher started say, is checked for first.
+  unsigned woken = EventQueue::WAKE_EVENTS | EventQueue::WAKE_ERROR;
+  bool eventsPending = false;
+  Clock::time_point quietUntil = Clock::time_point::min();
+  for (;;) {
+    if (woken & EventQueue::WAKE_STOP) break;
+    if ((woken & EventQueue::WAKE_ERROR) && reportError()) break;
+    eventsPending = eventsPending || (woken & EventQueue::WAKE_EVENTS);
+    if (eventsPending && Clock::now() >= quietUntil) {
+      eventsPending = false;
+      // A watcher only notices some errors between its own reads (a directory above the root renamed, say), and one
+      // read can take long: none of the events it queued go out under a path that is known to lead elsewhere.
+      if (reportError()) break;
       auto events = mQueue->dequeueAll();
       if (events != nullptr) {
-        sleepDuration = mDebounceMS;
-        auto callback = [](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
-          std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(eventsRaw);
-          eventsRaw = nullptr;
-
-          int numEvents = events->size();
-          Napi::Array eventArray = Napi::Array::New(env, numEvents);
-
-          for (int i = 0; i < numEvents; ++i) {
-            auto event = Napi::Object::New(env);
-            event["action"] = Napi::Number::New(env, (*events)[i]->type);
-            event["directory"] = Napi::String::New(env, (*events)[i]->fromDirectory);
-
-            if ((*events)[i]->type == RENAMED) {
-              event["oldFile"] = Napi::String::New(env, (*events)[i]->fromFile);
-              event["newDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
-              event["newFile"] = Napi::String::New(env, (*events)[i]->toFile);
-            } else {
-              event["file"] = Napi::String::New(env, (*events)[i]->fromFile);
-            }
-
-            eventArray[(uint32_t)i] = event;
-          }
-
-          jsCallback.Call({ eventArray });
-        };
-
-        mEventCallback.NonBlockingCall(events.release(), callback);
+        deliverEvents(std::move(events));
+        quietUntil = Clock::now() + std::chrono::milliseconds(mDebounceMS);
       }
     }
-
-    mWake.wait_for(lock, std::chrono::milliseconds(sleepDuration), [this]() { return mStopping; });
+    woken = eventsPending
+      ? mQueue->waitForWake(EventQueue::WAKE_STOP | EventQueue::WAKE_ERROR, quietUntil)
+      : mQueue->waitForWake(EventQueue::WAKE_STOP | EventQueue::WAKE_ERROR | EventQueue::WAKE_EVENTS);
   }
-  lock.unlock();
 
   // Once released, and their queued calls delivered, the callbacks stop keeping the event loop alive.
   mErrorCallback.Release();
   mEventCallback.Release();
+}
+
+// Whether the watcher has failed, which ends the run.
+bool NSFW::Run::reportError() {
+  std::string error;
+  {
+    std::lock_guard<std::mutex> lock(mLock);
+    if (!mInterface->hasErrored()) return false;
+    error = mInterface->getError();
+  }
+  NSFW *watcher = mWatcher;
+  uint64_t runId = mRunId;
+  mErrorCallback.NonBlockingCall([error, watcher, runId](Napi::Env env, Napi::Function jsCallback) {
+    bool stopped = watcher->stopRun(runId);
+    watcher->resolveRetiredUpdates();
+    if (!stopped) return;
+    Napi::Value jsError = Napi::Error::New(env, error).Value();
+    jsCallback.Call({ jsError });
+  });
+  return true;
+}
+
+void NSFW::Run::deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events) {
+  auto callback = [](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
+    std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(eventsRaw);
+    eventsRaw = nullptr;
+
+    int numEvents = events->size();
+    Napi::Array eventArray = Napi::Array::New(env, numEvents);
+
+    for (int i = 0; i < numEvents; ++i) {
+      auto event = Napi::Object::New(env);
+      event["action"] = Napi::Number::New(env, (*events)[i]->type);
+      event["directory"] = Napi::String::New(env, (*events)[i]->fromDirectory);
+
+      if ((*events)[i]->type == RENAMED) {
+        event["oldFile"] = Napi::String::New(env, (*events)[i]->fromFile);
+        event["newDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
+        event["newFile"] = Napi::String::New(env, (*events)[i]->toFile);
+      } else {
+        event["file"] = Napi::String::New(env, (*events)[i]->fromFile);
+      }
+
+      eventArray[(uint32_t)i] = event;
+    }
+
+    jsCallback.Call({ eventArray });
+  };
+
+  mEventCallback.NonBlockingCall(events.release(), callback);
 }
 
 static std::vector<std::string> toStrings(Napi::Env env, Napi::Array paths, const char *notStringError) {
@@ -263,7 +282,7 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
 
 // On environment teardown (worker.terminate(), process exit) the thread-safe functions' own cleanup hooks only close
 // their handles; Node frees them in the close callbacks, after every cleanup hook has run. Ending the run here, in the
-// same pass, means its poll thread never touches a freed one. This object is only finalized after that.
+// same pass, means its delivery thread never touches a freed one. This object is only finalized after that.
 void NSFW::onEnvCleanup(void *data) {
   NSFW *watcher = static_cast<NSFW *>(data);
   watcher->mClosing = true;
@@ -332,7 +351,7 @@ NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
   mRunId(++nsfw->mNextRunId)
 {
   // One pair per run, created here because it needs the main thread. They keep the event loop alive until the
-  // poll thread releases them when the run ends.
+  // delivery thread releases them when the run ends.
   Napi::Object self = nsfw->Value();
   mEventCallback = Napi::ThreadSafeFunction::New(env, self.Get(EVENT_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1);
   try {

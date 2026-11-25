@@ -147,8 +147,8 @@ describe('Node Sentinel File Watcher (slow)', function() {
       try {
         await watch.start();
         overflowWhileHeld(maxQueuedEvents);
-        // The hold file lets the loop go once the directory is gone. Whichever comes first, the poll thread noticing
-        // the missing root or the loop reading the overflow, the root path error is the one reported.
+        // The hold file lets the loop go once the directory is gone. Whichever it records first, the missing root or
+        // the overflow it reads, getError() reports the root path error over it.
         await remove(workDir);
 
         assert.strictEqual(

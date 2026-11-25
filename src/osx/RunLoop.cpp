@@ -81,4 +81,5 @@ void RunLoop::work() {
   FSEventStreamRelease(mEventStream);
 
   mExited = true;
+  mEventsService->runLoopExited();
 }

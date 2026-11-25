@@ -10,6 +10,18 @@
 ### Changed
 - The addon is loaded by the first `nsfw()` call instead of when nsfw is imported, so importing it no longer throws
   when no binary can be found: the promise `nsfw()` returns rejects instead.
+- A directory watcher no longer wakes up every 50 ms to check for events and errors: its delivery thread sleeps until
+  the native watcher queues an event or records an error. The first events after a quiet period are delivered as soon
+  as they are queued, instead of up to 50 ms later; `debounceMS` still groups the ones that follow a delivery. An
+  error is reported as soon as it is recorded, also while the events that follow a delivery wait out `debounceMS`.
+- On Linux, a rename of a directory above the watched path is noticed before each batch of events is handled, before
+  each delivery, and within about 1 s when the watcher is idle: its inotify thread checks the watched path once a
+  second, on whole seconds so the watchers of a process wake together. It now also notices a directory above being
+  replaced by another one that holds the same path. Events already being delivered when the rename happens may still be
+  reported under the old path.
+- On Windows, a rename of the watched directory is noticed through the directory that holds it, as resolved through
+  junctions, symlinks and subst drives, and before each batch of events is handled. Only where that directory can't
+  be watched does the watcher check the path once a second.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

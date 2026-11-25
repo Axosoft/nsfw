@@ -33,6 +33,9 @@ class Watcher
     void eventCallback(DWORD errorCode);
     void handleEvents();
     void reopenWathedFolder();
+    void openParent();
+    void watchParent();
+    void parentChanged(DWORD errorCode);
     HANDLE openDirectory(const std::wstring &path);
 
     void resizeBuffers(std::size_t size);
@@ -42,6 +45,7 @@ class Watcher
 
     std::wstring getWatchedPathFromHandle();
     void checkWatchedPath();
+    bool hasError();
 
     std::atomic<bool> mRunning;
     SingleshotSemaphore mHasStartedSemaphore;
@@ -60,6 +64,13 @@ class Watcher
 
     std::vector<BYTE> mReadBuffer, mWriteBuffer;
     OVERLAPPED mOverlapped;
+
+    // The watched directory's own watch reports nothing when it is renamed, its parent's does, see watchParent().
+    HANDLE mParentHandle = INVALID_HANDLE_VALUE;
+    std::vector<BYTE> mParentBuffer;
+    OVERLAPPED mParentOverlapped;
+    // Without the parent's notifications, the watcher thread compares the path each second instead.
+    std::atomic<bool> mPollWatchedPath{false};
 
     std::thread mRunner;
 };

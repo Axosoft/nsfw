@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 // Checks that a packed nsfw tarball carries a prebuilt binary for every supported platform, along with what the
-// install script needs to build one from source on any other, and stays within a size budget. Prints a Markdown
-// report of the sizes.
+// install script needs to build one from source on any other, and the docs: README.md, LICENSE and CHANGELOG.md, which
+// npm no longer adds on its own. Fails over a size budget. Prints a Markdown report of the sizes.
 // Usage: node js/scripts/check-package.js nsfw-<version>.tgz
 const fs = require('fs');
 const zlib = require('zlib');
@@ -16,7 +16,8 @@ const prebuilds = [
   'win32-arm64/nsfw.node',
   'win32-x64/nsfw.node'
 ].map(file => `prebuilds/${file}`);
-const required = [...prebuilds, 'package.json', 'js/dist/index.js', 'js/dist/index.d.ts', 'binding.gyp', 'src/NSFW.cpp'];
+const required = [...prebuilds, 'package.json', 'js/dist/index.js', 'js/dist/index.d.ts', 'binding.gyp', 'src/NSFW.cpp',
+  'README.md', 'LICENSE', 'CHANGELOG.md'];
 // About twice the size with all eight binaries (1.6 MB), so a binary that grows by a lot, or a stray file, fails.
 const maxPackedBytes = 3 * 1024 * 1024;
 

@@ -13,7 +13,7 @@ static bool failFirstRead(const std::string &path, int inotifyInstance) {
 #endif
 
 InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path,
-  const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter):
+  const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter, LinkFound linkFound):
   mEventLoop(NULL),
   mQueue(queue),
   mTree(NULL),
@@ -26,7 +26,7 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
 
   const uint64_t beforeScan = mFilter->generation();
   mTree = new InotifyTree(mInotifyInstance, path, excludedPaths, mFilter,
-    [queue]() { queue->wake(EventQueue::WAKE_ERROR); });
+    [queue]() { queue->wake(EventQueue::WAKE_ERROR); }, std::move(linkFound));
   // The scan used the rules as they are. One that changed meanwhile (read again after failing) may have decided some
   // directories by other rules: it stays to commit, and the event loop applies it then, like any change.
   mCommittedGeneration = mExcludedGeneration = mSeenGeneration = mFilter->commit(beforeScan);

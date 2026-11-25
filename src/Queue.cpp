@@ -81,6 +81,34 @@ void EventQueue::enqueue(
   PathFilter::Kind kind
 ) {
   const auto eventEpoch = epoch();
+  std::shared_ptr<SymlinkIndex> symlinks;
+  {
+    std::lock_guard<std::mutex> lock(mFilterMutex);
+    symlinks = mSymlinks;
+  }
+  // Also while paused, so what the symlinks lead to stays known.
+  std::vector<SymlinkIndex::Derived> derived;
+  if (symlinks) {
+    const SymlinkIndex::Change change = type == CREATED ? SymlinkIndex::Change::CREATED :
+      type == MODIFIED ? SymlinkIndex::Change::MODIFIED : SymlinkIndex::Change::DELETED;
+    symlinks->eventHappened(change, type == RENAMED, fromDirectory, fromFile, toDirectory, toFile, derived);
+  }
+  judge(eventEpoch, type, fromDirectory, fromFile, toDirectory, toFile, filterKind, kind);
+  for (const SymlinkIndex::Derived &event : derived) {
+    judgeDerived(eventEpoch, event);
+  }
+}
+
+void EventQueue::judge(
+  uint64_t eventEpoch,
+  const EventType type,
+  const std::string &fromDirectory,
+  const std::string &fromFile,
+  const std::string &toDirectory,
+  const std::string &toFile,
+  PathFilter::Kind filterKind,
+  PathFilter::Kind kind
+) {
   std::shared_ptr<PathFilter> filter;
   bool watcherNotesEntries;
   {
@@ -148,6 +176,29 @@ void EventQueue::enqueue(
   }
 }
 
+// The symlink's own entry didn't change, so the filter has nothing to take into account; a symlink ignored, or one
+// leading to an ignored file, isn't reported.
+void EventQueue::judgeDerived(uint64_t eventEpoch, const SymlinkIndex::Derived &derived) {
+  if (mPaused) {
+    return;
+  }
+  std::shared_ptr<PathFilter> filter;
+  {
+    std::lock_guard<std::mutex> lock(mFilterMutex);
+    filter = mFilter;
+  }
+  if (filter && filter->isActive() && (
+    filter->isIgnored(derived.directory, derived.name, PathFilter::Kind::FILE) ||
+    filter->isIgnored(derived.targetDirectory, derived.targetName, PathFilter::Kind::FILE)
+  )) {
+    return;
+  }
+  const EventType type = derived.change == SymlinkIndex::Change::CREATED ? CREATED :
+    derived.change == SymlinkIndex::Change::DELETED ? DELETED : MODIFIED;
+  // The symlink itself, which is no directory.
+  push(eventEpoch, type, derived.directory, derived.name, "", "", PathFilter::Kind::FILE);
+}
+
 void EventQueue::push(
   uint64_t epoch,
   const EventType type,
@@ -203,6 +254,11 @@ void EventQueue::setFilter(std::shared_ptr<PathFilter> filter, bool watcherNotes
   std::lock_guard<std::mutex> lock(mFilterMutex);
   mFilter = std::move(filter);
   mWatcherNotesEntries = watcherNotesEntries;
+}
+
+void EventQueue::setSymlinks(std::shared_ptr<SymlinkIndex> symlinks) {
+  std::lock_guard<std::mutex> lock(mFilterMutex);
+  mSymlinks = std::move(symlinks);
 }
 
 void EventQueue::pause() {

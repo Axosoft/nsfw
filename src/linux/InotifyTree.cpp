@@ -72,12 +72,13 @@ static void eraseFromIndex(Index &index, const typename Index::key_type &key,
 }
 
 InotifyTree::InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths,
-  std::shared_ptr<PathFilter> filter, std::function<void()> errorRecorded):
+  std::shared_ptr<PathFilter> filter, std::function<void()> errorRecorded, LinkFound linkFound):
   mError(""),
   mErrorRecorded(std::move(errorRecorded)),
   mInotifyInstance(inotifyInstance),
   mRoot(NULL),
-  mFilter(std::move(filter)) {
+  mFilter(std::move(filter)),
+  mLinkFound(std::move(linkFound)) {
   // The default, where /proc can't tell.
   mMaxQueuedEvents = 16384;
   FILE *maxQueuedEvents = fopen("/proc/sys/fs/inotify/max_queued_events", "r");
@@ -3023,6 +3024,8 @@ bool InotifyTree::InotifyNode::createChild(const std::string &fullPath, const st
   if (directory || !throughSymlink) {
     eraseFromIndex(mTree->mRejectedLinks, this, name);
   }
+  // Before the directory one leads to is scanned: what that scan finds may be spelled through it.
+  if (throughSymlink && mTree->mLinkFound) mTree->mLinkFound(fullPath, name);
   if (lookupError != 0) {
     return lookupError == ENOENT || lookupError == ENOTDIR;
   }

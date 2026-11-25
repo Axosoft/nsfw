@@ -15,7 +15,7 @@ class InotifyService {
 public:
   // filter: what the tree doesn't watch, besides the excluded paths.
   InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
-    std::shared_ptr<PathFilter> filter);
+    std::shared_ptr<PathFilter> filter, LinkFound linkFound = nullptr);
 
   std::string getError();
   bool hasErrored();

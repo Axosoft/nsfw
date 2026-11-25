@@ -27,6 +27,8 @@
  * void EmitCreatedEvent(std::string directory, std::string file, PathFilter::Kind kind);
  */
 using EmitCreatedEvent = std::function<void(std::string, std::string, PathFilter::Kind)>;
+// A symlink found while listing a directory, that isn't excluded.
+using LinkFound = std::function<void(const std::string &directory, const std::string &name)>;
 /**
  * void ReportMove(bool renamed); false: the moved directory left for a place that isn't watched.
  */
@@ -45,7 +47,7 @@ class InotifyTree {
 public:
   // errorRecorded: called once, by the thread that records the first error, outside the tree's locks.
   InotifyTree(int inotifyInstance, std::string path, const std::vector<std::string> &excludedPaths,
-    std::shared_ptr<PathFilter> filter, std::function<void()> errorRecorded);
+    std::shared_ptr<PathFilter> filter, std::function<void()> errorRecorded, LinkFound linkFound = nullptr);
 
   void addDirectory(int wd, std::string name, EmitCreatedEvent emitCreatedEvent = nullptr);
   std::string getError();
@@ -527,6 +529,7 @@ private:
   // The directories it ignores are rejected like excluded paths, by the tree's own path, see exclusionOfChild(). Its
   // answers change with its patterns and ignore files too, see excludeFiltered() and includeFiltered().
   std::shared_ptr<PathFilter> mFilter;
+  LinkFound mLinkFound;
   bool leadsToIgnored(const std::string &path, bool knownLink);
   std::string mWatchedPath;
   Directory mWatchedDirectory;

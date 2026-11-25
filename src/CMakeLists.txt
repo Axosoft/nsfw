@@ -6,6 +6,7 @@ set (NSFW_LIBRARY_SOURCES
     GitRepository.cpp
     GitignoreRules.cpp
     PathFilter.cpp
+    SymlinkIndex.cpp
 )
 
 if (WIN32)

@@ -126,8 +126,12 @@ user config trusts it; on Windows the owner is the user's SID, or the Administra
 git checks it, and paths to another machine read from the repository's files are refused. Nor is a repository looked
 for on another filesystem than the watched path's, except on Windows. Only `/etc/gitconfig` (not on Windows),
 `$XDG_CONFIG_HOME/git/config` and `~/.gitconfig` are read for `safe.directory`.
+- followFileSymlinks: when `true`, macOS and Windows also follow the symlinks to files that were already in the
+watched directory when the watcher started, see [Symlinked files](#symlinked-files): `start()` walks the tree once,
+in the background. Default `false`: there only the symlinks that appear while watching are followed. No effect on
+Linux, which follows every one anyway. Only for a watched directory.
 
-All three options can be combined: a path is excluded when `excludedPaths` excludes it, or when `excludedPatterns` or
+All three filtering options can be combined: a path is excluded when `excludedPaths` excludes it, or when `excludedPatterns` or
 the ignore files do, the patterns deciding first, negations included (`!keep.log` reports `keep.log` whatever the
 ignore files say). On Linux, the directories excluded by them are not watched at all, which spares inotify watches
 (`fs.inotify.max_user_watches`), and neither is a directory a symlink leads to that they exclude. On Linux the watched
@@ -248,6 +252,44 @@ It is `UNKNOWN` when the system can't tell:
   look it up and the filesystem didn't list its type.
 - On every platform, with `excludedPatterns` or `respectGitignore`, for the removal reported when an entry of another
   kind takes the path of one they didn't ignore and they ignore the new one.
+
+## Symlinked files
+A symlink below the watched path that leads to a file below it too is reported as that file is: a change to the file
+is reported under the file's path and then again under the symlink's path, as a separate event with the same action.
+Writing through the symlink changes the file, so it is reported under both paths as well.
+
+- `MODIFIED` when the file is modified, or replaced by another file renamed over it, as editors save (Windows
+  reports that as the file removed and then created, and so is the symlink), or when a symlink in the middle of a
+  chain is replaced at once by one leading to another file (removing it and creating it again is reported as both).
+- `DELETED` when the file is removed or renamed away: the symlink now dangles.
+- `CREATED` when the file appears again, created or renamed to the path the symlink leads to.
+
+A chain of symlinks is followed as a whole: each symlink in it is reported, and removing or retargeting a symlink in
+the middle is reported under the symlinks that led through it. A cycle is not followed. Neither is a symlink to a
+directory (on Linux the watcher follows those into the directory they lead to), a symlink to a path outside the
+watched path (even one the Linux watcher reaches through a symlink to a directory outside it), an excluded symlink, or
+a symlink that leads to an excluded or ignored file. Symlinks created, removed, renamed or retargeted while watching
+are followed from then on. An event reported under a symlink has the `kind` of the symlink itself: `FILE`.
+
+Which symlinks are followed, and what it costs, depends on the platform:
+
+- Linux: every one, whatever `followFileSymlinks` says. The watcher lists every directory it watches anyway, so it
+  finds the symlinks that were there when it started without listing anything more, and without any extra inotify
+  watch: it looks up where each symlink leads. The watcher may report the changes in a directory through a symlink to
+  it, so for an event below a known symlink to a directory in the tree, the real path of its directory is looked up
+  too.
+- macOS and Windows: the watcher never lists the tree, so by default only the symlinks created, renamed or retargeted
+  while it watches are followed. With `followFileSymlinks: true`, `start()` also walks the tree once, in the
+  background, to find the symlinks already there. The walk lists every directory that isn't excluded or ignored (by
+  `excludedPaths`, `excludedPatterns` or `respectGitignore`), without going through symlinks or junctions, so it
+  costs as much as the tree is large: exclude what you don't need, such as `node_modules/`. On Windows it skips the
+  directories a cloud provider keeps online only, which listing would have it fetch. `start()` doesn't wait for it,
+  so until it reaches a symlink, a change to that symlink's target is only reported under the target. `stop()` ends
+  it.
+
+Whatever the platform, what is kept grows with the number of symlinks only. To learn about new symlinks, each
+created or renamed entry is looked up once (on macOS each modified or deleted one too, since FSEvents can report a
+new symlink that way); with no symlinks known, nothing else is looked up.
 
 ## Linux: inotify limits
 On Linux, nsfw watches each directory of the tree with an inotify watch. The kernel limits the number of watches

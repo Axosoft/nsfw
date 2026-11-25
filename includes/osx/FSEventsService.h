@@ -27,6 +27,13 @@ void FSEventsServiceCallback(
 
 class RunLoop;
 
+// What the filter judges an entry as once it is gone, and what is reported, see EventQueue::enqueue(). Outside the
+// class: its member initializers have to be known where the class's default arguments use them.
+struct FSEventsKinds {
+  PathFilter::Kind filter = PathFilter::Kind::UNKNOWN;
+  PathFilter::Kind reported = PathFilter::Kind::UNKNOWN;
+};
+
 class FSEventsService {
 public:
   // filter: what a directory that moves in holds and the filter ignores isn't scanned.
@@ -58,6 +65,8 @@ private:
     uint64_t inode;
   };
 
+  using Kinds = FSEventsKinds;
+
   // What the path of an event with the renamed flag holds now, and the other side of its rename once paired.
   struct RenameSide {
     bool renamed = false;
@@ -65,7 +74,7 @@ private:
     // It holds the entry the event is about: FSEvents didn't tell which, or it is the same.
     bool present = false;
     uint64_t inode = 0;
-    PathFilter::Kind kind = PathFilter::Kind::UNKNOWN;
+    Kinds kinds;
     bool isDirectory = false;
     // The volume of the entry, or of the nearest directory still there above the place it left.
     dev_t device = 0;
@@ -83,7 +92,9 @@ private:
     bool replaced = false;
   };
 
-  static PathFilter::Kind kindFromMode(mode_t mode);
+  static Kinds kindsFromMode(mode_t mode);
+  static Kinds kindsOf(FSEventStreamEventFlags flags);
+  static PathFilter::Kind reportedKindAt(FSEventStreamEventFlags flags, const std::string &path);
   static bool readEventData(const void *data, std::string &path, uint64_t &inode);
   void handle(std::vector<Event> events);
   void pairRenames(const std::vector<Event> &events, std::vector<RenameSide> &sides);
@@ -100,19 +111,19 @@ private:
   bool isSinceStart(const struct timespec &time) const;
   bool readAddedTime(const std::string &path, uint64_t inode, struct timespec &added) const;
   bool appearedWhileWatching(const Event &event, const struct stat &file) const;
-  void classify(const Event &event, PathFilter::Kind kind);
+  void classify(const Event &event, Kinds kinds);
   void noteExcluded(const Event &event);
-  void create(const std::string &path, uint64_t inode, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
-  void dispatch(EventType action, std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
-  void modify(std::string path);
+  void create(const std::string &path, uint64_t inode, Kinds kinds = {});
+  void dispatch(EventType action, std::string path, Kinds kinds = {});
+  void modify(std::string path, PathFilter::Kind kind);
   // inode: of the entry gone, 0 if unknown.
-  void remove(std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN, uint64_t inode = 0);
+  void remove(std::string path, Kinds kinds = {}, uint64_t inode = 0);
   void noteGone(const std::string &path, uint64_t inode);
   void rememberMissing(const std::string &path, uint64_t inode, bool pendingCreation);
-  void reportPendingCreation(const std::string &path, uint64_t inode, PathFilter::Kind kind);
+  void reportPendingCreation(const std::string &path, uint64_t inode, Kinds kinds);
   void forgetGone(const std::string &path);
   bool wasReportedGone(const Event &event) const;
-  void rename(const std::string &from, const std::string &to, uint64_t inode, PathFilter::Kind kind);
+  void rename(const std::string &from, const std::string &to, uint64_t inode, Kinds kinds);
   bool lookUpReported(const std::string &path, uint64_t &inode);
   void noteReported(const std::string &path, uint64_t inode);
   void splitFilePath(std::string &directory, std::string &name, const std::string &path);

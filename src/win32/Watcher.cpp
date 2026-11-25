@@ -91,6 +91,15 @@ std::string getUTF8FileName(std::wstring path) {
 static const unsigned MAX_ABORTED_READS = 3;
 static constexpr DWORD SPLIT_READ_WAIT_MS = 10;
 
+// What the entry itself is, see Event::kind: the attributes of a symlink or a junction are its own, and one that leads
+// to a directory has the directory attribute. The system doesn't tell what a removed entry was.
+static PathFilter::Kind reportedKindOf(DWORD attributes) {
+  if (attributes == INVALID_FILE_ATTRIBUTES) {
+    return PathFilter::Kind::UNKNOWN;
+  }
+  return (attributes & FILE_ATTRIBUTE_DIRECTORY) ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE;
+}
+
 static std::string describeError(const std::string &message, DWORD errorCode) {
   LPWSTR text = NULL;
   const DWORD length = FormatMessageW(
@@ -462,7 +471,8 @@ void Watcher::handleEvents() {
       case FILE_ACTION_MODIFIED:
       default:
         if (!isExcluded(fileName)) {
-          mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+          mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName), "", "",
+            PathFilter::Kind::UNKNOWN, reportedKindOf(GetFileAttributesW(joinPath(mPath, fileName).data())));
         }
       };
     }
@@ -545,7 +555,8 @@ void Watcher::handleArrival(const std::wstring &fileName) {
   }
 
   const EntryInfo info = entryInfo(joinPath(mPath, fileName));
-  mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName), "", "", kindOf(info));
+  mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName), "", "", kindOf(info),
+    reportedKindOf(info.attributes));
   // The system reports a directory moved in, not what it holds: report that too, as on Linux. A copy has the creation
   // of each entry reported as well, which the scanned entries keep from being reported twice. A watch of the
   // directory's own entries has nothing below them to report.
@@ -591,7 +602,8 @@ void Watcher::reportContents(const std::wstring &directory) {
       const std::wstring entry = relative + L"\\" + name;
       mScannedEntries[scannedKey(entry)] = mReads;
       const EntryInfo info = entryInfo(data);
-      mQueue->enqueue(CREATED, getUTF8Directory(entry), getUTF8FileName(entry), "", "", kindOf(info));
+      mQueue->enqueue(CREATED, getUTF8Directory(entry), getUTF8FileName(entry), "", "", kindOf(info),
+        reportedKindOf(info.attributes));
       if (holdsWatchedEntries(info)) {
         directories.push_back(entry);
       }
@@ -644,10 +656,11 @@ void Watcher::forgetOldScans() {
   }
 }
 
-void Watcher::handleRemoval(const std::wstring &fileName) {
+void Watcher::handleRemoval(const std::wstring &fileName, PathFilter::Kind kind) {
   forgetScanned(fileName);
   if (!isExcluded(fileName)) {
-    mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+    mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName), "", "", PathFilter::Kind::UNKNOWN,
+      kind);
   }
 }
 
@@ -659,7 +672,8 @@ void Watcher::handleRename(const std::wstring &oldFileName, const std::wstring &
   if (oldExcluded) {
     handleArrival(newFileName);
   } else if (newExcluded) {
-    handleRemoval(oldFileName);
+    // Moved, not removed: what arrived can still be looked up, as when the filter turns a rename into a removal.
+    handleRemoval(oldFileName, reportedKindOf(GetFileAttributesW(joinPath(mPath, newFileName).data())));
   } else {
     // The listener never saw what a directory held under an excluded or ignored name, whatever the queue makes of
     // the rename. The queue is told it is a directory, so that it judges the old name as such too.
@@ -672,7 +686,8 @@ void Watcher::handleRename(const std::wstring &oldFileName, const std::wstring &
       getUTF8FileName(oldFileName),
       getUTF8Directory(newFileName),
       getUTF8FileName(newFileName),
-      isDirectory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::UNKNOWN
+      isDirectory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::UNKNOWN,
+      reportedKindOf(info.attributes)
     );
     if (fromIgnoredDirectory) {
       reportContents(newFileName);

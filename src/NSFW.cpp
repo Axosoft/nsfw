@@ -66,6 +66,16 @@ class NSFW::Run {
     uint64_t mRunId;
 };
 
+// The values of nsfw.kinds.
+static uint32_t toJsKind(PathFilter::Kind kind) {
+  switch (kind) {
+    case PathFilter::Kind::FILE: return 0;
+    case PathFilter::Kind::DIRECTORY: return 1;
+    case PathFilter::Kind::UNKNOWN: return 2;
+  }
+  return 2;
+}
+
 // Sleeps until the queue wakes it: an idle watcher costs no wakeups. The first events after a quiet period are
 // delivered as they come; the ones that follow a delivery wait until debounceMS after it, and go together. An error is
 // reported as soon as it is recorded, even while they wait, and the events still queued are dropped with the run.
@@ -134,6 +144,7 @@ void NSFW::Run::deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>
     for (int i = 0; i < numEvents; ++i) {
       auto event = Napi::Object::New(env);
       event["action"] = Napi::Number::New(env, (*events)[i]->type);
+      event["kind"] = Napi::Number::New(env, toJsKind((*events)[i]->kind));
       event["directory"] = Napi::String::New(env, (*events)[i]->fromDirectory);
 
       if ((*events)[i]->type == RENAMED) {

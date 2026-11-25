@@ -3,6 +3,7 @@ const assert = require('assert');
 const cp = require('child_process');
 const fs = require('fs');
 const fsp = require('fs/promises');
+const os = require('os');
 const path = require('path');
 const { isDeepStrictEqual, promisify } = require('util');
 
@@ -488,8 +489,8 @@ describe('Node Sentinel File Watcher', function() {
         assert.deepStrictEqual(
           events.slice(beforeRename).filter(event => event.action !== nsfw.actions.MODIFIED &&
             [event.file, event.oldFile, event.newFile].some(name => name === 'before' || name === 'after')),
-          [{ action: nsfw.actions.RENAMED, directory: inPath, oldFile: 'before', newDirectory: inPath,
-            newFile: 'after' }]
+          [{ action: nsfw.actions.RENAMED, kind: nsfw.kinds.DIRECTORY, directory: inPath, oldFile: 'before',
+            newDirectory: inPath, newFile: 'after' }]
         );
       } finally {
         await watch.stop();
@@ -503,13 +504,17 @@ describe('Node Sentinel File Watcher', function() {
       const oldFile = 'testing6.file';
       const newFile = 'Testing6.file';
       const events = [];
-      const about = () => events.filter(event => event.directory === inPath &&
+      // From the rename on: FSEvents can still report the fixture written just before the watcher started.
+      let offset = 0;
+      const about = () => events.slice(offset).filter(event => event.directory === inPath &&
         [event.file, event.oldFile, event.newFile].some(name => name === oldFile || name === newFile));
 
       let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
 
       try {
         await watch.start();
+        await barrier(events, workDir);
+        offset = events.length;
         await fsp.rename(path.join(inPath, oldFile), path.join(inPath, newFile));
         await waitUntil(() => about().some(event => event.action === RENAMED),
           { message: () => `No rename in ${JSON.stringify(events)}` });
@@ -1154,6 +1159,199 @@ describe('Node Sentinel File Watcher', function() {
       const watch = await nsfw(filePath(), () => {}, { debounceMS: 120000 });
       await watch.start();
       await watch.stop();
+    });
+  });
+
+  describe('Kinds', function() {
+    const { FILE, DIRECTORY, UNKNOWN } = nsfw.kinds;
+    const { CREATED, DELETED, MODIFIED } = nsfw.actions;
+
+    it('exports the kinds', function() {
+      assert.deepStrictEqual(nsfw.kinds, { FILE: 0, DIRECTORY: 1, UNKNOWN: 2 });
+    });
+
+    // The names an event is about, relative to directory.
+    function namesOf(event, directory) {
+      return event.action === nsfw.actions.RENAMED ?
+        [path.relative(directory, path.join(event.directory, event.oldFile)),
+          path.relative(directory, path.join(event.newDirectory, event.newFile))] :
+        [path.relative(directory, path.join(event.directory, event.file))];
+    }
+
+    // Runs each step in a new directory of the watched one, then a barrier, and checks that every event about a name
+    // in kinds tells the kind kinds has for it, or UNKNOWN where unknownAllowed(event, step) says the system can't
+    // tell. expected: [step, name, actions] that each step must have reported at least once. setup(inPath) runs before
+    // the watcher starts.
+    async function checkKinds(kinds, steps,
+      { expected = [], unknownAllowed = () => false, options = {}, setup = async () => {} } = {}) {
+      const inPath = path.join(workDir, 'kinds');
+      await fsp.mkdir(inPath);
+      await setup(inPath);
+      const events = [];
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE, ...options });
+      const stepEvents = [];
+      try {
+        await watch.start();
+        for (const step of steps) {
+          const first = events.length;
+          await step(inPath);
+          await barrier(events, workDir);
+          stepEvents.push(events.slice(first));
+        }
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+      stepEvents.forEach((batch, step) => {
+        for (const event of batch) {
+          const names = namesOf(event, inPath).filter(name => name in kinds);
+          if (names.length === 0) {
+            continue;
+          }
+          const kind = kinds[names[names.length - 1]];
+          assert.ok(event.kind === kind || (event.kind === UNKNOWN && unknownAllowed(event, step)),
+            `Expected kind ${kind} in step ${step} for ${JSON.stringify(event)} in ${JSON.stringify(events)}`);
+        }
+      });
+      for (const [step, name, actions] of expected) {
+        assert.ok(stepEvents[step].some(event => actions.includes(event.action) &&
+          namesOf(event, inPath).at(-1) === name), `No ${actions} of ${name} in ${JSON.stringify(stepEvents[step])}`);
+      }
+      return stepEvents;
+    }
+
+    it('tells files from directories when they are created, modified, renamed and deleted', async function() {
+      const past = new Date(Date.now() - 3600 * 1000);
+      const stepEvents = await checkKinds({ 'file': FILE, 'file2': FILE, 'dir': DIRECTORY, 'dir2': DIRECTORY }, [
+        async inPath => {
+          await fsp.writeFile(path.join(inPath, 'file'), 'created');
+          await fsp.mkdir(path.join(inPath, 'dir'));
+        },
+        async inPath => {
+          await untilNextSecond(path.join(inPath, 'file'));
+          await fsp.writeFile(path.join(inPath, 'file'), 'modified');
+          await fsp.utimes(path.join(inPath, 'dir'), past, past);
+        },
+        async inPath => {
+          await fsp.rename(path.join(inPath, 'file'), path.join(inPath, 'file2'));
+          await fsp.rename(path.join(inPath, 'dir'), path.join(inPath, 'dir2'));
+        },
+        async inPath => {
+          await fsp.rm(path.join(inPath, 'file2'));
+          await fsp.rmdir(path.join(inPath, 'dir2'));
+        },
+        () => fsp.utimes(workDir, past, past)
+      ], {
+        expected: [[0, 'file', [CREATED]], [0, 'dir', [CREATED]], [3, 'file2', [DELETED]],
+          [3, 'dir2', [DELETED]]],
+        // Windows doesn't tell what a removed entry was, nor what one that is gone when its event is read is. A rename
+        // whose new name comes too late after its old one is a removal and a creation.
+        unknownAllowed: (event, step) => process.platform === 'win32' && (step === 3 || event.action === DELETED)
+      });
+      if (process.platform === 'win32') {
+        assert.ok(stepEvents[3].some(event => event.action === DELETED && event.kind === UNKNOWN));
+      }
+      // Linux reports a change of the watched directory itself, with an empty name.
+      if (process.platform === 'linux') {
+        assert.ok(stepEvents[4].some(event => event.action === MODIFIED && event.directory === workDir &&
+          event.file === '' && event.kind === DIRECTORY), JSON.stringify(stepEvents[4]));
+      }
+    });
+
+    it('tells what a directory moved in holds', async function() {
+      const outside = path.join(workDir, 'test0');
+      await fsp.mkdir(path.join(outside, 'moved', 'sub'), { recursive: true });
+      await fsp.writeFile(path.join(outside, 'moved', 'sub', 'inner.file'), 'inner');
+      const kinds = {
+        'moved': DIRECTORY,
+        [path.join('moved', 'sub')]: DIRECTORY,
+        [path.join('moved', 'sub', 'inner.file')]: FILE
+      };
+      // What a directory that appeared holds is reported too.
+      const expected = [[0, 'moved', [CREATED]], [0, path.join('moved', 'sub', 'inner.file'), [CREATED]]];
+      // From a directory that isn't watched, so that it is a move in.
+      await checkKinds(kinds, [inPath => fsp.rename(path.join(outside, 'moved'), path.join(inPath, 'moved'))],
+        { expected, options: { excludedPatterns: ['/test0'] } });
+    });
+
+    it('keeps the kind of a rename the filter turns into a removal or a creation', async function() {
+      await checkKinds({ 'file': FILE, 'dir': DIRECTORY, 'back.file': FILE, 'back.dir': DIRECTORY }, [
+        async inPath => {
+          await fsp.writeFile(path.join(inPath, 'file'), 'created');
+          await fsp.mkdir(path.join(inPath, 'dir'));
+        },
+        async inPath => {
+          await fsp.rename(path.join(inPath, 'file'), path.join(inPath, 'ignored.file'));
+          await fsp.rename(path.join(inPath, 'dir'), path.join(inPath, 'ignored.dir'));
+        },
+        async inPath => {
+          await fsp.rename(path.join(inPath, 'ignored.file'), path.join(inPath, 'back.file'));
+          await fsp.rename(path.join(inPath, 'ignored.dir'), path.join(inPath, 'back.dir'));
+        }
+      ], {
+        expected: [[1, 'file', [DELETED]], [1, 'dir', [DELETED]], [2, 'back.file', [CREATED]],
+          [2, 'back.dir', [CREATED]]],
+        options: { excludedPatterns: ['ignored.*'] },
+        unknownAllowed: event => process.platform === 'win32' && event.action === DELETED
+      });
+    });
+
+    if (process.platform === 'win32') {
+      it('reports a junction to a directory as a directory', async function() {
+        await checkKinds({ 'junction': DIRECTORY }, [
+          inPath => fsp.symlink(path.join(workDir, 'test1'), path.join(inPath, 'junction'), 'junction'),
+          inPath => fsp.rmdir(path.join(inPath, 'junction'))
+        ], {
+          expected: [[0, 'junction', [CREATED]], [1, 'junction', [DELETED]]],
+          unknownAllowed: (event, step) => step === 1
+        });
+      });
+    } else {
+      it('reports a symlink as a file, whatever it leads to', async function() {
+        const target = await fsp.mkdtemp(path.join(os.tmpdir(), 'nsfw-kinds-'));
+        const past = new Date(Date.now() - 3600 * 1000);
+        try {
+          const expected = [[0, 'link-to-file', [CREATED]], [2, 'link-to-dir', [DELETED]],
+            [2, 'dangling', [DELETED]]];
+          // The tree follows a symlink to a directory that was there when it started: what happens to that directory
+          // is reported at the symlink.
+          if (process.platform === 'linux') {
+            expected.push([1, 'link-to-dir', [MODIFIED]]);
+          }
+          await checkKinds({ 'link-to-dir': FILE, 'link-to-file': FILE, 'dangling': FILE }, [
+            async inPath => {
+              await fsp.symlink(path.join(workDir, 'test1', 'testing1.file'), path.join(inPath, 'link-to-file'));
+              await fsp.symlink(path.join(workDir, 'nowhere'), path.join(inPath, 'dangling'));
+            },
+            () => fsp.utimes(target, past, past),
+            async inPath => {
+              for (const name of ['link-to-dir', 'link-to-file', 'dangling']) {
+                await fsp.unlink(path.join(inPath, name));
+              }
+            }
+          ], { expected, setup: inPath => fsp.symlink(target, path.join(inPath, 'link-to-dir')) });
+        } finally {
+          await remove(target);
+        }
+      });
+    }
+
+    it('reports a watched file as a file', async function() {
+      const filePath = path.join(workDir, 'test1', 'testing1.file');
+      const events = [];
+      let watch = await nsfw(filePath, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+      try {
+        await watch.start();
+        await untilNextSecond(filePath);
+        await fsp.writeFile(filePath, 'modified');
+        await remove(filePath);
+        await waitUntil(() => events.some(event => event.action === DELETED),
+          { message: () => `No removal in ${JSON.stringify(events)}` });
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+      assert.ok(events.every(event => event.kind === FILE), JSON.stringify(events));
     });
   });
 

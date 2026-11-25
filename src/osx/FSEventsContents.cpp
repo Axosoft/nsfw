@@ -60,7 +60,7 @@ void FSEventsService::createContents(const std::string &directory, uint64_t inod
       }
       uint64_t reported;
       if (!lookUpReported(child, reported) || reported != (uint64_t)file.st_ino) {
-        create(child, file.st_ino, kindFromMode(file.st_mode));
+        create(child, file.st_ino, kindsFromMode(file.st_mode));
       }
       if (S_ISDIR(file.st_mode)) {
         pending.push_back({child, (uint64_t)file.st_ino, file.st_dev});

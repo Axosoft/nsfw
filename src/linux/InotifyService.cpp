@@ -72,9 +72,10 @@ InotifyService::~InotifyService() {
   close(mInotifyInstance);
 }
 
-// Not known to be a file: a symlink to a directory counts as one, as the tree follows it, see PathFilter::kindOf().
+// Without IN_ISDIR the entry isn't a directory, though for the filter a symlink to one counts as one, as the tree
+// follows it: the filter looks it up, see PathFilter::kindOf().
 void InotifyService::create(int wd, std::string name, bool fromInCreate) {
-  dispatch(CREATED, wd, name, fromInCreate);
+  dispatch(CREATED, wd, name, fromInCreate, PathFilter::Kind::UNKNOWN, PathFilter::Kind::FILE);
 }
 
 // Tells the filter about every entry change before the tree acts on it, whether or not it is reported: the queue only
@@ -202,8 +203,10 @@ void InotifyService::finishFilterPass() {
 }
 
 // fromInCreate: a creation that is an IN_CREATE, not a move in, see InotifyTree::isReportedByScan().
-// kind: what inotify told the entry is, which the filter can't look up once it is removed.
-void InotifyService::dispatch(EventType action, int wd, std::string name, bool fromInCreate, PathFilter::Kind kind) {
+// filterKind: what the entry leads to, which the filter can't look up once it is removed. kind: what inotify told the
+// entry itself is, see Event::kind.
+void InotifyService::dispatch(EventType action, int wd, std::string name, bool fromInCreate,
+  PathFilter::Kind filterKind, PathFilter::Kind kind) {
   std::string path;
   if (!mTree->getPath(path, wd)) {
     return;
@@ -213,7 +216,7 @@ void InotifyService::dispatch(EventType action, int wd, std::string name, bool f
   noteEntry(wd, path, name, action == DELETED);
 
   bool reportedByScan = fromInCreate && mTree->isReportedByScan(wd, name);
-  if (!mTree->isRootExcluded() && !reportedByScan) mQueue->enqueue(action, path, name, "", "", kind);
+  if (!mTree->isRootExcluded() && !reportedByScan) mQueue->enqueue(action, path, name, "", "", filterKind, kind);
   // Reported first: the tree change may report creations, see renameDirectory().
   if (action != MODIFIED) {
     mTree->entryChanged(wd, name, action == DELETED, emitCreated());
@@ -227,7 +230,9 @@ void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, 
   }
   noteMove(fromWd, fromPath, fromName, toWd, toPath, toName);
 
-  if (!mTree->isRootExcluded()) mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName);
+  if (!mTree->isRootExcluded()) {
+    mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName, PathFilter::Kind::UNKNOWN, PathFilter::Kind::FILE);
+  }
   mTree->entryChanged(fromWd, fromName, true, emitCreated());
   mTree->entryChanged(toWd, toName, false, emitCreated());
 }
@@ -256,15 +261,20 @@ bool InotifyService::isWatching() {
   return mTree->isRootAlive() && mEventLoop->isStarted();
 }
 
-void InotifyService::modify(int wd, std::string name) {
-  dispatch(MODIFIED, wd, name);
+// An event without a name is about the watched directory itself, reported at the path the tree holds it at: when that
+// is a symlink, the entry there is the symlink.
+void InotifyService::modify(int wd, std::string name, bool isDirectory) {
+  const bool directory = isDirectory && (!name.empty() || !mTree->isHeldAtLink(wd));
+  dispatch(MODIFIED, wd, name, false, PathFilter::Kind::UNKNOWN,
+    directory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE);
 }
 
 // A symlink the tree held, skipped or rejected as a directory was one too, for the filter, which followed it when its
 // creation was reported; the filter only falls back on this for one it never saw, see PathFilter::judge().
 void InotifyService::remove(int wd, std::string name, bool isDirectory) {
   const bool directory = isDirectory || (mFilter->isActive() && mTree->hadDirectoryAt(wd, name));
-  dispatch(DELETED, wd, name, false, directory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE);
+  dispatch(DELETED, wd, name, false, directory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE,
+    isDirectory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE);
 }
 
 // Either side of a move may be a directory that was dropped from the tree (moved out, into an excluded directory, or
@@ -285,14 +295,14 @@ void InotifyService::createDirectory(int wd, std::string name, bool fromInCreate
     return;
   }
 
-  dispatch(CREATED, wd, name, fromInCreate, PathFilter::Kind::DIRECTORY);
+  dispatch(CREATED, wd, name, fromInCreate, PathFilter::Kind::DIRECTORY, PathFilter::Kind::DIRECTORY);
   mTree->addDirectory(wd, name, emitCreated());
 }
 
 // What the tree uses to report the contents of the directories it adds; nothing while the watched path is excluded.
 EmitCreatedEvent InotifyService::emitCreated() {
-  return [this](std::string directory, std::string file) {
-    if (!mTree->isRootExcluded()) mQueue->enqueue(CREATED, directory, file);
+  return [this](std::string directory, std::string file, PathFilter::Kind kind) {
+    if (!mTree->isRootExcluded()) mQueue->enqueue(CREATED, directory, file, "", "", PathFilter::Kind::UNKNOWN, kind);
   };
 }
 
@@ -356,7 +366,7 @@ void InotifyService::forgetIncompleteScans() {
 }
 
 void InotifyService::removeMovedDirectory(int wd, std::string name) {
-  dispatch(DELETED, wd, name, false, PathFilter::Kind::DIRECTORY);
+  dispatch(DELETED, wd, name, false, PathFilter::Kind::DIRECTORY, PathFilter::Kind::DIRECTORY);
   mTree->removeMovedDirectory(wd, name, emitCreated());
   revalidateLinks(true);
 }
@@ -386,9 +396,10 @@ void InotifyService::renameDirectory(int fromWd, std::string fromName, int toWd,
         return;
       }
       if (!renamed) {
-        mQueue->enqueue(DELETED, fromPath, fromName, "", "", PathFilter::Kind::DIRECTORY);
+        mQueue->enqueue(DELETED, fromPath, fromName, "", "", PathFilter::Kind::DIRECTORY, PathFilter::Kind::DIRECTORY);
       } else if (mTree->getPath(toPath, toWd)) {
-        mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName, PathFilter::Kind::DIRECTORY);
+        mQueue->enqueue(RENAMED, fromPath, fromName, toPath, toName, PathFilter::Kind::DIRECTORY,
+          PathFilter::Kind::DIRECTORY);
       }
     });
   if (!kept) {

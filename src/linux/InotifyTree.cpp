@@ -412,15 +412,19 @@ namespace {
 // Creations held back until what has to be reported before them is, then emitted in order. Shared with the callback
 // that holds them, which the tree may keep for scans that run later: it emits directly once they are released.
 struct HeldCreations {
+  struct Creation {
+    std::string directory, file;
+    PathFilter::Kind kind;
+  };
   bool holding = true;
-  std::vector<std::pair<std::string, std::string>> created;
+  std::vector<Creation> created;
 
   static EmitCreatedEvent hold(const std::shared_ptr<HeldCreations> &held, EmitCreatedEvent emitCreatedEvent) {
-    return [held, emitCreatedEvent](std::string directory, std::string file) {
+    return [held, emitCreatedEvent](std::string directory, std::string file, PathFilter::Kind kind) {
       if (held->holding) {
-        held->created.emplace_back(std::move(directory), std::move(file));
+        held->created.push_back({ std::move(directory), std::move(file), kind });
       } else {
-        emitCreatedEvent(directory, file);
+        emitCreatedEvent(directory, file, kind);
       }
     };
   }
@@ -428,7 +432,7 @@ struct HeldCreations {
   void release(const EmitCreatedEvent &emitCreatedEvent) {
     holding = false;
     for (auto &entry : created) {
-      emitCreatedEvent(entry.first, entry.second);
+      emitCreatedEvent(entry.directory, entry.file, entry.kind);
     }
     created.clear();
   }
@@ -2131,6 +2135,12 @@ bool InotifyTree::hadDirectoryAt(int wd, const std::string &name) {
     (skipped != mRejectedLinks.end() && skipped->second.count(name) > 0) || findSightedAt(wd, name) != NULL;
 }
 
+// The root counts as reached through a symlink, but the watched path is the directory itself.
+bool InotifyTree::isHeldAtLink(int wd) {
+  InotifyNode *node = findNodeByWatchDescriptor(wd);
+  return node != NULL && node != mRoot.load() && node->isThroughSymlink();
+}
+
 void InotifyTree::forgetFilterRejection(InotifyNode *parent, const std::string &name) {
   if (isFilterRejectedOnly(parent, name)) {
     setRejected(parent, name, Rejected::NO);
@@ -2991,7 +3001,14 @@ bool InotifyTree::InotifyNode::createChild(const std::string &fullPath, const st
     return false;
   }
   if (emitCreatedEvent && reportEntry) {
-    emitCreatedEvent(fullPath, name);
+    // Not what a symlink leads to: see Event::kind. One gone already is only known by what the scan listed.
+    PathFilter::Kind kind = PathFilter::Kind::UNKNOWN;
+    if (lookupError == 0) {
+      kind = directory && !throughSymlink ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE;
+    } else if (type != DT_UNKNOWN) {
+      kind = type == DT_DIR ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE;
+    }
+    emitCreatedEvent(fullPath, name, kind);
     if (reportedUntil != 0) {
       ScanReports &reports = mTree->mScanReports[mWatchDescriptor];
       reports.names.insert(name);

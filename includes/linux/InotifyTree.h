@@ -24,9 +24,9 @@
 #include "../PathFilter.h"
 
 /**
- * void EmitCreatedEvent(std::string directory, std::string file);
+ * void EmitCreatedEvent(std::string directory, std::string file, PathFilter::Kind kind);
  */
-using EmitCreatedEvent = std::function<void(std::string, std::string)>;
+using EmitCreatedEvent = std::function<void(std::string, std::string, PathFilter::Kind)>;
 /**
  * void ReportMove(bool renamed); false: the moved directory left for a place that isn't watched.
  */
@@ -85,6 +85,8 @@ public:
   bool physicalPathOf(int wd, std::string &physical);
   // Whether name in the directory with wd led to a directory as far as the tree knows: it watches it, or rejected it.
   bool hadDirectoryAt(int wd, const std::string &name);
+  // Whether the tree holds the directory with wd at a symlink that leads to it.
+  bool isHeldAtLink(int wd);
 
   // In bytes: what one read of the event loop takes at most, which removeDroppedWatches() paces itself by.
   static const int READ_SIZE = 8192;

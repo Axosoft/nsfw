@@ -26,17 +26,22 @@ struct Event {
     const std::string &fromDirectory,
     const std::string &fromFile,
     const std::string &toDirectory,
-    const std::string &toFile
+    const std::string &toFile,
+    const PathFilter::Kind kind
   ) :
     type(type),
     fromDirectory(fromDirectory),
     toDirectory(toDirectory),
     fromFile(fromFile),
-    toFile(toFile)
+    toFile(toFile),
+    kind(kind)
   {}
 
   EventType type;
   std::string fromDirectory, toDirectory, fromFile, toFile;
+  // What the entry itself is, not what a symlink leads to: what tells removing it with unlink from removing it as a
+  // directory. A symlink is a FILE, except on Windows, where a directory symlink or junction is a DIRECTORY.
+  PathFilter::Kind kind;
 };
 
 class EventQueue {
@@ -46,13 +51,15 @@ public:
   std::unique_ptr<Event> dequeue();
   std::unique_ptr<std::vector<std::unique_ptr<Event>>> dequeueAll(uint64_t &epoch);
   uint64_t epoch() const { return mEpoch; }
-  // kind: what the entry is, when the watcher knows: a removed one can't be looked up anymore.
+  // filterKind: what the filter judges the entry as when it is gone, following a symlink as the watchers do; a removed
+  // one can't be looked up anymore. kind: what is reported, see Event::kind; for a rename, the entry that moved.
   void enqueue(
     const EventType type,
     const std::string &fromDirectory,
     const std::string &fromFile,
     const std::string &toDirectory = "",
     const std::string &toFile = "",
+    PathFilter::Kind filterKind = PathFilter::Kind::UNKNOWN,
     PathFilter::Kind kind = PathFilter::Kind::UNKNOWN
   );
 
@@ -89,8 +96,9 @@ private:
     const EventType type,
     const std::string &fromDirectory,
     const std::string &fromFile,
-    const std::string &toDirectory = "",
-    const std::string &toFile = ""
+    const std::string &toDirectory,
+    const std::string &toFile,
+    PathFilter::Kind kind
   );
   std::shared_ptr<PathFilter> mFilter;
   bool mWatcherNotesEntries = false;

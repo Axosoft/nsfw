@@ -69,9 +69,10 @@ return nsfw(
 
 ## Options
 
-- debounceMS: delays notifications emitted by the library. Default 500 ms.
-- errorCallback(errors): the library will call this callback when an error happens.
-On Linux that includes an overflow of the inotify event queue (`fs.inotify.max_queued_events`), which means events
+- debounceMS: delays notifications emitted by the library. Default 500 ms. It is the only spacing between two
+deliveries of events: since 3.1.0 there is no implicit 50 ms tick, so set it to 50 to keep at least 50 ms between them.
+- errorCallback(errors): the library will call this callback when an error happens. For a watched directory,
+on Linux that includes an overflow of the inotify event queue (`fs.inotify.max_queued_events`), which means events
 were lost: restart the watcher and rescan what you track.
 It also includes the watched directory being renamed or deleted, a directory above it included
 (`Service shutdown: root path changed (renamed or deleted)`): from then on its path leads elsewhere. On Linux, a rename
@@ -90,6 +91,7 @@ in which case another `start()` rejects as already running. `stop()` on an alrea
 For directory watchers, `start()`, `stop()`, `pause()` and `resume()` run in call order.
 Thus `stop(); start()` restarts the watcher even when `stop()` is not awaited.
 Each operation still returns a promise that should be handled for errors.
+A watched file only reports the errors it can't recover from, see [Watching a single file](#watching-a-single-file).
 - excludedPaths (deprecated: use `excludedPatterns`, see below): array with the absolute paths we want to exclude
 watching. Using it, `updateExcludedPaths` or `getExcludedPaths` emits a `DeprecationWarning` (code
 `NSFW_EXCLUDED_PATHS`) once per process; they keep working until a future major release. A relative one makes the
@@ -160,10 +162,8 @@ of that file returned.
 `nsfw()` also takes the path of a file. It isn't polled: the directory it is in is watched by the system, natively
 filtered down to the file's own entry, so its siblings and what the directory holds cost nothing in JavaScript and, on
 Linux, the watcher takes a single inotify watch (two while a directory takes the file's name). As for a watched
-directory, the Linux watcher still checks the directory once a second while idle, and any error of the watcher of the
-directory, such as its event queue overflowing under heavy activity in the directory, stops the file watcher and
-reaches `errorCallback`. Events about the file are reported under the directory and name of the path given, a
-symlink's rather than its target's:
+directory, the Linux watcher still checks the directory once a second while idle. Events about the file are reported
+under the directory and name of the path given, a symlink's rather than its target's:
 - `CREATED` when it appears, by a rename onto it too, and `DELETED` when it goes, by a rename away too.
 - `MODIFIED` when it changes, its attributes included. A file renamed over it, as editors save, is reported as
   `MODIFIED`, and so is a file removed and created again within the same batch of events (a removal and a creation
@@ -172,11 +172,26 @@ symlink's rather than its target's:
 A symlink is followed once, when the watcher is created: the file it led to then is the one watched. Writes through a
 hard link in another directory are not reported. `start()`, `stop()`, `pause()` and `resume()` never reject over the
 watcher's state: starting or resuming a running watcher, and stopping or pausing one that isn't, do nothing, and
-`resume()` starts a stopped watcher. When the file's directory is removed or renamed, the file's removal is reported
-(unless paused), then `errorCallback` gets `Service shutdown: root path changed (renamed or deleted)` and the watcher
-stops, as a directory watcher does; `start()` watches again once the directory is back. On Windows the directory is
-open while it is watched, which can keep the directories above it from being renamed or removed. `debounceMS` above
-60000 is taken as 60000.
+`resume()` starts a stopped watcher. On Windows the directory is open while it is watched, which can keep the
+directories above it from being renamed or removed. `debounceMS` above 60000 is taken as 60000.
+
+Unlike a watched directory, a watched file outlives its directory, as the poller of nsfw 3.0.x did:
+- When the file's directory is removed or renamed, the file's removal is reported (unless paused), as a single
+  `stat()` of the file after the failure finds it gone, and the watcher keeps going without any error. It looks for
+  the directory once a second, on whole seconds, with a `stat()` of the directory (not of the file, and on Linux
+  without any inotify watch), and watches it again once it is back, reporting `CREATED` if the file is there.
+  `pause()`, `resume()` and `stop()` work meanwhile, and `start()` takes a watcher whose directory is missing. These
+  looks are taken outside the queue of `start()`, `stop()`, `pause()` and `resume()` calls, so a share that stopped
+  answering doesn't hold them. When a pause called after a failure while watching comes before the look at the file,
+  a removal of the file is reported on resume, while a file created or changed meanwhile is taken as it is.
+- Any other failure of the watcher of the directory, such as its event queue overflowing under heavy activity in the
+  directory, doesn't stop it either: the directory is watched again from the next whole second on, and a `stat()` of
+  the file then reports what changed meanwhile, `DELETED`, `CREATED`, or `MODIFIED` when its size, times, device or
+  inode differ from the last look the watcher took, when it started or last recovered. As events may have been lost, a
+  change already reported may be reported again as `MODIFIED`.
+- `errorCallback` only gets an error when the directory is there but can't be watched again, as when no inotify watch
+  is left: once until the directory is watched again, while the watcher keeps trying. Without an `errorCallback`,
+  nothing is thrown. `start()` rejects when the directory is there but can't be watched.
 
 ## Callback Argument
 

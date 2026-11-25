@@ -9,8 +9,9 @@ const nsfw = require('nsfw');
  - **eventCallback**: callback that will be fired when NSFW has change events
  - **options**
    - **debounceMS**: time in milliseconds to debounce the event callback
-   - **errorCallback**: callback to fire in the case of errors, including an overflow of the inotify event queue on
-     Linux, which means events were lost
+   - **errorCallback**: callback to fire in the case of errors, including, for a watched directory, an overflow of the
+     inotify event queue on Linux, which means events were lost. A watched file only reports a directory that is there
+     but can't be watched again, see [Watching a single file](../README.md#watching-a-single-file)
    - **excludedPaths**: array of absolute paths inside **watchPath** whose events are not reported; the ones outside
      it are ignored, see [excluded paths](#excluded-paths)
 

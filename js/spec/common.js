@@ -15,21 +15,23 @@ exports.it = (name, options, fn) => typeof options === 'function' ?
   test.it(name, { timeout: 120000 }, options) : test.it(name, { timeout: 120000, ...options }, fn);
 exports.it.skip = test.it.skip;
 
-// The inotify watches this process holds (Linux).
-exports.countInotifyWatches = function() {
-  let count = 0;
+// What read() returns for each descriptor this process holds (Linux), skipping those closed meanwhile.
+exports.readDescriptors = function(read) {
+  const results = [];
   for (const fd of fs.readdirSync('/proc/self/fd')) {
-    let info;
     try {
-      info = fs.readFileSync(`/proc/self/fdinfo/${fd}`, 'utf8');
+      results.push(read(Number(fd)));
     } catch (error) {
       // Closed meanwhile.
-      continue;
+      if (error.code !== 'ENOENT') throw error;
     }
-    count += (info.match(/^inotify wd:/gm) || []).length;
   }
-  return count;
+  return results;
 };
+
+// The inotify watches this process holds (Linux).
+exports.countInotifyWatches = () => exports.readDescriptors(fd => fs.readFileSync(`/proc/self/fdinfo/${fd}`, 'utf8'))
+  .reduce((count, info) => count + (info.match(/^inotify wd:/gm) || []).length, 0);
 
 // Polls predicate() until it holds or timeout runs out, and returns whether it held.
 exports.eventually = async function(predicate, { timeout, interval = 25 }) {

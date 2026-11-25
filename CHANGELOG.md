@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- On Linux, a watcher whose root couldn't be watched closed its inotify descriptor twice: once when `start()` failed
+  and again when it was released, by then possibly a file or socket another part of the process had opened under the
+  same number (#274). A `start()` that failed with an exception no longer leaves the descriptor and its watches
+  behind, and the descriptor is no longer inherited by child processes.
+
 ## 3.1.1
 
 ### Fixed

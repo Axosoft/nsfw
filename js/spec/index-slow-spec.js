@@ -5,7 +5,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 
 const {
-  DEBOUNCE, WORKDIR: workDir, it, mkdirp, remove, sleep
+  DEBOUNCE, WORKDIR: workDir, countInotifyWatches, it, mkdirp, readDescriptors, remove, sleep
 } = require('./common');
 
 const nsfw = require('../dist');
@@ -191,5 +191,51 @@ describe('Node Sentinel File Watcher (slow)', function() {
     });
   });
 
+  // Linux only, like the inotify errors above.
+  describe('Inotify descriptor', { skip: process.platform !== 'linux' }, function() {
+    it('leaves a descriptor that took its number alone when the root fails to watch', async function() {
+      // With this file next to the root, the slow build opens it right after closing the inotify descriptor of a root
+      // that failed to watch, as another thread could have, so it gets the number of that descriptor.
+      const root = path.join(workDir, 'removed');
+      // As the descriptors show it: nsfw() resolves the root's path.
+      const marker = path.join(fs.realpathSync(workDir), 'nsfw-test-take-closed-inotify');
+      await fsp.writeFile(marker, '');
+      await fsp.mkdir(root);
+      const markerDescriptors = () => readDescriptors(fd => [fd, fs.readlinkSync(`/proc/self/fd/${fd}`)])
+        .filter(([, target]) => target === marker).map(([fd]) => fd);
+      const watch = await nsfw(root, () => {}, { debounceMS: DEBOUNCE });
+      await remove(root);
+      try {
+        await assert.rejects(watch.start(), /unable to start watching/);
+
+        assert.strictEqual(markerDescriptors().length, 1, 'The descriptor that took the closed number was closed');
+      } finally {
+        markerDescriptors().forEach(fd => fs.closeSync(fd));
+        await watch.stop().catch(() => {});
+      }
+    });
+
+    it('releases the descriptor and its watches when starting throws', async function() {
+      // With this file in the root, the slow build throws once the tree holds its watches, as running out of memory
+      // there would.
+      const root = path.join(workDir, 'throwing');
+      await mkdirp(path.join(root, 'a', 'b'));
+      await fsp.writeFile(path.join(root, 'nsfw-test-throw-before-loop'), '');
+      const countInstances = () => readDescriptors(fd => fs.readlinkSync(`/proc/self/fd/${fd}`))
+        .filter(target => target === 'anon_inode:inotify').length;
+      const watch = await nsfw(root, () => {}, { debounceMS: DEBOUNCE });
+      const instances = countInstances();
+      const watches = countInotifyWatches();
+
+      try {
+        await assert.rejects(watch.start(), /unable to start watching/);
+
+        assert.strictEqual(countInstances(), instances, 'The inotify descriptor leaked');
+        assert.strictEqual(countInotifyWatches(), watches, 'The inotify watches leaked');
+      } finally {
+        await watch.stop().catch(() => {});
+      }
+    });
+  });
 
 });

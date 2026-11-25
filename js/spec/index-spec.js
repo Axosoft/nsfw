@@ -291,6 +291,33 @@ describe('Node Sentinel File Watcher', function() {
       });
     }
 
+    // Windows reports as a rename only an entry that stays in its directory, so this only pins the shape of the event:
+    // both directories of a rename within one directory. macOS reports a rename as a removal and a creation, or as a
+    // rename, depending on timing.
+    it('reports the old and the new directory of a directory renamed in a subdirectory', async function(t) {
+      if (process.platform === 'darwin') return t.skip();
+      const inPath = path.join(workDir, 'test4', 'folder4');
+      const events = [];
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await fsp.mkdir(path.join(inPath, 'before'));
+        await watch.start();
+        await fsp.rename(path.join(inPath, 'before'), path.join(inPath, 'after'));
+        await barrier(events, workDir);
+        // Windows also reports a renamed entry as modified.
+        assert.deepStrictEqual(
+          events.filter(event => event.action !== nsfw.actions.MODIFIED &&
+            [event.file, event.oldFile, event.newFile].some(name => name === 'before' || name === 'after')),
+          [{ action: nsfw.actions.RENAMED, directory: inPath, oldFile: 'before', newDirectory: inPath,
+            newFile: 'after' }]
+        );
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     it('can listen for a move event', async function() {
       const file = 'testing.file';
       const srcInPath = path.resolve(workDir, 'test4', 'src');

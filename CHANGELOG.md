@@ -32,6 +32,9 @@
   `Service shutdown unexpectedly` alone. A read that completed without writing anything, which means that more
   changed than its buffer holds, is reported as `Buffer filled up and service needs a restart`, which stops the
   watcher as when the system reports the overflow itself, instead of reporting the events of an earlier read again.
+- On Windows, a `RENAMED` event takes its `newDirectory` from the new path, not from the old one (#150). Windows reports
+  as a rename only an entry that stays in its directory, so both were the same in the events seen so far; a move to
+  another directory is still reported as `DELETED` and `CREATED`.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

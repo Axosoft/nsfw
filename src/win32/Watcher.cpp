@@ -422,7 +422,7 @@ void Watcher::handleEvents() {
               RENAMED,
               getUTF8Directory(fileName),
               getUTF8FileName(fileName),
-              getUTF8Directory(fileName),
+              getUTF8Directory(fileNameNew),
               getUTF8FileName(fileNameNew)
             );
           } else {

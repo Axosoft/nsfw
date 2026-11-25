@@ -2,9 +2,11 @@
 // Installs the packed package into an empty project without a lockfile, the way a consumer runs `npm install nsfw`,
 // so every dependency range resolves to its latest match instead of the versions pinned by pnpm-lock.yaml. Then loads
 // the addon and watches a directory, to prove that it works.
-// Usage: node js/scripts/fresh-install-test.js prebuilt|source
+// Usage: node js/scripts/fresh-install-test.js prebuilt|source [<tarball>|nsfw@<version>]
 // prebuilt expects the binary for this platform packed in prebuilds/ to load without compiling anything, and source
-// expects the install script to compile one, as on a platform without a prebuilt binary.
+// expects the install script to compile one, as on a platform without a prebuilt binary. The package installed is the
+// repository packed with npm pack, or else the tarball given, such as the one the release workflow publishes, or a
+// version published on npm.
 const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -15,7 +17,7 @@ const timeoutMS = 30000;
 const expectations = ['prebuilt', 'source'];
 
 // The addon is loaded in a child process: Windows can't delete a loaded nsfw.node, so the parent couldn't clean up.
-const run = process.argv[2] === '--watch' ? watch(...process.argv.slice(3)) : main(process.argv[2]);
+const run = process.argv[2] === '--watch' ? watch(...process.argv.slice(3)) : main(process.argv[2], process.argv[3]);
 run.catch(error => {
   console.error(error);
   process.exit(1);
@@ -23,11 +25,13 @@ run.catch(error => {
 
 /**
  * @param {string} expected prebuilt or source.
+ * @param {string} [packageSpec] A tarball or nsfw@<version>; the repository packed when left out.
  * @returns {Promise<void>} ...
  */
-async function main(expected) {
+async function main(expected, packageSpec) {
   if (!expectations.includes(expected)) {
-    throw new Error(`Usage: node ${path.relative(repoRoot, __filename)} ${expectations.join('|')}`);
+    throw new Error(`Usage: node ${path.relative(repoRoot, __filename)} ${expectations.join('|')} ` +
+      '[<tarball>|nsfw@<version>]');
   }
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nsfw-fresh-install-'));
   try {
@@ -37,23 +41,21 @@ async function main(expected) {
     fs.mkdirSync(watchDir);
     console.log(`node ${process.version}, npm ${exec('npm --version', repoRoot).trim()}, project in ${projectDir}`);
 
-    // The destination goes through the environment, so no path has to be quoted for the shell, and the tarball is
-    // the only file in projectDir, so its name doesn't have to be parsed from npm's output.
-    exec('npm pack', repoRoot, { stdio: 'inherit', env: { ...process.env, npm_config_pack_destination: projectDir } });
-    const tarball = fs.readdirSync(projectDir).find(name => name.endsWith('.tgz'));
-    if (!tarball) {
-      throw new Error(`npm pack wrote no tarball to ${projectDir}`);
-    }
-
+    const fromRegistry = Boolean(packageSpec?.startsWith('nsfw@'));
+    const tarball = fromRegistry ? null : packageSpec ? copyTarball(packageSpec, projectDir) : packRepository(projectDir);
+    const dependency = fromRegistry ? packageSpec.slice('nsfw@'.length) : `file:${tarball}`;
     fs.writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify({
       name: 'nsfw-fresh-install',
       version: '1.0.0',
       private: true,
-      dependencies: { nsfw: `file:${tarball}` },
-      // npm 12 skips dependency install scripts unless allowed here, and matches a local tarball by its exact spec.
-      // Older npm ignores the field and always runs them. A prebuilt binary must load either way, so only the source
-      // build allows them.
-      ...expected === 'source' && { allowScripts: { [`file:${tarball}`]: true }, devDependencies: selectedNodeGyp() }
+      dependencies: { nsfw: dependency },
+      // npm 12 skips dependency install scripts unless allowed here, and matches a local tarball by its exact spec, a
+      // registry package by its name. Older npm ignores the field and always runs them. A prebuilt binary must load
+      // either way, so only the source build allows them.
+      ...expected === 'source' && {
+        allowScripts: { [fromRegistry ? 'nsfw' : dependency]: true },
+        devDependencies: selectedNodeGyp()
+      }
     }, null, 2));
 
     exec('npm install --no-package-lock --no-audit --no-fund --foreground-scripts', projectDir, { stdio: 'inherit' });
@@ -74,6 +76,32 @@ async function main(expected) {
       console.warn(`could not remove ${workDir}: ${error.message}`);
     }
   }
+}
+
+/**
+ * @param {string} projectDir ...
+ * @returns {string} The name of the tarball npm pack wrote there.
+ */
+function packRepository(projectDir) {
+  // The destination goes through the environment, so no path has to be quoted for the shell, and the tarball is
+  // the only file in projectDir, so its name doesn't have to be parsed from npm's output.
+  exec('npm pack', repoRoot, { stdio: 'inherit', env: { ...process.env, npm_config_pack_destination: projectDir } });
+  const tarball = fs.readdirSync(projectDir).find(name => name.endsWith('.tgz'));
+  if (!tarball) {
+    throw new Error(`npm pack wrote no tarball to ${projectDir}`);
+  }
+  return tarball;
+}
+
+/**
+ * @param {string} tarball ...
+ * @param {string} projectDir ...
+ * @returns {string} The name of its copy in projectDir.
+ */
+function copyTarball(tarball, projectDir) {
+  const name = path.basename(tarball);
+  fs.copyFileSync(tarball, path.join(projectDir, name));
+  return name;
 }
 
 /**

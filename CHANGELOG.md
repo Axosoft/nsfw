@@ -8,6 +8,10 @@ now ignored. On Linux, a watcher whose inotify queue overflows now stops with an
 silently.
 
 ### Added
+- Prebuilt binaries for Linux x64 and arm64 (glibc 2.28 or later, and musl), macOS x64 and arm64 (macOS 11 or later)
+  and Windows x64 and arm64, so installing nsfw on them needs no compiler toolchain, nor its install script to run.
+  On other platforms the install script still compiles the addon from source, and `--build-from-source` compiles it
+  on these too.
 - `excludedPatterns` option: glob patterns with `.gitignore` syntax, relative to the watched directory, whose matches
   are not reported. `updateExcludedPatterns()` replaces them while watching and `getExcludedPatterns()` returns them.
 - `respectGitignore` option: excludes what git ignores in the repository the watched directory is in (its
@@ -57,9 +61,12 @@ silently.
   "Unused '@ts-expect-error' directive"; drop the directive.
 - Breaking: `engines.node` is `>=22`, the Node releases tested, instead of `>=10.16.0`; Node 18 and 20 have reached
   end of life. `node-addon-api` is bounded to `^8.9.2` instead of `*`.
-- On macOS the addon is compiled as `gnu++17` with the deployment target of the Node or Electron headers it is built
-  against (macOS 11.0 for Node 22, 13.5 for Node 24 and 26) instead of C++11 and macOS 10.7. Linux and Windows keep
-  using the standard of the headers, C++17 or newer.
+- On macOS the addon is compiled as `gnu++17` for macOS 11.0, whatever the Node or Electron headers it is built
+  against, instead of C++11 and macOS 10.7. Linux and Windows keep using the standard of the headers, C++17 or newer.
+- The addon is loaded through `node-gyp-build`, which picks `build/Release/nsfw.node` when there is one and the
+  prebuilt binary for the platform in `prebuilds/` otherwise, instead of requiring `build/Release/nsfw.node`. A bundler
+  has to leave nsfw external, or copy `prebuilds/` along. The `install` script is `node-gyp-build`, which only compiles
+  when no prebuilt binary loads.
 - On Linux, an inotify event queue overflow fires `errorCallback` with `Inotify event queue overflowed, events were
   lost` and stops the watcher, like any other error. Before, the events past `fs.inotify.max_queued_events` (16384 by
   default) were dropped silently and the watcher kept running, possibly without watching the directories created in

@@ -1,5 +1,6 @@
 const cp = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 // NSFW_TEST_SUITE=slow|normal runs one suite, so CI can run them in parallel jobs; unset runs both. slow-1, slow-2 and
 // slow-3 split the slow suite into parts that take about as long, so CI can run those in parallel too.
@@ -20,10 +21,15 @@ if (!['all', 'slow', 'normal', ...slowSuites].includes(suite)) {
 const runsSlow = suite !== 'normal';
 const runsNormal = suite === 'all' || suite === 'normal';
 const slowFiles = slowSuites.includes(suite) ? slowParts[slowSuites.indexOf(suite)] : slowParts.flat();
+// NSFW_TEST_PREBUILT=1 runs the normal suite against the binary prebuildify left in prebuilds/ for this platform
+// instead of building one. The slow suite always builds its own, which only differs in the NSFW_TEST_SLOW define.
+const prebuilt = process.env.NSFW_TEST_PREBUILT === '1';
 
 // The specs load js/dist, so they never run against a stale build.
 require('./build');
 exec('tsc -p js/spec/types');
+// The release workflow takes the notes of each GitHub release from the changelog with this script.
+exec('node --test --test-reporter=dot js/scripts/release-notes-test.js');
 
 // One file at a time: the specs share the mockfs work directory.
 const nodeTest = 'node --test --test-concurrency=1 --test-force-exit --expose-gc --test-reporter=spec';
@@ -34,9 +40,20 @@ if (process.platform !== 'win32' && process.platform !== 'darwin') {
     exec('node-gyp rebuild', { env: { ...process.env, NSFW_TEST_SLOW: 1 } });
     exec(`${nodeTest} ${slowFiles.join(' ')}`);
   }
-  exec('node-gyp rebuild');
+  if (!prebuilt) {
+    exec('node-gyp rebuild');
+  }
 }
 if (runsNormal) {
+  if (prebuilt) {
+    // node-gyp-build loads build/Release first, so a local build would hide the prebuilt binary.
+    fs.rmSync('build', { recursive: true, force: true });
+    const binary = require('node-gyp-build').path('.');
+    console.log(`testing the prebuilt binary ${binary}`);
+    if (!binary.startsWith(path.resolve('prebuilds') + path.sep)) {
+      throw new Error(`NSFW_TEST_PREBUILT is set, but the addon would load ${binary}`);
+    }
+  }
   exec(`${nodeTest} js/spec/canonical-path-spec.js js/spec/index-spec.js js/spec/lifecycle-spec.js`);
 }
 

@@ -53,6 +53,9 @@
                     # reads clang from the headers' config.gypi (0 for Node 22 and 24), so the same Node built as
                     # gnu++20 or as Apple clang's C++14 default depending on the install route. napi.h needs C++17.
                     "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17", # -std=gnu++17
+                    # The oldest macOS the prebuilt binaries load on, which Node 22 needs too. Pinned so it doesn't
+                    # depend on the Node headers they are built against.
+                    "MACOSX_DEPLOYMENT_TARGET": "11.0", # -mmacosx-version-min=11.0
                 },
                 "link_settings": {
                     "xcode_settings": {

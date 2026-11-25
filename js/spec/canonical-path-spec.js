@@ -20,13 +20,15 @@ function platformWrapper(platform, files = {}, methods = {}) {
   const module = { exports: {} };
   vm.runInNewContext(source, {
     module,
+    __dirname: path.join(__dirname, '../dist'),
     process: { platform, emitWarning() {} },
     require(name) {
       if (name === 'path') return platform === 'win32' ? path.win32 : path.posix;
       if (name === 'fs') return { promises: {
         stat: async () => ({ dev: global.BigInt(1), ino: global.BigInt(1), isDirectory: () => true }), ...files
       } };
-      return Native;
+      if (name === 'node-gyp-build') return () => Native;
+      throw new Error(`unexpected require('${name}')`);
     }
   });
   return { nsfw: module.exports, native: () => native };

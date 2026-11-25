@@ -4,6 +4,7 @@
   "description": "A simple file watcher for Node",
   "main": "js/dist/index.js",
   "scripts": {
+    "install": "node-gyp-build",
     "build": "node js/scripts/build.js",
     "prepare": "node js/scripts/build.js",
     "lint": "oxlint js/src js/spec",
@@ -13,31 +14,35 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/axosoft/node-simple-file-watcher.git"
+    "url": "git+https://github.com/Axosoft/nsfw.git"
   },
   "author": "Axosoft, LLC",
   "types": "js/dist/index.d.ts",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
+    "url": "https://github.com/Axosoft/nsfw/issues"
   },
   "engines": {
     "node": ">=22"
   },
   "files": [
     "js/dist",
+    "prebuilds",
     "src",
     "includes",
     "binding.gyp"
   ],
-  "homepage": "https://github.com/axosoft/node-simple-file-watcher",
+  "homepage": "https://github.com/Axosoft/nsfw#readme",
   "dependencies": {
-    "node-addon-api": "^8.9.2"
+    "node-addon-api": "^8.9.2",
+    "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "^6.0.1",
     "@types/node": "^22.20.5",
+    "node-gyp": "^13.1.0",
     "oxlint": "^1.95.0",
+    "prebuildify": "^6.0.1",
     "typescript": "~7.0.2"
   },
   "keywords": [

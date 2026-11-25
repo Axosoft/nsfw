@@ -14,13 +14,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/axosoft/node-simple-file-watcher.git"
+    "url": "git+https://github.com/Axosoft/nsfw.git"
   },
   "author": "Axosoft, LLC",
   "types": "js/dist/index.d.ts",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/axosoft/node-simple-file-watcher/issues"
+    "url": "https://github.com/Axosoft/nsfw/issues"
   },
   "engines": {
     "node": ">=22"
@@ -32,7 +32,7 @@
     "includes",
     "binding.gyp"
   ],
-  "homepage": "https://github.com/axosoft/node-simple-file-watcher",
+  "homepage": "https://github.com/Axosoft/nsfw#readme",
   "dependencies": {
     "node-addon-api": "^8.9.2",
     "node-gyp-build": "^4.8.4"

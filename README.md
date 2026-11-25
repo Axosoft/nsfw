@@ -231,5 +231,24 @@ pnpm test
 ```
 
 `pnpm exec prebuildify --napi --strip` builds the binary for the current platform into `prebuilds/` (add `--tag-libc`
-on Linux), and `NSFW_TEST_PREBUILT=1 pnpm test` runs the tests against it instead of a build of its own. The release
-workflow builds every platform's binary in CI, tests them and publishes them with the package.
+on Linux), and `NSFW_TEST_PREBUILT=1 pnpm test` runs the tests against it instead of a build of its own.
+
+### Releasing
+1. Rename `## Unreleased` in `CHANGELOG.md` to `## X.Y.Z` (or `## X.Y.Z - YYYY-MM-DD`) and set `"version"` in
+   `package.json` to `X.Y.Z`, through a pull request.
+2. Tag the merge commit and push the tag:
+
+   ```sh
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+The [release workflow](.github/workflows/release.yaml) checks that the tag matches `package.json` and that the
+changelog has notes for the version, builds and tests the binaries for every platform, publishes the package to npm
+with provenance, and creates the GitHub release of the tag with those notes and the package attached. A version with a
+prerelease suffix (`X.Y.Z-beta.1`) goes to npm's `next` dist-tag and is marked as a prerelease. One older than npm's
+`latest`, a patch of an earlier major, goes to `latest-<major>` and doesn't become the latest release. Running the
+workflow by hand on a branch is a dry run, which shows the notes in its summary.
+
+npm has to trust the workflow first: on npmjs.com, add `Axosoft/nsfw` with the workflow `release.yaml` as a trusted
+publisher of nsfw, or else store a granular access token as the `NPM_TOKEN` secret of the repository.

@@ -28,6 +28,8 @@ const prebuilt = process.env.NSFW_TEST_PREBUILT === '1';
 // The specs load js/dist, so they never run against a stale build.
 require('./build');
 exec('tsc -p js/spec/types');
+// The release workflow takes the notes of each GitHub release from the changelog with this script.
+exec('node --test --test-reporter=dot js/scripts/release-notes-test.js');
 
 // One file at a time: the specs share the mockfs work directory.
 const nodeTest = 'node --test --test-concurrency=1 --test-force-exit --expose-gc --test-reporter=spec';

@@ -1,33 +1,111 @@
 name: Release
 
-# Publishing a GitHub release runs the whole test workflow, which builds the binaries for every platform and tests
-# them, then publishes to npm the package that workflow packed with them. Running it by hand does the same with
-# npm publish --dry-run.
+# Pushing a vX.Y.Z tag runs the whole test workflow, which builds the binaries for every platform and tests them,
+# publishes to npm the package that workflow packed with them, then creates the GitHub release of the tag, with the
+# package attached and the tag's CHANGELOG.md section as its notes. Running it by hand on a branch or tag does the same
+# as a dry run: npm publish --dry-run, and the notes in the run summary instead of a release.
 #
-# npm authenticates the publish through trusted publishing, which needs this workflow registered as a trusted
-# publisher of nsfw on npmjs.com, or else through an NPM_TOKEN secret.
+# npm authenticates the publish through trusted publishing, which needs this workflow, release.yaml in Axosoft/nsfw,
+# registered as a trusted publisher of nsfw on npmjs.com; or else through an NPM_TOKEN secret.
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A tag publishes once at a time; a run is never cancelled halfway through a publish. Not named after
+# github.workflow: tests.yaml, which this calls, would get the same group and wait for this run forever.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # Fails before the tests run when the tag and package.json disagree or the changelog has no notes for the version.
+  prepare:
+    name: "Prepare"
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dist-tag: ${{ steps.channel.outputs.dist-tag }}
+      latest: ${{ steps.channel.outputs.latest }}
+      prerelease: ${{ steps.channel.outputs.prerelease }}
+      dry-run: ${{ steps.version.outputs.dry-run }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check the version against the tag
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = push ]; then
+            echo "tag $TAG, package.json $version"
+            test "$TAG" = "v$version"
+            echo 'dry-run=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "dry run of $version from $TAG"
+            echo 'dry-run=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Take the release notes from the changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node js/scripts/release-notes.js "$VERSION" > release-notes.md
+          { echo "## nsfw $VERSION"; echo; cat release-notes.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      # A prerelease (1.2.3-beta.1) goes to the next dist-tag. A release older than the latest one, a patch of an
+      # earlier major, goes to latest-<major>, so it doesn't replace the latest release on npm nor on GitHub.
+      - name: Pick the npm dist-tag
+        id: channel
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          latest=$(npm view nsfw dist-tags.latest 2>/dev/null || true)
+          node - "$VERSION" "$latest" >> "$GITHUB_OUTPUT" <<'EOF'
+          const [version, latest] = process.argv.slice(2);
+          const parse = v => v.split('-')[0].split('.').map(Number);
+          const compare = (a, b) => a.map((part, i) => part - b[i]).find(difference => difference !== 0) || 0;
+          const older = Boolean(latest) && compare(parse(version), parse(latest)) < 0;
+          const prerelease = version.includes('-');
+          const distTag = prerelease ? 'next' : older ? `latest-${parse(version)[0]}` : 'latest';
+          console.log(`dist-tag=${distTag}`);
+          console.log(`prerelease=${prerelease}`);
+          console.log(`latest=${distTag === 'latest'}`);
+          console.error(`npm latest is ${latest || 'unset'}: ${version} goes to ${distTag}`);
+          EOF
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
   tests:
+    needs: prepare
     uses: ./.github/workflows/tests.yaml
 
   publish:
     name: "Publish to npm"
-    needs: tests
+    needs: [prepare, tests]
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
     steps:
-      # Trusted publishing needs npm 11.5 or later.
+      # Trusted publishing needs npm 11.5.1 or later.
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -37,18 +115,55 @@ jobs:
         with:
           name: package
 
-      - name: Check the version against the release tag
-        if: ${{ github.event_name == 'release' }}
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          version=$(tar -xzOf nsfw-*.tgz package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).version')
-          echo "release $TAG, package $version"
-          test "${TAG#v}" = "$version"
-
-      # A prerelease goes to the next dist-tag, so it doesn't become what `npm install nsfw` installs.
+      # A run retried after the publish went through, for the GitHub release, skips it.
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          DIST_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
-        run: npm publish ./nsfw-*.tgz --access public --tag "$DIST_TAG" ${{ github.event_name != 'release' && '--dry-run' || '' }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DIST_TAG: ${{ needs.prepare.outputs.dist-tag }}
+          DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
+        run: |
+          test "$(tar -xzOf nsfw-*.tgz package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).version')" = "$VERSION"
+          if [ "$DRY_RUN" = false ] && [ "$(npm view "nsfw@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "::notice::nsfw@$VERSION is already on npm"
+            exit 0
+          fi
+          if [ "$DRY_RUN" = true ]; then
+            set -- --dry-run
+          fi
+          npm publish ./nsfw-*.tgz --access public --provenance --tag "$DIST_TAG" "$@"
+
+  github-release:
+    name: "Create the GitHub release"
+    needs: [prepare, publish]
+    if: ${{ needs.prepare.outputs.dry-run == 'false' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+
+      # Updates the release instead when a retried run finds it, or one was drafted by hand.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          LATEST: ${{ needs.prepare.outputs.latest }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md --draft=false \
+              --prerelease="$PRERELEASE" --latest="$LATEST"
+            gh release upload "$TAG" nsfw-*.tgz --clobber
+          else
+            gh release create "$TAG" nsfw-*.tgz --verify-tag --title "$TAG" --notes-file release-notes.md \
+              --prerelease="$PRERELEASE" --latest="$LATEST"
+          fi

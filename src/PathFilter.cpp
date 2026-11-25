@@ -381,6 +381,25 @@ bool PathFilter::isRemovalIgnored(const std::string &directory, const std::strin
   return judge(directory, name, kind, true, false, NULL);
 }
 
+bool PathFilter::isDirectoryIgnored(const std::string &directory, const std::string &name) {
+  std::string path;
+  if (!mActive || !toEntry(directory, name, path)) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(mMutex);
+  return isAncestorIgnored(path, false) || isIgnoredBelowWatched(path, true);
+}
+
+// Nothing in an ignored directory can be included again, as in git.
+bool PathFilter::isAncestorIgnored(const std::string &path, bool tree) {
+  for (size_t slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
+    if (isIgnoredBelowWatched(path.substr(0, slash), true, tree)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool PathFilter::isReplacementIgnored(const std::string &directory, const std::string &name, Kind kind,
   bool &replacedReported) {
   replacedReported = false;
@@ -394,11 +413,8 @@ bool PathFilter::judge(const std::string &directory, const std::string &name, Ki
     return false;
   }
   std::lock_guard<std::mutex> lock(mMutex);
-  // Nothing in an ignored directory can be included again, as in git.
-  for (size_t slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
-    if (isIgnoredBelowWatched(path.substr(0, slash), true, tree)) {
-      return true;
-    }
+  if (isAncestorIgnored(path, tree)) {
+    return true;
   }
   const bool asFile = isIgnoredBelowWatched(path, false, tree);
   const bool asDirectory = isIgnoredBelowWatched(path, true, tree);
@@ -448,10 +464,8 @@ bool PathFilter::isChildIgnored(const std::string &directory, const std::string 
   std::lock_guard<std::mutex> lock(mMutex);
   if (mFilesDiverged || mPatternsDiverged) {
     // A directory the new rules ignore stays watched until they are applied: what is created in it meanwhile isn't.
-    for (size_t slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
-      if (isIgnoredBelowWatched(path.substr(0, slash), true, true)) {
-        return true;
-      }
+    if (isAncestorIgnored(path, true)) {
+      return true;
     }
   }
   return isIgnoredBelowWatched(path, isDirectory, true);

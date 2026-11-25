@@ -41,6 +41,18 @@
   read doesn't start with its new name, fails or overflows, or doesn't come in time. An old name followed by anything
   but its new name in the same read no longer makes the watcher skip that next change. A rename from an included path
   to a top-level one `excludedPaths` excludes is reported as `DELETED` instead of `RENAMED`, as for `excludedPatterns`.
+- On Windows, a directory that appears in the watched directory (moved in from outside it, moved from another directory
+  inside it, which Windows reports as a removal and a creation, or renamed from a path `excludedPaths`,
+  `excludedPatterns` or the ignore files exclude) has what it holds reported as `CREATED` too, after the directory
+  itself, as on Linux (#73); a directory that `excludedPaths` names deeper than the top level is itself reported, so its
+  rename to an included name stays a `RENAMED`, followed by what it holds. Before, only the directory was reported when
+  it was moved, so its files went unnoticed. The directories excluded by `excludedPaths`, `excludedPatterns` or the
+  ignore files are not looked into, and neither are symlinks and junctions, which the system doesn't watch through, nor
+  the directories whose entries a cloud provider hasn't brought locally, which listing them would fetch. A directory
+  copied in, whose entries Windows reports one by one, still has each reported once: the entries the scan of the
+  directory found are not reported again when their own creation comes in the next two reads of the system watcher;
+  a rename to one of them is reported as it comes, as on Linux. A `DELETED` or `RENAMED` for one of them in between, or
+  a read that fails, ends that, so that a later creation is reported.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

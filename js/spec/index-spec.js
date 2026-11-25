@@ -637,6 +637,56 @@ describe('Node Sentinel File Watcher', function() {
 
     }
 
+    // FSEvents reports a directory moved in, but not what it holds.
+    for (const how of ['moved', 'copied']) {
+      it(`reports once each entry of a directory ${how} into the watched one, but not the ignored ones`,
+        async function(t) {
+          if (process.platform === 'darwin' && how === 'moved') return t.skip();
+          const inPath = path.join(workDir, 'test4');
+          const source = path.join(workDir, 'test5', 'arriving');
+          const target = path.join(inPath, 'arriving');
+          const entries = ['a.file', 'sub', path.join('sub', 'b.file'), path.join('sub', 'deeper'),
+            path.join('sub', 'deeper', 'c.file')];
+          for (let i = 0; i < 50; i++) {
+            entries.push(path.join('sub', `file-${i}.file`));
+          }
+          for (const entry of entries) {
+            if (path.extname(entry) === '.file') {
+              await outputFile(path.join(source, entry), 'Arriving');
+            }
+          }
+          await outputFile(path.join(source, 'ignored', 'd.file'), 'Ignored');
+          await outputFile(path.join(source, 'sub', 'ignored.log'), 'Ignored');
+
+          const events = [];
+          let watch = await nsfw(inPath, batch => events.push(...batch),
+            { debounceMS: DEBOUNCE, excludedPatterns: ['/arriving/ignored/', '*.log'] });
+          try {
+            await watch.start();
+            if (how === 'moved') {
+              await fsp.rename(source, target);
+            } else {
+              await fsp.cp(source, target, { recursive: true });
+            }
+            await barrier(events, inPath);
+
+            let reported = events.filter(event => event.action !== nsfw.actions.MODIFIED &&
+              !(event.directory === inPath && event.file?.startsWith('barrier-')))
+              .map(event => `${event.action} ${path.relative(inPath, path.join(event.directory, event.file))}`);
+            // FSEvents can report a creation more than once, when it reports the flags of several events at a time.
+            if (process.platform === 'darwin') {
+              reported = [...new Set(reported)];
+            }
+            const expected = ['arriving', ...entries.map(entry => path.join('arriving', entry))]
+              .map(entry => `${nsfw.actions.CREATED} ${entry}`);
+            assert.deepStrictEqual(reported.sort(), expected.sort());
+          } finally {
+            await watch.stop();
+            watch = null;
+          }
+        });
+    }
+
     it('does not loop endlessly when watching directories with recursive symlinks', async function () {
       await fsp.mkdir(path.join(workDir, 'test'));
       await fsp.symlink(path.join(workDir, 'test'), path.join(workDir, 'test', 'link'));

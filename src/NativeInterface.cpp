@@ -9,6 +9,10 @@ NativeInterface::NativeInterface(const std::string &path, const std::vector<std:
   mQueue->setFilter(mFilter, true);
   // The Linux watcher also skips the directories it ignores, instead of watching them for nothing.
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter));
+#elif defined(_WIN32)
+  mQueue->setFilter(mFilter);
+  // The Windows watcher skips the directories it ignores when it reports what a directory that appeared holds.
+  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter));
 #else
   mQueue->setFilter(mFilter);
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths));

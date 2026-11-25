@@ -45,6 +45,16 @@ public:
 
   ~FSEventsService();
 private:
+  // One FSEvents event. inode: the file system object it is about, 0 when FSEvents didn't tell.
+  struct Event {
+    std::string path;
+    FSEventStreamEventFlags flags;
+    FSEventStreamEventId id;
+    uint64_t inode;
+  };
+
+  static bool readEventData(const void *data, std::string &path, uint64_t &inode);
+  void handle(const std::vector<Event> &events);
   void create(std::string path);
   void demangle(std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);
   void dispatch(EventType action, std::string path, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);

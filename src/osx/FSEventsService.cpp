@@ -67,53 +67,116 @@ void FSEventsServiceCallback(
   const FSEventStreamEventId eventIds[]
 ) {
   FSEventsService *eventsService = (FSEventsService *)clientCallBackInfo;
-  char **paths = (char **)eventPaths;
-  std::vector<std::string> renamedPaths;
-  std::map<std::string, PathFilter::Kind> renamedKinds;
+  CFArrayRef eventData = (CFArrayRef)eventPaths;
+  std::vector<FSEventsService::Event> events;
+  events.reserve(numEvents);
   for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
     if (eventIds[i] == 0 && (eventFlags[i] & kFSEventStreamEventFlagRootChanged) == kFSEventStreamEventFlagRootChanged) {
       eventsService->mRootChanged = true;
       eventsService->mQueue->wake(EventQueue::WAKE_ERROR);
       break;
     }
-    // FSEvents can't watch a single level: dropped before anything below costs a stat() or a filter lookup.
-    if (eventsService->isOutsideChildren(paths[i])) {
+    FSEventsService::Event event;
+    if (!FSEventsService::readEventData(CFArrayGetValueAtIndex(eventData, i), event.path, event.inode)) {
       continue;
     }
-    bool isCreated = (eventFlags[i] & kFSEventStreamEventFlagItemCreated) == kFSEventStreamEventFlagItemCreated;
-    bool isRemoved = (eventFlags[i] & kFSEventStreamEventFlagItemRemoved) == kFSEventStreamEventFlagItemRemoved;
-    bool isModified = (eventFlags[i] & kFSEventStreamEventFlagItemModified) == kFSEventStreamEventFlagItemModified ||
-                      (eventFlags[i] & kFSEventStreamEventFlagItemInodeMetaMod) == kFSEventStreamEventFlagItemInodeMetaMod ||
-                      (eventFlags[i] & kFSEventStreamEventFlagItemFinderInfoMod) == kFSEventStreamEventFlagItemFinderInfoMod ||
-                      (eventFlags[i] & kFSEventStreamEventFlagItemChangeOwner) == kFSEventStreamEventFlagItemChangeOwner ||
-                      (eventFlags[i] & kFSEventStreamEventFlagItemXattrMod) == kFSEventStreamEventFlagItemXattrMod;
-    bool isRenamed = (eventFlags[i] & kFSEventStreamEventFlagItemRenamed) == kFSEventStreamEventFlagItemRenamed;
+    if (eventsService->isOutsideChildren(event.path.c_str())) {
+      continue;
+    }
+    if (eventsService->isExcluded(event.path)) {
+      continue;
+    }
+    event.flags = eventFlags[i];
+    event.id = eventIds[i];
+    events.push_back(std::move(event));
+  }
+  eventsService->handle(events);
+}
 
-    // What a removed entry was, which the filter can't look up anymore. Not when the flags coalesce two entries. A
-    // symlink counts as a directory, which it most often leads to, as the filter follows it when it can, so its
-    // removal is judged like its creation was.
-    const bool isDirectory = (eventFlags[i] & kFSEventStreamEventFlagItemIsDir) != 0;
-    const bool isFile = (eventFlags[i] & kFSEventStreamEventFlagItemIsFile) != 0;
-    const bool isSymlink = (eventFlags[i] & kFSEventStreamEventFlagItemIsSymlink) != 0;
-    const PathFilter::Kind kind = isSymlink ? PathFilter::Kind::DIRECTORY : isDirectory == isFile ?
+namespace {
+  bool toUTF8(CFStringRef string, std::string &utf8) {
+    const char *direct = CFStringGetCStringPtr(string, kCFStringEncodingUTF8);
+    if (direct != NULL) {
+      utf8 = direct;
+      return true;
+    }
+    const CFIndex size = CFStringGetMaximumSizeForEncoding(CFStringGetLength(string), kCFStringEncodingUTF8) + 1;
+    std::vector<char> buffer(size);
+    if (!CFStringGetCString(string, buffer.data(), size, kCFStringEncodingUTF8)) {
+      return false;
+    }
+    utf8 = buffer.data();
+    return true;
+  }
+
+  // What a removed entry was, which the filter can't look up anymore. Not when the flags coalesce two entries. A
+  // symlink counts as a directory, which it most often leads to, as the filter follows it when it can, so its
+  // removal is judged like its creation was.
+  PathFilter::Kind kindOf(FSEventStreamEventFlags flags) {
+    const bool isDirectory = (flags & kFSEventStreamEventFlagItemIsDir) != 0;
+    const bool isFile = (flags & kFSEventStreamEventFlagItemIsFile) != 0;
+    const bool isSymlink = (flags & kFSEventStreamEventFlagItemIsSymlink) != 0;
+    return isSymlink ? PathFilter::Kind::DIRECTORY : isDirectory == isFile ?
       PathFilter::Kind::UNKNOWN : (isDirectory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE);
-    if(!eventsService->isExcluded(paths[i])) {
-      if (isCreated && !(isRemoved || isModified || isRenamed)) {
-        eventsService->create(paths[i]);
-      } else if (isRemoved && !(isCreated || isModified || isRenamed)) {
-        eventsService->remove(paths[i], kind);
-      } else if (isModified && !(isCreated || isRemoved || isRenamed)) {
-        eventsService->modify(paths[i]);
-      } else if (isRenamed && !(isCreated || isModified || isRemoved)) {
-        renamedPaths.push_back(paths[i]);
-        renamedKinds[paths[i]] = kind;
-      } else {
-        eventsService->demangle(paths[i], kind);
-      }
+  }
+}
+
+// data: an extended data dictionary, or the bare path when the system doesn't give one.
+bool FSEventsService::readEventData(const void *data, std::string &path, uint64_t &inode) {
+  inode = 0;
+  if (data == NULL) {
+    return false;
+  }
+  CFStringRef pathRef = NULL;
+  if (CFGetTypeID(data) == CFDictionaryGetTypeID()) {
+    CFDictionaryRef dictionary = (CFDictionaryRef)data;
+    const void *pathValue = CFDictionaryGetValue(dictionary, kFSEventStreamEventExtendedDataPathKey);
+    if (pathValue != NULL && CFGetTypeID(pathValue) == CFStringGetTypeID()) {
+      pathRef = (CFStringRef)pathValue;
+    }
+    const void *inodeValue = CFDictionaryGetValue(dictionary, kFSEventStreamEventExtendedFileIDKey);
+    int64_t fileID;
+    if (
+      inodeValue != NULL && CFGetTypeID(inodeValue) == CFNumberGetTypeID() &&
+      CFNumberGetValue((CFNumberRef)inodeValue, kCFNumberSInt64Type, &fileID)
+    ) {
+      inode = (uint64_t)fileID;
+    }
+  } else if (CFGetTypeID(data) == CFStringGetTypeID()) {
+    pathRef = (CFStringRef)data;
+  }
+  return pathRef != NULL && toUTF8(pathRef, path);
+}
+
+void FSEventsService::handle(const std::vector<Event> &events) {
+  std::vector<std::string> renamedPaths;
+  std::map<std::string, PathFilter::Kind> renamedKinds;
+  for (const Event &event : events) {
+    const FSEventStreamEventFlags flags = event.flags;
+    bool isCreated = (flags & kFSEventStreamEventFlagItemCreated) == kFSEventStreamEventFlagItemCreated;
+    bool isRemoved = (flags & kFSEventStreamEventFlagItemRemoved) == kFSEventStreamEventFlagItemRemoved;
+    bool isModified = (flags & kFSEventStreamEventFlagItemModified) == kFSEventStreamEventFlagItemModified ||
+                      (flags & kFSEventStreamEventFlagItemInodeMetaMod) == kFSEventStreamEventFlagItemInodeMetaMod ||
+                      (flags & kFSEventStreamEventFlagItemFinderInfoMod) == kFSEventStreamEventFlagItemFinderInfoMod ||
+                      (flags & kFSEventStreamEventFlagItemChangeOwner) == kFSEventStreamEventFlagItemChangeOwner ||
+                      (flags & kFSEventStreamEventFlagItemXattrMod) == kFSEventStreamEventFlagItemXattrMod;
+    bool isRenamed = (flags & kFSEventStreamEventFlagItemRenamed) == kFSEventStreamEventFlagItemRenamed;
+    const PathFilter::Kind kind = kindOf(flags);
+    if (isCreated && !(isRemoved || isModified || isRenamed)) {
+      create(event.path);
+    } else if (isRemoved && !(isCreated || isModified || isRenamed)) {
+      remove(event.path, kind);
+    } else if (isModified && !(isCreated || isRemoved || isRenamed)) {
+      modify(event.path);
+    } else if (isRenamed && !(isCreated || isModified || isRemoved)) {
+      renamedPaths.push_back(event.path);
+      renamedKinds[event.path] = kind;
+    } else {
+      demangle(event.path, kind);
     }
   }
-  if(!eventsService->mRootChanged) {
-    eventsService->rename(renamedPaths, renamedKinds);
+  if (!mRootChanged) {
+    rename(renamedPaths, renamedKinds);
   }
 }
 

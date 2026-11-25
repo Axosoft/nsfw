@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 3.0.0
 
-This needs a major release: Node 18 and 20 are no longer supported (`engines.node` is `>=22`). Behaviour changes in
-excluded paths too: calls that used to succeed can now reject, and paths that used to be forwarded to the watcher are
-now ignored. On Linux, a watcher whose inotify queue overflows now stops with an error instead of losing events
-silently.
+nsfw now ships prebuilt binaries for Linux, macOS and Windows on x64 and arm64, so installing it there needs no
+compiler toolchain. This is a major release, with breaking changes:
+- Node 18 and 20 are no longer supported (`engines.node` is `>=22`).
+- The addon is loaded through `node-gyp-build`, so a bundler has to leave nsfw external or copy `prebuilds/` along.
+- Excluded paths behave differently: calls that used to succeed can now reject, and paths that used to be forwarded
+  to the watcher are now ignored.
+- On Linux, a watcher whose inotify queue overflows now stops with an error instead of losing events silently.
 
 ### Added
 - Prebuilt binaries for Linux x64 and arm64 (glibc 2.28 or later, and musl), macOS x64 and arm64 (macOS 11 or later)
@@ -180,6 +183,14 @@ silently.
 - On Linux, a file created in a directory right after the directory itself is reported as `CREATED` once (#229).
   Before, when it was created between the directory being watched and being scanned, both the scan and its own event
   reported it.
+
+## 2.3.1
+
+### Security (development only)
+Yarn resolutions, which only apply to development installs: the code published is the same as 2.3.0's.
+- Force `flatted` ≥ 3.4.2 to fix prototype pollution (GHSA-rf6f-7fwh-wjgh)
+- Force `picomatch` ≥ 2.3.2 to fix method injection (GHSA-3v7f-55p6-f55p)
+- Force `serialize-javascript` ≥ 7.0.5 to fix CPU exhaustion (GHSA-qj8w-gfj5-8c6v)
 
 ## 2.3.0
 

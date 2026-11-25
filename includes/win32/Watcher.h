@@ -30,7 +30,7 @@ class Watcher
     void stop();
 
     void setError(const std::string &error);
-    void eventCallback(DWORD errorCode);
+    void eventCallback(DWORD errorCode, DWORD numBytes);
     void handleEvents();
     void reopenWathedFolder();
     void openParent();
@@ -63,6 +63,8 @@ class Watcher
     std::vector<std::wstring> mExcludedPaths;
 
     std::vector<BYTE> mReadBuffer, mWriteBuffer;
+    // Reads aborted in a row while running. Only used on the watcher thread.
+    unsigned mAbortedReads = 0;
     OVERLAPPED mOverlapped;
 
     // The watched directory's own watch reports nothing when it is renamed, its parent's does, see watchParent().

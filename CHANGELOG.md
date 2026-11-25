@@ -23,6 +23,16 @@
   junctions, symlinks and subst drives, and before each batch of events is handled. Only where that directory can't
   be watched does the watcher check the path once a second.
 
+### Fixed
+- On Windows, a read of the watched directory that was aborted (`ERROR_OPERATION_ABORTED`, as when its pending I/O is
+  cancelled) no longer stops the watcher with `Service shutdown unexpectedly`: while the watcher is stopping it is
+  ignored, otherwise the read is issued again, and only a third read aborted in a row is reported (#16). The other
+  unexpected failures say why: `Service shutdown unexpectedly: <system message> (Windows error <code>)`, for example
+  `Service shutdown unexpectedly: The specified network name is no longer available (Windows error 64)`, instead of
+  `Service shutdown unexpectedly` alone. A read that completed without writing anything, which means that more
+  changed than its buffer holds, is reported as `Buffer filled up and service needs a restart`, which stops the
+  watcher as when the system reports the overflow itself, instead of reporting the events of an earlier read again.
+
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to
   exclude directories or raise the limit, and why nsfw doesn't fall back to polling.

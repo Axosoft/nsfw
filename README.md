@@ -79,6 +79,9 @@ of a directory above it is noticed before the watcher handles any further batch 
 it delivers any further events, or within about 1 s while the watcher is idle. On Windows, a rename of the watched
 directory is noticed at once, or within about 1 s where the directory that holds it can't be watched. Events already
 being delivered when the rename happens may still reach `eventCallback` under the old path, before the error.
+On Windows an overflow of the system watcher's buffer, which also means events were lost, reads `Buffer filled up and
+service needs a restart`, and another unexpected failure of the system watcher reads
+`Service shutdown unexpectedly: <system message> (Windows error <code>)`.
 A directory watcher retires the failed run and releases that run's native resources before calling `errorCallback`.
 Errors queued by a run that has already been explicitly stopped or replaced are discarded.
 After fixing the cause (for example, recreating a deleted directory), call `start()` to watch again;

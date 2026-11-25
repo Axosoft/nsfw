@@ -85,6 +85,31 @@ std::string getUTF8FileName(std::wstring path) {
   return utf8Directory;
 }
 
+static const unsigned MAX_ABORTED_READS = 3;
+
+static std::string describeError(const std::string &message, DWORD errorCode) {
+  LPWSTR text = NULL;
+  const DWORD length = FormatMessageW(
+    FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+    NULL,
+    errorCode,
+    0,
+    reinterpret_cast<LPWSTR>(&text),
+    0,
+    NULL
+  );
+  std::wstring description = length == 0 ? std::wstring() : std::wstring(text, length);
+  LocalFree(text);
+  const auto last = description.find_last_not_of(L" .\r\n");
+  description.erase(last == std::wstring::npos ? 0 : last + 1);
+
+  std::string result = message + ": ";
+  if (!description.empty()) {
+    result += filterpaths::fromWide(description) + " ";
+  }
+  return result + "(Windows error " + std::to_string(errorCode) + ")";
+}
+
 Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
     const std::vector<std::wstring> &excludedPaths)
   : mRunning(false),
@@ -195,10 +220,11 @@ bool Watcher::pollDirectoryChanges() {
     &mOverlapped,
     [](DWORD errorCode, DWORD numBytes, LPOVERLAPPED overlapped) {
       auto watcher = reinterpret_cast<Watcher*>(overlapped->hEvent);
-      watcher->eventCallback(errorCode);
+      watcher->eventCallback(errorCode, numBytes);
     }))
   {
-    setError("Service shutdown unexpectedly");
+    const DWORD error = GetLastError();
+    setError(describeError("Service shutdown unexpectedly", error));
     return false;
   }
 
@@ -227,10 +253,11 @@ void Watcher::reopenWathedFolder() {
     CloseHandle(mDirectoryHandle);
     mDirectoryHandle = openDirectory(mPath);
     if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
+      const DWORD openError = GetLastError();
       if(GetFileAttributesW(mWatchedPath.data()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_PATH_NOT_FOUND) {
         setError("Service shutdown: root path changed (renamed or deleted)");
       } else {
-        setError("Service shutdown unexpectedly");
+        setError(describeError("Service shutdown unexpectedly", openError));
       }
       return;
     }
@@ -285,28 +312,43 @@ void Watcher::parentChanged(DWORD errorCode) {
   watchParent();
 }
 
-void Watcher::eventCallback(DWORD errorCode) {
+void Watcher::eventCallback(DWORD errorCode, DWORD numBytes) {
+  if (errorCode == ERROR_SUCCESS && numBytes == 0) {
+    // Nothing was written because more changed than the buffer holds: those changes are lost, as when the system says
+    // so with ERROR_NOTIFY_ENUM_DIR.
+    errorCode = ERROR_NOTIFY_ENUM_DIR;
+  }
   if (errorCode != ERROR_SUCCESS) {
-    if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
+    if (errorCode == ERROR_OPERATION_ABORTED) {
+      // CancelIo() or closing the handle aborted the read. Whoever did it while stopping wants no more reads, and no
+      // error either; if the watcher still runs, the read is issued again. Reads that keep being aborted are reported,
+      // instead of being issued again forever without a word.
+      if (isRunning()) {
+        if (++mAbortedReads < MAX_ABORTED_READS) {
+          pollDirectoryChanges();
+        } else {
+          setError(describeError("Service shutdown unexpectedly", errorCode));
+        }
+      }
+    } else if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
       setError("Buffer filled up and service needs a restart");
     } else if (errorCode == ERROR_INVALID_PARAMETER) {
       // resize the buffers because we're over the network, 64kb is the max buffer size for networked transmission
       resizeBuffers(64 * 1024);
 
-      if (!pollDirectoryChanges()) {
-        setError("failed resizing buffers for network traffic");
-      }
+      pollDirectoryChanges();
     } else if (errorCode == ERROR_ACCESS_DENIED) {
       // Access denied can happen when we try to delete the watched folder
       // In Windows Server 2019 and older the folder is not removed until folder handler is released
       // So the code will reopen the watched folder to release the handler and it will try to open it again
       reopenWathedFolder();
     } else {
-      setError("Service shutdown unexpectedly");
+      setError(describeError("Service shutdown unexpectedly", errorCode));
     }
     return;
   }
 
+  mAbortedReads = 0;
   std::swap(mWriteBuffer, mReadBuffer);
   pollDirectoryChanges();
   // Not under a path that leads elsewhere now: the run ends with the error, and the batch with it.

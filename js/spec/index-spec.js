@@ -663,6 +663,36 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('reports no error when stopped while changes are coming, and watches again once started', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const errors = [];
+      const events = [];
+      let watch = await nsfw(
+        inPath,
+        batch => events.push(...batch),
+        { debounceMS: DEBOUNCE, errorCallback(error) { errors.push(error); } }
+      );
+
+      try {
+        for (let run = 0; run < 20; run++) {
+          await watch.start();
+          // Stopping while these changes complete the pending read must neither report an error nor keep the next
+          // run from watching.
+          const writes = [];
+          for (let i = 0; i < 20; i++) {
+            writes.push(fsp.writeFile(path.join(inPath, `cancelled-${run}-${i}.file`), 'Cancelled'));
+          }
+          await Promise.all([watch.stop(), ...writes]);
+        }
+        await watch.start();
+        await barrier(events, inPath);
+        assert.deepStrictEqual(errors, []);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     it('Can pass falsy values to errorCallback', async function() {
       const ok = [undefined, null, 0, '', false];
       const notOk = [1, true, 'a', {}, []];

@@ -1,6 +1,22 @@
 #include "../../includes/osx/FSEventsService.h"
 #include <cstring>
 #include <iostream>
+#include <cerrno>
+#include <cstring>
+#include <iterator>
+#include <sys/attr.h>
+
+namespace {
+  // How many paths FSEventsService remembers it reported gone.
+  const size_t kGoneLimit = 4096;
+
+  // APFS can flag a clone separately from a creation. It can also flag the clone's source.
+  const FSEventStreamEventFlags kCreatedFlags = kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemCloned;
+
+  const FSEventStreamEventFlags kModifiedFlags = kFSEventStreamEventFlagItemModified |
+    kFSEventStreamEventFlagItemInodeMetaMod | kFSEventStreamEventFlagItemFinderInfoMod |
+    kFSEventStreamEventFlagItemChangeOwner | kFSEventStreamEventFlagItemXattrMod;
+}
 
 FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
   bool recursive):
@@ -8,6 +24,8 @@ FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string 
   mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
   mExcludedPaths = createExcludedPaths(excludedPaths);
   mRootExcluded = excludesRoot(mExcludedPaths);
+  clock_gettime(CLOCK_REALTIME, &mStartTime);
+  mStartEventId = FSEventsGetCurrentEventId();
 
   mRunLoop = new RunLoop(this, path);
 
@@ -46,7 +64,7 @@ void FSEventsService::releaseExcludedPaths(const std::vector<CFStringRef> &exclu
 bool FSEventsService::excludesRoot(const std::vector<CFStringRef> &excludedPaths) const {
   CFStringRef root = CFStringCreateWithCString(NULL, mPath.c_str(), kCFStringEncodingUTF8);
   if (root == NULL) return false;
-  const CFStringCompareFlags flags = mCaseSensitive ? kCFCompareLocalized : kCFCompareLocalized | kCFCompareCaseInsensitive;
+  const CFStringCompareFlags flags = pathCompareFlags();
   bool excluded = false;
   for (CFStringRef excludedPath : excludedPaths) {
     if (CFStringCompare(root, excludedPath, flags) == kCFCompareEqualTo) {
@@ -71,7 +89,8 @@ void FSEventsServiceCallback(
   std::vector<FSEventsService::Event> events;
   events.reserve(numEvents);
   for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
-    if (eventIds[i] == 0 && (eventFlags[i] & kFSEventStreamEventFlagRootChanged) == kFSEventStreamEventFlagRootChanged) {
+    const FSEventStreamEventFlags rootChanged = kFSEventStreamEventFlagRootChanged;
+    if (eventIds[i] == 0 && (eventFlags[i] & rootChanged) == rootChanged) {
       eventsService->mRootChanged = true;
       eventsService->mQueue->wake(EventQueue::WAKE_ERROR);
       break;
@@ -83,11 +102,17 @@ void FSEventsServiceCallback(
     if (eventsService->isOutsideChildren(event.path.c_str())) {
       continue;
     }
-    if (eventsService->isExcluded(event.path)) {
-      continue;
-    }
     event.flags = eventFlags[i];
     event.id = eventIds[i];
+    // A stream that starts now can still deliver the latest changes made before it started. Id 0 is about the
+    // stream or a volume, not a change of an entry.
+    if (event.id <= eventsService->mStartEventId) {
+      continue;
+    }
+    if (eventsService->isExcluded(event.path)) {
+      eventsService->noteExcluded(event);
+      continue;
+    }
     events.push_back(std::move(event));
   }
   eventsService->handle(events);
@@ -152,27 +177,14 @@ void FSEventsService::handle(const std::vector<Event> &events) {
   std::vector<std::string> renamedPaths;
   std::map<std::string, PathFilter::Kind> renamedKinds;
   for (const Event &event : events) {
-    const FSEventStreamEventFlags flags = event.flags;
-    bool isCreated = (flags & kFSEventStreamEventFlagItemCreated) == kFSEventStreamEventFlagItemCreated;
-    bool isRemoved = (flags & kFSEventStreamEventFlagItemRemoved) == kFSEventStreamEventFlagItemRemoved;
-    bool isModified = (flags & kFSEventStreamEventFlagItemModified) == kFSEventStreamEventFlagItemModified ||
-                      (flags & kFSEventStreamEventFlagItemInodeMetaMod) == kFSEventStreamEventFlagItemInodeMetaMod ||
-                      (flags & kFSEventStreamEventFlagItemFinderInfoMod) == kFSEventStreamEventFlagItemFinderInfoMod ||
-                      (flags & kFSEventStreamEventFlagItemChangeOwner) == kFSEventStreamEventFlagItemChangeOwner ||
-                      (flags & kFSEventStreamEventFlagItemXattrMod) == kFSEventStreamEventFlagItemXattrMod;
-    bool isRenamed = (flags & kFSEventStreamEventFlagItemRenamed) == kFSEventStreamEventFlagItemRenamed;
-    const PathFilter::Kind kind = kindOf(flags);
-    if (isCreated && !(isRemoved || isModified || isRenamed)) {
-      create(event.path);
-    } else if (isRemoved && !(isCreated || isModified || isRenamed)) {
-      remove(event.path, kind);
-    } else if (isModified && !(isCreated || isRemoved || isRenamed)) {
-      modify(event.path);
-    } else if (isRenamed && !(isCreated || isModified || isRemoved)) {
+    const bool isRenamed = (event.flags & kFSEventStreamEventFlagItemRenamed) != 0;
+    const bool isOther = (event.flags & (kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved |
+      kModifiedFlags)) != 0;
+    if (isRenamed && !isOther) {
       renamedPaths.push_back(event.path);
-      renamedKinds[event.path] = kind;
+      renamedKinds[event.path] = kindOf(event.flags);
     } else {
-      demangle(event.path, kind);
+      classify(event, kindOf(event.flags));
     }
   }
   if (!mRootChanged) {
@@ -192,12 +204,7 @@ bool FSEventsService::isExcluded(std::string filePath) {
     return false;
   }
   CFIndex lenDirectory = CFStringGetLength(fileDirectory);
-  CFStringCompareFlags flags;
-  if (!mCaseSensitive) {
-    flags = kCFCompareLocalized | kCFCompareCaseInsensitive;
-  } else {
-    flags = kCFCompareLocalized;
-  }
+  const CFStringCompareFlags flags = pathCompareFlags();
   bool excluded = false;
   {
     std::lock_guard<std::mutex> lock(mExcludedPathsLock);
@@ -239,22 +246,131 @@ bool FSEventsService::isOutsideChildren(const char *filePath) const {
   return length <= prefix || memchr(filePath + prefix, '/', length - prefix) != NULL;
 }
 
-void FSEventsService::create(std::string path) {
-  dispatch(CREATED, path);
+CFStringCompareFlags FSEventsService::pathCompareFlags() const {
+  return mCaseSensitive ? kCFCompareLocalized : kCFCompareLocalized | kCFCompareCaseInsensitive;
 }
 
-void FSEventsService::demangle(std::string path, PathFilter::Kind kind) {
-  struct stat file;
-  if (stat(path.c_str(), &file) != 0) {
-    remove(path, kind);
+bool FSEventsService::isSinceStart(const struct timespec &time) const {
+  if (time.tv_sec != mStartTime.tv_sec) {
+    return time.tv_sec > mStartTime.tv_sec;
+  }
+  // A volume that keeps whole seconds, like HFS+, can't tell within the second the stream started.
+  return time.tv_nsec == 0 || time.tv_nsec >= mStartTime.tv_nsec;
+}
+
+bool FSEventsService::readAddedTime(const std::string &path, uint64_t inode, struct timespec &added) const {
+  struct attrlist request{};
+  request.bitmapcount = ATTR_BIT_MAP_COUNT;
+  request.commonattr = ATTR_CMN_FILEID | ATTR_CMN_ADDEDTIME;
+  uint32_t length;
+  uint64_t found;
+  // Attribute values are packed on four-byte boundaries, even for the inode and timespec.
+  char buffer[sizeof(length) + sizeof(found) + sizeof(added)];
+  if (getattrlist(path.c_str(), &request, buffer, sizeof(buffer), FSOPT_NOFOLLOW) != 0) {
+    return false;
+  }
+  memcpy(&length, buffer, sizeof(length));
+  if (length != sizeof(buffer)) {
+    return false;
+  }
+  memcpy(&found, buffer + sizeof(length), sizeof(found));
+  memcpy(&added, buffer + sizeof(length) + sizeof(found), sizeof(added));
+  return found == inode && added.tv_sec != 0;
+}
+
+bool FSEventsService::appearedWhileWatching(const Event &event, const struct stat &file) const {
+  if (isSinceStart(file.st_birthtimespec)) {
+    return true;
+  }
+  if ((event.flags & kCreatedFlags) == 0 || (event.inode != 0 && event.inode != (uint64_t)file.st_ino)) {
+    return false;
+  }
+  // Backdating a copy's modification time can also backdate its birth time. Its addition time can still
+  // distinguish the destination from an older source that also received a clone flag.
+  struct timespec added;
+  if (readAddedTime(event.path, file.st_ino, added)) {
+    return isSinceStart(added);
+  }
+  return isSinceStart(file.st_ctimespec) && !isSinceStart(file.st_mtimespec);
+}
+
+// What an event that isn't part of a rename stands for. Its flags can hold those of earlier changes to the path,
+// reported or not, so they only tell that something changed there: what the watcher last reported at the path, and
+// whether the entry there now was born before watching, tell what.
+void FSEventsService::classify(const Event &event, PathFilter::Kind kind) {
+  const bool isCreated = (event.flags & kCreatedFlags) != 0;
+  const bool isRemoved = (event.flags & kFSEventStreamEventFlagItemRemoved) != 0;
+  const bool isModified = (event.flags & kModifiedFlags) != 0;
+  if (isModified && !isCreated && !isRemoved) {
+    modify(event.path);
     return;
   }
 
-  if (file.st_birthtimespec.tv_sec != file.st_mtimespec.tv_sec) {
-    modify(path);
-  } else {
-    create(path);
+  uint64_t reported = 0;
+  const bool known = lookUpReported(event.path, reported);
+  struct stat file;
+  if (lstat(event.path.c_str(), &file) != 0) {
+    if ((errno != ENOENT && errno != ENOTDIR) || wasReportedGone(event)) {
+      return;
+    }
+    // The name may already have changed when a creation arrives. Wait for evidence of removal or rename.
+    const bool hasCreation = (event.flags & kFSEventStreamEventFlagItemCreated) != 0;
+    if (!known && !isRemoved) {
+      if (hasCreation) {
+        rememberMissing(event.path, event.inode, true);
+      }
+      return;
+    }
+    const auto missing = mGone.find(event.path);
+    const bool wasCreated = missing != mGone.end() && missing->second.pendingCreation &&
+      (event.inode == 0 || missing->second.inode == 0 || event.inode == missing->second.inode);
+    if ((hasCreation || wasCreated) && !known) {
+      create(event.path, 0, kind);
+    }
+    remove(event.path, kind, known ? reported : event.inode);
+    return;
   }
+  if (known && reported == (uint64_t)file.st_ino) {
+    if (isModified || (!isCreated && !isRemoved)) {
+      modify(event.path);
+    }
+    return;
+  }
+  if (!known && !appearedWhileWatching(event, file)) {
+    if (isModified || isRemoved || (event.flags & kFSEventStreamEventFlagItemCreated) != 0) {
+      modify(event.path);
+    }
+    return;
+  }
+  if (known && isRemoved) {
+    remove(event.path, PathFilter::Kind::UNKNOWN);
+  }
+  create(event.path, file.st_ino);
+}
+
+// Notes an entry that appeared or left while excluded as if reported: once included again, what it already holds is
+// not reported, so a change to it is a modification.
+void FSEventsService::noteExcluded(const Event &event) {
+  const FSEventStreamEventFlags appearedOrLeft = kCreatedFlags |
+    kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed;
+  if ((event.flags & appearedOrLeft) == 0) {
+    return;
+  }
+  struct stat file;
+  if (lstat(event.path.c_str(), &file) != 0) {
+    noteReported(event.path, 0);
+  } else if ((event.flags & kFSEventStreamEventFlagItemRenamed) != 0 || appearedWhileWatching(event, file)) {
+    noteReported(event.path, file.st_ino);
+  }
+}
+
+void FSEventsService::create(const std::string &path, uint64_t inode, PathFilter::Kind kind) {
+  dispatch(CREATED, path, kind);
+  noteReported(path, inode);
+}
+
+void FSEventsService::demangle(std::string path, PathFilter::Kind kind) {
+  classify(Event{path, 0, 0, 0}, kind);
 }
 
 void FSEventsService::dispatch(EventType action, std::string path, PathFilter::Kind kind) {
@@ -288,11 +404,60 @@ void FSEventsService::modify(std::string path) {
   dispatch(MODIFIED, path);
 }
 
-void FSEventsService::remove(std::string path, PathFilter::Kind kind) {
+void FSEventsService::remove(std::string path, PathFilter::Kind kind, uint64_t inode) {
   dispatch(DELETED, path, kind);
+  noteGone(path, inode);
 }
 
-// kinds: what each path was, for one that is gone, see demangle().
+void FSEventsService::noteGone(const std::string &path, uint64_t inode) {
+  noteReported(path, 0);
+  rememberMissing(path, inode, false);
+}
+
+void FSEventsService::rememberMissing(const std::string &path, uint64_t inode, bool pendingCreation) {
+  forgetGone(path);
+  mGoneOrder.push_back(path);
+  mGone.emplace(path, GoneEntry{inode, pendingCreation, std::prev(mGoneOrder.end())});
+  if (mGoneOrder.size() > kGoneLimit) {
+    forgetGone(mGoneOrder.front());
+  }
+}
+
+void FSEventsService::forgetGone(const std::string &path) {
+  auto found = mGone.find(path);
+  if (found != mGone.end()) {
+    mGoneOrder.erase(found->second.position);
+    mGone.erase(found);
+  }
+}
+
+bool FSEventsService::wasReportedGone(const Event &event) const {
+  auto found = mGone.find(event.path);
+  return found != mGone.end() && !found->second.pendingCreation &&
+    (found->second.inode == 0 || event.inode == 0 || found->second.inode == event.inode);
+}
+
+bool FSEventsService::lookUpReported(const std::string &path, uint64_t &inode) {
+  auto found = mReported.find(path);
+  if (found == mReported.end()) {
+    return false;
+  }
+  inode = found->second;
+  return true;
+}
+
+void FSEventsService::noteReported(const std::string &path, uint64_t inode) {
+  if (inode != 0) {
+    mReported[path] = inode;
+    forgetGone(path);
+    return;
+  }
+  // What it held went with it. '0' follows '/'.
+  mReported.erase(path);
+  mReported.erase(mReported.lower_bound(path + "/"), mReported.lower_bound(path + "0"));
+}
+
+// kinds: what each path was, for one that is gone.
 void FSEventsService::rename(std::vector<std::string> &paths, const std::map<std::string, PathFilter::Kind> &kinds) {
   auto kindOf = [&kinds](const std::string &path) {
     auto found = kinds.find(path);
@@ -321,8 +486,12 @@ void FSEventsService::rename(std::vector<std::string> &paths, const std::map<std
 
       if (sideAExists && !sideBExists) {
         mQueue->enqueue(RENAMED, binIterator->first, sideB, binIterator->first, sideA);
+        noteReported(fullSideB, 0);
+        noteReported(fullSideA, renameSideA.st_ino);
       } else if (!sideAExists && sideBExists) {
         mQueue->enqueue(RENAMED, binIterator->first, sideA, binIterator->first, sideB);
+        noteReported(fullSideA, 0);
+        noteReported(fullSideB, renameSideB.st_ino);
       } else {
         demangle(fullSideA, kindOf(fullSideA));
         demangle(fullSideB, kindOf(fullSideB));

@@ -77,6 +77,13 @@
   directory found are not reported again when their own creation comes in the next two reads of the system watcher;
   a rename to one of them is reported as it comes, as on Linux. A `DELETED` or `RENAMED` for one of them in between, or
   a read that fails, ends that, so that a later creation is reported.
+- On macOS, a file created and then changed within the same second is reported as `CREATED` once and then
+  `MODIFIED` (#5). FSEvents repeats the flags of a path's earlier changes with each new one, and the watcher told a
+  creation from a change by whether the file was born and last modified in the same second. It now remembers the
+  entries it reported, while they are there, and otherwise looks at when the entry was born. An entry created shortly
+  before the watcher started can still be misreported.
+- On macOS, a file created and removed before the watcher handled it is reported as `CREATED` and then `DELETED`, as
+  on the other platforms, rather than as `DELETED` alone.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

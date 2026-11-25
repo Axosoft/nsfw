@@ -67,8 +67,7 @@ exports.barrier = async function(events, directory) {
     event.file === file, `creation of ${file}`);
 };
 
-// Waits until the clock is past the second of filePath's birth and last modification, so that a change made next
-// stands out from them: FSEvents tells a modification from a creation by the birth and modification seconds.
+// A later write lands in a different timestamp second, even on filesystems with whole-second precision.
 exports.untilNextSecond = async function(filePath) {
   const { birthtimeMs, mtimeMs } = await fs.promises.stat(filePath);
   const nextSecondMS = (Math.floor(Math.max(birthtimeMs, mtimeMs) / 1000) + 1) * 1000;

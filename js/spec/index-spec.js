@@ -208,6 +208,70 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('reports a file created and modified within the same second as created once', async function() {
+      const { CREATED, MODIFIED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test5');
+      const events = [];
+      const named = (action, file) => events.filter(event =>
+        event.action === action && event.directory === inPath && event.file === file);
+
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        // Both writes have to fall within one second, which a slow runner can miss: tried again from the start of
+        // the next one until they do.
+        let sameSecond = false;
+        for (let attempt = 0; attempt < 5 && !sameSecond; attempt++) {
+          const file = `created-then-modified-${attempt}.file`;
+          await sleep(1000 - Date.now() % 1000 + 10);
+          const writtenAt = Date.now();
+          await fsp.writeFile(path.join(inPath, file), 'Created');
+          await waitUntil(() => named(CREATED, file).length > 0,
+            { message: () => `No creation in ${JSON.stringify(events)}` });
+          await fsp.appendFile(path.join(inPath, file), ' and modified');
+          sameSecond = Math.floor(Date.now() / 1000) === Math.floor(writtenAt / 1000);
+          await waitUntil(() => named(MODIFIED, file).length > 0,
+            { message: () => `No modification in ${JSON.stringify(events)}` });
+          await barrier(events, workDir);
+          assert.equal(named(CREATED, file).length, 1, JSON.stringify(events));
+        }
+        assert.ok(sameSecond, 'The two writes never fell within one second');
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('reports a file created and removed at once as created before removed', async function() {
+      const { CREATED, DELETED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test8');
+      const file = 'short-lived.file';
+      const events = [];
+
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        await fsp.writeFile(path.join(inPath, file), 'Short-lived');
+        await fsp.unlink(path.join(inPath, file));
+        await barrier(events, workDir);
+        const actions = events.filter(event => event.directory === inPath && event.file === file)
+          .map(event => event.action);
+        if (process.platform === 'darwin') {
+          assert.deepStrictEqual(actions, [CREATED, DELETED], JSON.stringify(events));
+        } else {
+          // Some watchers see nothing of a file gone before they look.
+          const appearedAndLeft = actions.filter(action => action === CREATED || action === DELETED);
+          assert.ok(appearedAndLeft.length === 0 || isDeepStrictEqual(appearedAndLeft, [CREATED, DELETED]),
+            JSON.stringify(events));
+        }
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     if (process.platform !== 'darwin') {
       // this test is super flakey on CI right now
       it('can listen for a rename event', async function() {

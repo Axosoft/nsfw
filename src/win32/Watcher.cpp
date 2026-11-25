@@ -150,7 +150,13 @@ void Watcher::resizeBuffers(std::size_t size) {
 
 void Watcher::run() {
   while(mRunning) {
-    if (!mPollWatchedPath) {
+    // An old name that ended a read waits for its new name, which starts the next read and is due right away: when it
+    // doesn't come within a short wait, the old name is reported as removed.
+    if (!mPendingOldName.empty()) {
+      if (SleepEx(10, true) == 0) {
+        flushPendingRename();
+      }
+    } else if (!mPollWatchedPath) {
       SleepEx(INFINITE, true);
     } else if (SleepEx(1000, true) == 0 && mRunning && !hasError()) {
       checkWatchedPath();
@@ -319,6 +325,9 @@ void Watcher::eventCallback(DWORD errorCode, DWORD numBytes) {
     errorCode = ERROR_NOTIFY_ENUM_DIR;
   }
   if (errorCode != ERROR_SUCCESS) {
+    // What this read lost may be the new name of the pending rename, or the old name of another one whose new name
+    // starts the next read: the pending old name can't be paired anymore.
+    flushPendingRename();
     if (errorCode == ERROR_OPERATION_ABORTED) {
       // CancelIo() or closing the handle aborted the read. Whoever did it while stopping wants no more reads, and no
       // error either; if the watcher still runs, the read is issued again. Reads that keep being aborted are reported,
@@ -354,6 +363,8 @@ void Watcher::eventCallback(DWORD errorCode, DWORD numBytes) {
   // Not under a path that leads elsewhere now: the run ends with the error, and the batch with it.
   checkWatchedPath();
   if (hasError()) {
+    // The run ends: an old name left waiting is not reported once its error is.
+    mPendingOldName.clear();
     return;
   }
   handleEvents();
@@ -409,39 +420,28 @@ void Watcher::handleEvents() {
     PFILE_NOTIFY_INFORMATION info = (PFILE_NOTIFY_INFORMATION)base;
     std::wstring fileName = getWStringFileName(info->FileName, info->FileNameLength);
 
-    if (!isExcluded(fileName)) {
+    if (info->Action == FILE_ACTION_RENAMED_NEW_NAME && !mPendingOldName.empty()) {
+      handleRename(mPendingOldName, fileName);
+      mPendingOldName.clear();
+    } else {
+      flushPendingRename();
       switch (info->Action) {
-      case (FILE_ACTION_RENAMED_OLD_NAME):
-        if (info->NextEntryOffset != 0) {
-          base += info->NextEntryOffset;
-          info = (PFILE_NOTIFY_INFORMATION)base;
-          if (info->Action == FILE_ACTION_RENAMED_NEW_NAME) {
-            std::wstring fileNameNew = getWStringFileName(info->FileName, info->FileNameLength);
-
-            mQueue->enqueue(
-              RENAMED,
-              getUTF8Directory(fileName),
-              getUTF8FileName(fileName),
-              getUTF8Directory(fileNameNew),
-              getUTF8FileName(fileNameNew)
-            );
-          } else {
-            mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-          }
-        } else {
-          mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
-        }
+      case FILE_ACTION_RENAMED_OLD_NAME:
+        // Its new name follows, in this read or, when the old one ended it, at the start of the next one.
+        mPendingOldName = fileName;
         break;
       case FILE_ACTION_ADDED:
-      case FILE_ACTION_RENAMED_NEW_NAME: // in the case we just receive a new name and no old name in the buffer
-        mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+      case FILE_ACTION_RENAMED_NEW_NAME:
+        handleArrival(fileName);
         break;
       case FILE_ACTION_REMOVED:
-        mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        handleRemoval(fileName);
         break;
       case FILE_ACTION_MODIFIED:
       default:
-        mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        if (!isExcluded(fileName)) {
+          mQueue->enqueue(MODIFIED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+        }
       };
     }
 
@@ -449,6 +449,43 @@ void Watcher::handleEvents() {
       break;
     }
     base += info->NextEntryOffset;
+  }
+}
+
+void Watcher::handleArrival(const std::wstring &fileName) {
+  if (!isExcluded(fileName)) {
+    mQueue->enqueue(CREATED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+  }
+}
+
+void Watcher::handleRemoval(const std::wstring &fileName) {
+  if (!isExcluded(fileName)) {
+    mQueue->enqueue(DELETED, getUTF8Directory(fileName), getUTF8FileName(fileName));
+  }
+}
+
+void Watcher::handleRename(const std::wstring &oldFileName, const std::wstring &newFileName) {
+  const bool oldExcluded = isExcluded(oldFileName);
+  const bool newExcluded = isExcluded(newFileName);
+  if (oldExcluded) {
+    handleArrival(newFileName);
+  } else if (newExcluded) {
+    handleRemoval(oldFileName);
+  } else {
+    mQueue->enqueue(
+      RENAMED,
+      getUTF8Directory(oldFileName),
+      getUTF8FileName(oldFileName),
+      getUTF8Directory(newFileName),
+      getUTF8FileName(newFileName)
+    );
+  }
+}
+
+void Watcher::flushPendingRename() {
+  if (!mPendingOldName.empty()) {
+    handleRemoval(mPendingOldName);
+    mPendingOldName.clear();
   }
 }
 

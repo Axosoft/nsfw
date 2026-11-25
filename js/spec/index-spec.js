@@ -291,6 +291,47 @@ describe('Node Sentinel File Watcher', function() {
       });
     }
 
+    // A burst of renames fills reads up, so that the old name of some ends a read and their new name starts the next.
+    it('reports each rename of a burst as one rename', async function(t) {
+      if (process.platform === 'darwin') return t.skip();
+      const inPath = path.join(workDir, 'test4', 'burst');
+      const count = 2000;
+      const oldName = i => `old-name-of-a-file-renamed-in-a-burst-${i}.file`;
+      const newName = i => `new-name-of-a-file-renamed-in-a-burst-${i}.file`;
+      await fsp.mkdir(inPath);
+      for (let i = 0; i < count; i++) {
+        await fsp.writeFile(path.join(inPath, oldName(i)), '');
+      }
+
+      const events = [];
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+      try {
+        await watch.start();
+        for (let i = 0; i < count; i += 100) {
+          const renames = [];
+          for (let j = i; j < Math.min(i + 100, count); j++) {
+            renames.push(fsp.rename(path.join(inPath, oldName(j)), path.join(inPath, newName(j))));
+          }
+          await Promise.all(renames);
+        }
+        await barrier(events, workDir);
+
+        const expected = [];
+        for (let i = 0; i < count; i++) {
+          expected.push(`${nsfw.actions.RENAMED} ${inPath} ${oldName(i)} ${inPath} ${newName(i)}`);
+        }
+        // Windows also reports renamed files as modified.
+        const actual = events.filter(event => event.directory === inPath && event.action !== nsfw.actions.MODIFIED)
+          .map(event => event.action === nsfw.actions.RENAMED ?
+            `${event.action} ${event.directory} ${event.oldFile} ${event.newDirectory} ${event.newFile}` :
+            `${event.action} ${event.directory} ${event.file}`);
+        assert.deepStrictEqual(actual.sort(), expected.sort());
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     // Windows reports as a rename only an entry that stays in its directory, so this only pins the shape of the event:
     // both directories of a rename within one directory. macOS reports a rename as a removal and a creation, or as a
     // rename, depending on timing.

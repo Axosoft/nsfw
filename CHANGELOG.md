@@ -35,6 +35,12 @@
 - On Windows, a `RENAMED` event takes its `newDirectory` from the new path, not from the old one (#150). Windows reports
   as a rename only an entry that stays in its directory, so both were the same in the events seen so far; a move to
   another directory is still reported as `DELETED` and `CREATED`.
+- On Windows, a rename whose old name ends one read of the system watcher and whose new name starts the next is
+  reported as one `RENAMED`, as when both come in the same read, instead of `DELETED` for the old name and `CREATED`
+  for the new one (#26). The old name waits for the next read up to 10 ms, and is reported as `DELETED` when the next
+  read doesn't start with its new name, fails or overflows, or doesn't come in time. An old name followed by anything
+  but its new name in the same read no longer makes the watcher skip that next change. A rename from an included path
+  to a top-level one `excludedPaths` excludes is reported as `DELETED` instead of `RENAMED`, as for `excludedPatterns`.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

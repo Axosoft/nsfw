@@ -32,6 +32,10 @@ class Watcher
     void setError(const std::string &error);
     void eventCallback(DWORD errorCode, DWORD numBytes);
     void handleEvents();
+    void handleArrival(const std::wstring &fileName);
+    void handleRemoval(const std::wstring &fileName);
+    void handleRename(const std::wstring &oldFileName, const std::wstring &newFileName);
+    void flushPendingRename();
     void reopenWathedFolder();
     void openParent();
     void watchParent();
@@ -65,6 +69,8 @@ class Watcher
     std::vector<BYTE> mReadBuffer, mWriteBuffer;
     // Reads aborted in a row while running. Only used on the watcher thread.
     unsigned mAbortedReads = 0;
+    // The old name of a rename whose new name hasn't been read yet, empty if none. Only used on the watcher thread.
+    std::wstring mPendingOldName;
     OVERLAPPED mOverlapped;
 
     // The watched directory's own watch reports nothing when it is renamed, its parent's does, see watchParent().

@@ -30,7 +30,8 @@
     "prebuilds",
     "src",
     "includes",
-    "binding.gyp"
+    "binding.gyp",
+    "CHANGELOG.md"
   ],
   "homepage": "https://github.com/Axosoft/nsfw#readme",
   "dependencies": {

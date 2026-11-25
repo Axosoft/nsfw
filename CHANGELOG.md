@@ -23,6 +23,8 @@
   is left, `errorCallback` gets the error, once until the directory is watched again, and the watcher keeps trying;
   without an `errorCallback` nothing is thrown. `start()` still rejects when the directory is there but can't be
   watched. Directory watchers are unchanged.
+- Event batches and watcher errors still queued for JavaScript are freed when the Node environment tears down, as when a
+  `Worker` that watches a busy tree is terminated, or when the call that queues them fails. They used to leak (#273).
 
 ### Changed
 - A note on 3.1.0, which changed it without saying so (#265): the delivery thread no longer wakes up every 50 ms, so

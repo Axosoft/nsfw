@@ -286,8 +286,14 @@ async function updateExcludedPathsUnderLoad() {
 }
 
 // Many busy watchers in a worker that is terminated while they run: the poll threads must be gone before the
-// environment destroys the callbacks they use.
+// environment destroys the callbacks they use, and the event batches still queued for the worker must be freed with it.
+// Needs --expose-gc, which exposes the count of deliveries alive in the process.
 async function terminateBusyWorkers() {
+  const liveDeliveries = nsfw._native.getLiveDeliveryCount;
+  if (!liveDeliveries) {
+    throw new Error('run with --expose-gc, which exposes the count of deliveries alive in the process');
+  }
+  let terminatedWithPending = 0;
   let counter = 0;
   for (let i = 0; i < 15; i++) {
     const worker = new Worker(__filename, { workerData: ['busy-watchers', watchDir] });
@@ -299,9 +305,19 @@ async function terminateBusyWorkers() {
       }
     })();
     await sleep(20 + Math.floor(Math.random() * 60));
+    // Terminated while deliveries are alive, which the worker may otherwise have drained between two writes. Some
+    // workers see none at all for a while (FSEvents on macOS), so only all of them never seeing one fails.
+    for (let j = 0; j < 100 && liveDeliveries() === 0; j++) await sleep(10);
+    if (liveDeliveries() > 0) terminatedWithPending++;
     await worker.terminate();
     writing = false;
     await writer;
+  }
+  if (terminatedWithPending === 0) {
+    throw new Error('no worker was terminated with deliveries pending');
+  }
+  if (liveDeliveries() !== 0) {
+    throw new Error(`${liveDeliveries()} deliveries outlived the workers they were queued for`);
   }
 }
 

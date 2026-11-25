@@ -4,6 +4,34 @@
 #include <exception>
 #include <thread>
 
+namespace {
+  // The deliveries alive in the process, across every environment, so a test can tell that none outlives its
+  // environment.
+  std::atomic<int64_t> liveDeliveries{0};
+
+  struct DeliveryCount {
+    DeliveryCount() { liveDeliveries.fetch_add(1, std::memory_order_relaxed); }
+    ~DeliveryCount() { liveDeliveries.fetch_sub(1, std::memory_order_relaxed); }
+    DeliveryCount(const DeliveryCount &) = delete;
+    DeliveryCount &operator=(const DeliveryCount &) = delete;
+  };
+}
+
+struct NSFW::EventDelivery {
+  std::vector<std::unique_ptr<Event>> events;
+  // Set for a single-file watcher, whose events only go out if the queue is still at the epoch they were taken at.
+  std::shared_ptr<EventQueue> queue;
+  uint64_t epoch;
+  DeliveryCount count;
+};
+
+struct NSFW::ErrorDelivery {
+  std::string error;
+  NSFW *watcher;
+  uint64_t runId;
+  DeliveryCount count;
+};
+
 // One run of the watcher, from a successful start() until stop(), a watcher error or teardown. It owns the native interface, the
 // delivery thread and the thread-safe functions that thread calls, so a run is created and destroyed as one unit. The
 // delivery thread releases the thread-safe functions when it ends, whether stopped or after a watcher error, and only
@@ -14,8 +42,8 @@ class NSFW::Run {
       std::unique_ptr<NativeInterface> nativeInterface,
       std::shared_ptr<EventQueue> queue,
       uint32_t debounceMS,
-      Napi::ThreadSafeFunction eventCallback,
-      Napi::ThreadSafeFunction errorCallback,
+      EventCallback eventCallback,
+      ErrorCallback errorCallback,
       NSFW *watcher,
       uint64_t runId
     ):
@@ -57,8 +85,8 @@ class NSFW::Run {
     std::unique_ptr<NativeInterface> mInterface;
     std::shared_ptr<EventQueue> mQueue;
     uint32_t mDebounceMS;
-    Napi::ThreadSafeFunction mEventCallback;
-    Napi::ThreadSafeFunction mErrorCallback;
+    EventCallback mEventCallback;
+    ErrorCallback mErrorCallback;
     // Guards mInterface.
     std::mutex mLock;
     std::thread mThread;
@@ -119,49 +147,56 @@ bool NSFW::Run::reportError() {
     if (!mInterface->hasErrored()) return false;
     error = mInterface->getError();
   }
-  NSFW *watcher = mWatcher;
-  uint64_t runId = mRunId;
-  mErrorCallback.NonBlockingCall([error, watcher, runId](Napi::Env env, Napi::Function jsCallback) {
-    bool stopped = watcher->stopRun(runId);
-    watcher->resolveRetiredUpdates();
-    if (!stopped) return;
-    Napi::Value jsError = Napi::Error::New(env, error).Value();
-    jsCallback.Call({ jsError });
-  });
+  auto delivery = std::unique_ptr<ErrorDelivery>(new ErrorDelivery{ std::move(error), mWatcher, mRunId, {} });
+  if (mErrorCallback.NonBlockingCall(delivery.get()) == napi_ok) delivery.release();
   return true;
+}
+
+void NSFW::callErrorJs(Napi::Env env, Napi::Function jsCallback, std::nullptr_t *, ErrorDelivery *deliveryRaw) {
+  std::unique_ptr<ErrorDelivery> delivery(deliveryRaw);
+  // Torn down: the environment's cleanup hook has already stopped the run.
+  if (static_cast<napi_env>(env) == nullptr) return;
+  bool stopped = delivery->watcher->stopRun(delivery->runId);
+  delivery->watcher->resolveRetiredUpdates();
+  if (!stopped) return;
+  Napi::Value jsError = Napi::Error::New(env, delivery->error).Value();
+  jsCallback.Call({ jsError });
 }
 
 void NSFW::Run::deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events, uint64_t epoch) {
   // A single-file watcher uses these events to establish file state after restarting or resuming.
   auto queue = mWatcher->mRecursive ? nullptr : mQueue;
-  auto callback = [queue, epoch](Napi::Env env, Napi::Function jsCallback, std::vector<std::unique_ptr<Event>> *eventsRaw) {
-    std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(eventsRaw);
-    if (queue && queue->epoch() != epoch) return;
+  auto delivery = std::unique_ptr<EventDelivery>(new EventDelivery{ std::move(*events), std::move(queue), epoch, {} });
+  if (mEventCallback.NonBlockingCall(delivery.get()) == napi_ok) delivery.release();
+}
 
-    int numEvents = events->size();
-    Napi::Array eventArray = Napi::Array::New(env, numEvents);
+void NSFW::callEventJs(Napi::Env env, Napi::Function jsCallback, std::nullptr_t *, EventDelivery *deliveryRaw) {
+  std::unique_ptr<EventDelivery> delivery(deliveryRaw);
+  if (static_cast<napi_env>(env) == nullptr) return;
+  if (delivery->queue && delivery->queue->epoch() != delivery->epoch) return;
 
-    for (int i = 0; i < numEvents; ++i) {
-      auto event = Napi::Object::New(env);
-      event["action"] = Napi::Number::New(env, (*events)[i]->type);
-      event["kind"] = Napi::Number::New(env, toJsKind((*events)[i]->kind));
-      event["directory"] = Napi::String::New(env, (*events)[i]->fromDirectory);
+  auto &events = delivery->events;
+  int numEvents = events.size();
+  Napi::Array eventArray = Napi::Array::New(env, numEvents);
 
-      if ((*events)[i]->type == RENAMED) {
-        event["oldFile"] = Napi::String::New(env, (*events)[i]->fromFile);
-        event["newDirectory"] = Napi::String::New(env, (*events)[i]->toDirectory);
-        event["newFile"] = Napi::String::New(env, (*events)[i]->toFile);
-      } else {
-        event["file"] = Napi::String::New(env, (*events)[i]->fromFile);
-      }
+  for (int i = 0; i < numEvents; ++i) {
+    auto event = Napi::Object::New(env);
+    event["action"] = Napi::Number::New(env, events[i]->type);
+    event["kind"] = Napi::Number::New(env, toJsKind(events[i]->kind));
+    event["directory"] = Napi::String::New(env, events[i]->fromDirectory);
 
-      eventArray[(uint32_t)i] = event;
+    if (events[i]->type == RENAMED) {
+      event["oldFile"] = Napi::String::New(env, events[i]->fromFile);
+      event["newDirectory"] = Napi::String::New(env, events[i]->toDirectory);
+      event["newFile"] = Napi::String::New(env, events[i]->toFile);
+    } else {
+      event["file"] = Napi::String::New(env, events[i]->fromFile);
     }
 
-    jsCallback.Call({ eventArray });
-  };
+    eventArray[(uint32_t)i] = event;
+  }
 
-  mEventCallback.NonBlockingCall(events.release(), callback);
+  jsCallback.Call({ eventArray });
 }
 
 static std::vector<std::string> toStrings(Napi::Env env, Napi::Array paths, const char *notStringError) {
@@ -385,12 +420,12 @@ NSFW::StartWorker::StartWorker(Napi::Env env, NSFW *nsfw):
   // One pair per run, created here because it needs the main thread. They keep the event loop alive until the
   // delivery thread releases them when the run ends.
   Napi::Object self = nsfw->Value();
-  mEventCallback = Napi::ThreadSafeFunction::New(env, self.Get(EVENT_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1);
+  mEventCallback = EventCallback::New(env, self.Get(EVENT_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1);
   try {
     uint64_t runId = mRunId;
-    mErrorCallback = Napi::ThreadSafeFunction::New(
-      env, self.Get(ERROR_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1,
-      [nsfw, runId](Napi::Env) {
+    mErrorCallback = ErrorCallback::New(
+      env, self.Get(ERROR_CALLBACK_KEY).As<Napi::Function>(), "nsfw", 0, 1, nullptr,
+      [nsfw, runId](Napi::Env, void *, std::nullptr_t *) {
         nsfw->stopRun(runId);
         nsfw->resolveRetiredUpdates();
         nsfw->Unref();
@@ -718,6 +753,10 @@ Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {
   return Napi::Number::New(info.Env(), instanceCount);
 }
 
+Napi::Value NSFW::LiveDeliveryCount(const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), static_cast<double>(liveDeliveries.load()));
+}
+
 Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
   gcEnabled = ((Napi::Value)env.Global()["gc"]).IsFunction();
 
@@ -736,6 +775,11 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
     nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Function(
       "getAllocatedInstanceCount",
       &NSFW::InstanceCount,
+      napi_static
+    ));
+    nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Function(
+      "getLiveDeliveryCount",
+      &NSFW::LiveDeliveryCount,
       napi_static
     ));
   }

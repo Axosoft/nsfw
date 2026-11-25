@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- `nativeBinding` option and `NSFW_NATIVE_BINDING` environment variable, to load the addon from the absolute path of
+  a `.node` file of your choice, such as one an Electron app ships among its resources or one a bundler moved. The
+  option also takes an addon that was already loaded, and takes precedence over the variable.
+
+### Changed
+- The addon is loaded by the first `nsfw()` call instead of when nsfw is imported, so importing it no longer throws
+  when no binary can be found: the promise `nsfw()` returns rejects instead.
+
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to
   exclude directories or raise the limit, and why nsfw doesn't fall back to polling.

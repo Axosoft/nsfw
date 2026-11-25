@@ -54,7 +54,8 @@ if (runsNormal) {
       throw new Error(`NSFW_TEST_PREBUILT is set, but the addon would load ${binary}`);
     }
   }
-  exec(`${nodeTest} js/spec/canonical-path-spec.js js/spec/index-spec.js js/spec/lifecycle-spec.js`);
+  exec(`${nodeTest} js/spec/canonical-path-spec.js js/spec/index-spec.js js/spec/lifecycle-spec.js \
+    js/spec/native-binding-spec.js`);
 }
 
 /**

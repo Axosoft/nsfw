@@ -4,15 +4,79 @@ import path = require('path');
 type Implementation = nsfw.NSFW;
 
 interface NativeBinding {
-  new (watchPath: string, eventCallback: EventCallback, options: Required<nsfw.Options>): Implementation;
+  new (watchPath: string, eventCallback: EventCallback,
+    options: Required<Omit<nsfw.Options, 'nativeBinding'>>): Implementation;
   getAllocatedInstanceCount?: () => number;
 }
 
 type EventCallback = (events: nsfw.FileChangeEvent[]) => void;
 
-// A local build in build/Release wins over the prebuilt binary for this platform in prebuilds/.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const NSFW: NativeBinding = require('node-gyp-build')(path.join(__dirname, '..', '..'));
+// webpack rewrites a require() of a computed path into a lookup among the modules it bundled, which never finds a .node
+// file on disk.
+declare const __webpack_require__: unknown;
+declare const __non_webpack_require__: NodeJS.Require;
+const runtimeRequire: NodeJS.Require = typeof __webpack_require__ === 'function' ? __non_webpack_require__ : require;
+
+// require() caches by resolved file name, so every watcher of a file in a thread shares one addon. Distinct files, such
+// as copies of the same binary, are separate addons with separate state.
+function loadBindingFile(file: string): NativeBinding {
+  try {
+    return runtimeRequire(file) as NativeBinding;
+  } catch (error) {
+    throw bindingLoadError(file, (error as Error).message, error);
+  }
+}
+
+function bindingLoadError(file: string, reason: string, cause?: unknown): Error {
+  return new Error(`nsfw could not load its native binding from ${file}: ${reason}`, { cause });
+}
+
+// Loaded on first use, so that importing nsfw works where only an explicit nativeBinding can locate the addon.
+let defaultBinding: NativeBinding | undefined;
+function loadDefaultBinding(): NativeBinding {
+  if (defaultBinding === undefined) {
+    let file: string;
+    try {
+      // A local build in build/Release wins over the prebuilt binary for this platform in prebuilds/.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      file = require('node-gyp-build').path(path.join(__dirname, '..', '..'));
+    } catch (error) {
+      throw new Error(`nsfw could not find its native binding (${(error as Error).message.trim()}). Set the ` +
+        'nativeBinding option or the NSFW_NATIVE_BINDING environment variable to the absolute path of its .node file.',
+      { cause: error });
+    }
+    defaultBinding = loadBindingFile(file);
+  }
+  return defaultBinding;
+}
+
+// require() runs a file without the .node extension as JavaScript, tries other files and directories when the one
+// named is missing, and resolves a relative path against a working directory that a packaged app rarely controls.
+async function loadBindingPath(file: string, invalid: string): Promise<NativeBinding> {
+  if (!path.isAbsolute(file) || path.extname(file) !== '.node') throw new TypeError(invalid);
+  const stats = await fs.stat(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined;
+    throw bindingLoadError(file, error.code ?? error.message, error);
+  });
+  if (!stats?.isFile()) throw bindingLoadError(file, 'no such file');
+  return loadBindingFile(file);
+}
+
+async function resolveBinding(nativeBinding: unknown): Promise<NativeBinding> {
+  if (nativeBinding === undefined) {
+    const fromEnvironment = process.env.NSFW_NATIVE_BINDING;
+    return fromEnvironment ?
+      loadBindingPath(fromEnvironment, 'NSFW_NATIVE_BINDING must be the absolute path to a .node file.') :
+      loadDefaultBinding();
+  }
+  const invalid = 'nativeBinding must be the absolute path to a .node file or the addon loaded from one.';
+  if (typeof nativeBinding === 'string') return loadBindingPath(nativeBinding, invalid);
+  // The addon exports the watcher class itself.
+  if (typeof nativeBinding === 'function' && typeof nativeBinding.prototype?.start === 'function') {
+    return nativeBinding as NativeBinding;
+  }
+  throw new TypeError(invalid);
+}
 
 const isWin32 = process.platform === 'win32';
 
@@ -268,6 +332,7 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
   errorCallback: _errorCallback,
   excludedPaths,
   excludedPatterns = [],
+  nativeBinding,
   respectGitignore = false
 }: Partial<nsfw.Options> = {}): Promise<{ implementation: Implementation; context: PathContext }> {
   if (excludedPaths === undefined) {
@@ -287,6 +352,7 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
   if (typeof respectGitignore !== 'boolean') {
     throw new TypeError('respectGitignore must be a boolean.');
   }
+  const NSFW = await resolveBinding(nativeBinding);
 
   const errorCallback = _errorCallback || ((nsfwError: unknown) => { throw nsfwError; });
 
@@ -501,13 +567,22 @@ namespace nsfw {
      * Defaults to false.
      */
     respectGitignore?: boolean;
+    /**
+     * The addon to use instead of the one nsfw finds next to itself: the absolute path to its `.node` file, or the
+     * module a `require()` of that file returned. Overrides the `NSFW_NATIVE_BINDING` environment variable. Each
+     * file is loaded once per thread, and watchers created with different files are independent of each other.
+     */
+    nativeBinding?: string | NativeAddon;
   }
+
+  /** The watcher class that nsfw's `.node` file exports. */
+  export type NativeAddon = new (...args: never[]) => NSFW;
 }
 
-// For the specs; Object.assign keeps them out of the declarations.
-Object.assign(nsfw, { _native: NSFW });
-if (NSFW.getAllocatedInstanceCount) {
-  Object.assign(nsfw, { getAllocatedInstanceCount: NSFW.getAllocatedInstanceCount });
-}
+// For the specs; defined as getters, which load the default addon on first use and keep them out of the declarations.
+Object.defineProperties(nsfw, {
+  _native: { get: loadDefaultBinding },
+  getAllocatedInstanceCount: { get: () => loadDefaultBinding().getAllocatedInstanceCount }
+});
 
 export = nsfw;

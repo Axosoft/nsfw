@@ -21,13 +21,14 @@ function platformWrapper(platform, files = {}, methods = {}) {
   vm.runInNewContext(source, {
     module,
     __dirname: path.join(__dirname, '../dist'),
-    process: { platform, emitWarning() {} },
+    process: { platform, env: {}, emitWarning() {} },
     require(name) {
       if (name === 'path') return platform === 'win32' ? path.win32 : path.posix;
       if (name === 'fs') return { promises: {
         stat: async () => ({ dev: global.BigInt(1), ino: global.BigInt(1), isDirectory: () => true }), ...files
       } };
-      if (name === 'node-gyp-build') return () => Native;
+      if (name === 'node-gyp-build') return { path: () => 'nsfw.node' };
+      if (name === 'nsfw.node') return Native;
       throw new Error(`unexpected require('${name}')`);
     }
   });

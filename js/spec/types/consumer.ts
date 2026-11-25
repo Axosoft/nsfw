@@ -35,6 +35,9 @@ async function watch(): Promise<void> {
     }
   }, options);
   await nsfw('/watched', () => {});
+  await nsfw('/watched', () => {}, { nativeBinding: '/app/resources/nsfw.node' });
+  const addon: nsfw.NativeAddon = class {} as unknown as nsfw.NativeAddon;
+  await nsfw('/watched', () => {}, { nativeBinding: addon });
 
   const started: Promise<void> = watcher.start();
   await started;
@@ -56,6 +59,10 @@ async function watch(): Promise<void> {
   await nsfw('/watched');
   // @ts-expect-error Unknown options are rejected.
   await nsfw('/watched', () => {}, { debounce: 100 });
+  // @ts-expect-error nativeBinding is a path or the loaded addon.
+  await nsfw('/watched', () => {}, { nativeBinding: 1 });
+  // @ts-expect-error A class that does not build watchers is not the addon.
+  await nsfw('/watched', () => {}, { nativeBinding: class {} });
   // @ts-expect-error A renamed event has no `file`.
   const missing: nsfw.RenamedFileEvent['file'] = '';
   // @ts-expect-error `actions` is read-only.

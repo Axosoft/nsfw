@@ -138,6 +138,9 @@ path, its removal is judged by what it was when last seen, as its creation was, 
 Windows nothing, so as a directory: the removal of a file named `build` that was there before watching is not
 reported). `excludedPatterns` and `respectGitignore` only apply to
 watched directories, not to a watched file.
+- nativeBinding: the addon to use instead of the one nsfw finds next to itself, see
+[Custom binary location](#custom-binary-location): the absolute path to its `.node` file, or the module a `require()`
+of that file returned.
 
 ## Callback Argument
 
@@ -223,6 +226,64 @@ On any other platform the install script compiles the addon from source with
 the install script to be allowed to run. To compile it on a supported platform as well, install with
 `npm install nsfw --build-from-source` (or `npm_config_build_from_source=true` in the environment). A binary in
 `build/Release` takes precedence over the prebuilt one.
+
+### Custom binary location
+nsfw loads its addon the first time `nsfw()` is called, not when it is imported, from `build/Release` or `prebuilds/`
+next to itself. Where the binary is somewhere else, as when a bundler moves nsfw's code into a bundle of its own or an
+app ships the binary among its resources, point nsfw to it with:
+
+1. the `nativeBinding` option of `nsfw()`: the absolute path to the `.node` file, or the module `require()` returned
+   for it;
+2. else the `NSFW_NATIVE_BINDING` environment variable, holding the absolute path to the `.node` file, read by each
+   `nsfw()` call without the option.
+
+Without either, nsfw looks next to itself as usual, where the `NSFW_PREBUILD` environment variable of
+[node-gyp-build](https://github.com/prebuild/node-gyp-build) names a directory to search instead of nsfw's. An Electron
+app that does not bundle nsfw needs none of these: Electron loads the binary from inside `app.asar`.
+
+When no addon can be loaded, importing nsfw still works (so does `nsfw.actions`), and the promise `nsfw()` returns
+rejects with an error that tells why, naming the file when one was found but could not be loaded. A path that is not
+absolute or does not end in `.node` is rejected with a `TypeError`.
+
+A `.node` file is loaded once per thread, and every watcher created with it there shares that addon. Copies of the binary
+in other files load as separate addons, whose watchers work side by side.
+
+The prebuilt binaries are in `prebuilds/<platform>-<arch>/`, named `nsfw.node`, except on Linux, where they are
+`nsfw.glibc.node` and `nsfw.musl.node`; a binary built from source is `build/Release/nsfw.node`. For instance, an
+Electron app whose main process is bundled can have [electron-builder](https://www.electron.build) copy the prebuilt
+binaries for the target to the app's resources:
+
+```json
+{
+  "build": {
+    "extraResources": [{ "from": "node_modules/nsfw/prebuilds/${platform}-${arch}", "to": "nsfw" }]
+  }
+}
+```
+
+and pass the one for the running platform:
+
+```js
+const fs = require('fs');
+const path = require('path');
+const { app } = require('electron');
+const nsfw = require('nsfw');
+
+function binaryName() {
+  if (process.platform !== 'linux') return 'nsfw.node';
+  // The test nsfw makes to pick its own binary when the LIBC environment variable is unset.
+  return fs.existsSync('/etc/alpine-release') ? 'nsfw.musl.node' : 'nsfw.glibc.node';
+}
+
+const nativeBinding = app.isPackaged ? path.join(process.resourcesPath, 'nsfw', binaryName()) : undefined;
+
+async function watch(dir) {
+  return nsfw(dir, events => { /* ... */ }, { nativeBinding });
+}
+```
+
+A bundler that handles `require()` itself may fail to load a path it did not bundle; load the `.node` file the way it
+supports, and pass the module that returns as `nativeBinding`.
 
 ## Development
 The repository uses [pnpm](https://pnpm.io), pinned through the `packageManager` field of `package.json`. Install the

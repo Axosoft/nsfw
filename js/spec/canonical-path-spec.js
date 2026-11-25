@@ -171,8 +171,11 @@ describe('Canonical Windows paths at the native boundary', function() {
 
 
 describe('A single file watched through its directory', function() {
-  const stat = async () =>
-    ({ dev: global.BigInt(1), ino: global.BigInt(1), isDirectory: () => false, isFile: () => true });
+  // The directories of the files below end with a separator or are named dir.
+  const stat = async value => {
+    const directory = /[\\/]$/.test(value) || /[\\/]dir$/.test(value);
+    return { dev: global.BigInt(1), ino: global.BigInt(1), isDirectory: () => directory, isFile: () => !directory };
+  };
 
   // Events reach a file watcher once it is started.
   const started = { async start() {} };
@@ -216,6 +219,27 @@ describe('A single file watched through its directory', function() {
         [{ action: 2, kind: 0, directory: path.win32.dirname(input), file: path.win32.basename(input) }]);
     });
   }
+});
+
+describe('The directory of a watched file at the root of a share', function() {
+  it('is looked at through its plain spelling when the extended one is rejected', async function() {
+    const reads = [];
+    let starts = 0;
+    const wrapper = platformWrapper('win32', {
+      async stat(value) {
+        reads.push(value);
+        if (value === '\\\\?\\UNC\\server\\share\\') {
+          throw Object.assign(new Error('Extended root'), { code: 'EISDIR' });
+        }
+        const directory = value.endsWith('\\');
+        return { isDirectory: () => directory, isFile: () => !directory };
+      },
+      realpath: async () => '\\\\server\\share\\file'
+    }, { async start() { starts++; } });
+    await (await wrapper.nsfw('\\\\server\\share\\file', () => {})).start();
+    assert.strictEqual(starts, 1);
+    assert.ok(reads.includes('\\\\server\\share\\'), JSON.stringify(reads));
+  });
 });
 
 describe('Watcher call submission order', function() {

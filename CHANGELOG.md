@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- A watched file outlives its directory again, as it did up to 3.0.x. Since 3.1.0, when the directory holding the file
+  was renamed or removed, the watcher reported the file's removal, then gave `errorCallback` `Service shutdown: root
+  path changed (renamed or deleted)` and stopped; without an `errorCallback`, that error was thrown, uncaught, which
+  could end the process. Now the file's removal is reported (unless paused, and only if it was there), nothing reaches
+  `errorCallback`, and the watcher keeps going: it looks for the directory once a second, on whole seconds, with a
+  `stat()` of the directory, not of the file and without any inotify watch on Linux, and watches it again once it is
+  back, reporting `CREATED` if the file is there. `pause()`, `resume()` and `stop()` work meanwhile, and `start()`
+  takes a watcher whose directory is missing instead of rejecting with `NSFW was unable to start watching that
+  directory.` These looks don't hold `start()`, `stop()`, `pause()` or `resume()` on a share that stopped answering,
+  and when a pause called after a failure while watching comes before the look at the file, a removal of the file is
+  reported on resume, while a file created or changed meanwhile is taken as it is.
+- Any other failure of the watcher of a watched file's directory, such as its event queue overflowing under heavy
+  activity in the directory or a network share going away, no longer stops it either, nor reaches `errorCallback`: the
+  directory is watched again from the next whole second on, and a `stat()` of the file then reports what changed
+  meanwhile: `DELETED`, `CREATED`, or `MODIFIED` when its size, times, device or inode differ from the last look the
+  watcher took, when it started or last recovered. As events may have been lost, a change already reported may be
+  reported again as `MODIFIED`. Only when the directory is there but can't be watched again, as when no inotify watch
+  is left, `errorCallback` gets the error, once until the directory is watched again, and the watcher keeps trying;
+  without an `errorCallback` nothing is thrown. `start()` still rejects when the directory is there but can't be
+  watched. Directory watchers are unchanged.
+
+### Changed
+- A note on 3.1.0, which changed it without saying so (#265): the delivery thread no longer wakes up every 50 ms, so
+  `debounceMS` is the only spacing between two deliveries of events. With a small `debounceMS`, events can now be
+  delivered more often than every 50 ms; to keep at least 50 ms between them, set `debounceMS: 50`.
+
 ## 3.1.0
 
 ### Added

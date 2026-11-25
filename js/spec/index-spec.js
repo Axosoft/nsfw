@@ -761,10 +761,10 @@ describe('Node Sentinel File Watcher', function() {
     const inPath = () => path.join(workDir, 'test1');
     const file = 'testing1.file';
     const filePath = () => path.join(inPath(), file);
+    const Native = require('node-gyp-build')(path.join(__dirname, '..', '..'));
 
     // The native addon, telling when it hands an error over: the file watcher may keep it from the caller.
     function errorSpy() {
-      const Native = require('node-gyp-build')(path.join(__dirname, '..', '..'));
       const taken = [];
       class Spy extends Native {
         constructor(watchPath, callback, options) {
@@ -786,7 +786,7 @@ describe('Node Sentinel File Watcher', function() {
     }
 
     const describeEvents = events => () => JSON.stringify(events);
-
+    const actionsBut = (events, ignored) => events.map(event => event.action).filter(action => action !== ignored);
     // Waits for an event with action about name in directory.
     const reported = (events, action, directory = inPath(), name = file) => waitForEvent(events,
       event => event.action === action && event.directory === directory && event.file === name,
@@ -891,15 +891,13 @@ describe('Node Sentinel File Watcher', function() {
         await fsp.rename(away, filePath());
         await reported(events, nsfw.actions.CREATED);
         await modified(events);
-        assert.deepStrictEqual(events.map(event => event.action).filter(action => action !== nsfw.actions.MODIFIED),
-          [nsfw.actions.DELETED, nsfw.actions.CREATED]);
+        assert.deepStrictEqual(actionsBut(events, nsfw.actions.MODIFIED), [nsfw.actions.DELETED, nsfw.actions.CREATED]);
       } finally {
         await watch.stop();
       }
     });
 
     it('uses a removal received while the startup stat settles to classify a later creation', async function() {
-      const Native = require('node-gyp-build')(path.join(__dirname, '..', '..'));
       let removed = false;
       class Spy extends Native {
         constructor(watchPath, callback, options) {
@@ -977,37 +975,441 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
-    it('reports the removal of its directory, then an error', async function(t) {
+    // The native addon, whose watcher can be made to fail as on an overflow of its event queue, and whose start() can
+    // be made to fail as for a directory that can't be watched.
+    function failingBinding() {
+      // held: a promise start() waits for before starting.
+      const control = { instances: [], starts: 0, startFailures: 0, held: undefined };
+      class Failing extends Native {
+        constructor(watchPath, callback, options) {
+          super(watchPath, callback, options);
+          this.reportError = options.errorCallback;
+          control.instances.push(this);
+        }
+        async start() {
+          control.starts++;
+          await control.held;
+          if (control.startFailures > 0) {
+            control.startFailures--;
+            throw new Error('NSFW was unable to start watching that directory.');
+          }
+          return super.start();
+        }
+        async fail(error) {
+          await super.stop();
+          this.reportError(error);
+        }
+      }
+      control.fail = (message = 'Buffer filled up and service needs a restart') =>
+        control.instances[0].fail(new Error(message));
+      return { nativeBinding: Failing, control };
+    }
+
+    it('reports its directory renamed away as deleted, and renamed back as created', async function(t) {
       // Windows doesn't let a directory go while it is watched.
       if (process.platform === 'win32') return t.skip();
       const { watch, events, errors } = await watchFile(filePath());
       try {
         await watch.start();
-        await remove(inPath());
-        await waitUntil(() => errors.length > 0, { message: 'No error' });
-        assert.strictEqual(errors[0].message, 'Service shutdown: root path changed (renamed or deleted)');
-        assert.deepStrictEqual(events.map(event => event.action), [nsfw.actions.DELETED]);
-        await mkdirp(inPath());
-        await watch.start();
-        await fsp.writeFile(filePath(), 'back');
+        const away = path.join(workDir, 'away');
+        await fsp.rename(inPath(), away);
+        await reported(events, nsfw.actions.DELETED);
+        // Looked for at least once while gone.
+        await sleep(1500);
+        await fsp.rename(away, inPath());
         await reported(events, nsfw.actions.CREATED);
+        await modified(events);
+        assert.deepStrictEqual(actionsBut(events, nsfw.actions.MODIFIED), [nsfw.actions.DELETED, nsfw.actions.CREATED]);
+        assert.deepStrictEqual(errors, []);
       } finally {
         await watch.stop();
       }
     });
 
-    it('reports the error, not the removal, of its directory while paused', async function(t) {
+    it('reports its directory removed as deleted, and created again with the file as created', async function(t) {
       // Windows doesn't let a directory go while it is watched.
       if (process.platform === 'win32') return t.skip();
       const { watch, events, errors } = await watchFile(filePath());
       try {
         await watch.start();
-        await watch.pause();
         await remove(inPath());
-        await waitUntil(() => errors.length > 0, { message: 'No error' });
-        assert.deepStrictEqual(events, []);
+        await reported(events, nsfw.actions.DELETED);
+        await sleep(1500);
         await mkdirp(inPath());
         await fsp.writeFile(filePath(), 'back');
+        await reported(events, nsfw.actions.CREATED);
+        await modified(events);
+        assert.deepStrictEqual(actionsBut(events, nsfw.actions.MODIFIED), [nsfw.actions.DELETED, nsfw.actions.CREATED]);
+        assert.deepStrictEqual(errors, []);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('throws nothing without an errorCallback when its directory goes', async function(t) {
+      // Windows doesn't let a directory go while it is watched.
+      if (process.platform === 'win32') return t.skip();
+      const events = [];
+      const watch = await nsfw(filePath(), batch => events.push(...batch), { debounceMS: DEBOUNCE });
+      const uncaught = [];
+      const onUncaught = error => uncaught.push(error);
+      process.on('uncaughtException', onUncaught);
+      try {
+        await watch.start();
+        await remove(inPath());
+        await reported(events, nsfw.actions.DELETED);
+        await sleep(1500);
+        await mkdirp(inPath());
+        await fsp.writeFile(filePath(), 'back');
+        await reported(events, nsfw.actions.CREATED);
+        assert.deepStrictEqual(uncaught, []);
+      } finally {
+        process.off('uncaughtException', onUncaught);
+        await watch.stop();
+      }
+    });
+
+    it('holds no inotify watch while its directory is gone', async function(t) {
+      if (process.platform !== 'linux') return t.skip();
+      const before = countInotifyWatches();
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        assert.strictEqual(countInotifyWatches(), before + 1);
+        await remove(inPath());
+        await reported(events, nsfw.actions.DELETED);
+        await watchCountReaches(before);
+        // Through a few looks for the directory, none of which takes a watch.
+        const deadline = Date.now() + 2500;
+        while (Date.now() < deadline) {
+          assert.strictEqual(countInotifyWatches(), before);
+          await sleep(20);
+        }
+        await mkdirp(inPath());
+        await fsp.writeFile(filePath(), 'back');
+        await reported(events, nsfw.actions.CREATED);
+        assert.strictEqual(countInotifyWatches(), before + 1);
+      } finally {
+        await watch.stop();
+      }
+      await watchCountReaches(before);
+    });
+
+    it('pauses, resumes, stops and starts while its directory is gone', async function(t) {
+      // Windows doesn't let a directory go while it is watched.
+      if (process.platform === 'win32') return t.skip();
+      const { watch, events, errors } = await watchFile(filePath());
+      try {
+        await watch.start();
+        await remove(inPath());
+        await reported(events, nsfw.actions.DELETED);
+
+        // Nothing is reported while paused, not even the directory coming back.
+        await watch.pause();
+        let offset = events.length;
+        await mkdirp(inPath());
+        await fsp.writeFile(filePath(), 'back while paused');
+        await sleep(1500);
+        assert.deepStrictEqual(events.slice(offset), []);
+        await watch.resume();
+        await modified(events);
+
+        // Nothing is reported once stopped either.
+        await remove(inPath());
+        await reported(events, nsfw.actions.DELETED);
+        await watch.stop();
+        offset = events.length;
+        await mkdirp(inPath());
+        await fsp.writeFile(filePath(), 'back while stopped');
+        await sleep(1500);
+        assert.deepStrictEqual(events.slice(offset), []);
+
+        // start() takes a missing directory.
+        await remove(inPath());
+        await watch.start();
+        await mkdirp(inPath());
+        await fsp.writeFile(filePath(), 'back once started');
+        await waitUntil(() => events.slice(offset).some(event => event.action === nsfw.actions.CREATED),
+          { message: describeEvents(events) });
+        await modified(events);
+        assert.deepStrictEqual(errors, []);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('recovers from a failure of the watcher of its directory, reporting what changed meanwhile', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+      try {
+        await watch.start();
+        await control.fail();
+        await fsp.appendFile(filePath(), 'unseen by the failed watcher');
+        await reported(events, nsfw.actions.MODIFIED);
+        await modified(events);
+
+        await control.fail();
+        await fsp.unlink(filePath());
+        await reported(events, nsfw.actions.DELETED);
+        await waitUntil(() => control.starts === 3, { message: 'Not watched again' });
+        await fsp.writeFile(filePath(), 'back');
+        await reported(events, nsfw.actions.CREATED);
+        await modified(events);
+        assert.deepStrictEqual(actionsBut(events, nsfw.actions.MODIFIED), [nsfw.actions.DELETED, nsfw.actions.CREATED]);
+        assert.deepStrictEqual(errors, []);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('reports nothing after a failure of the watcher of its directory if the file did not change', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+      try {
+        await watch.start();
+        await control.fail();
+        await waitUntil(() => control.starts === 2, { message: 'Not watched again' });
+        await sleep(DEBOUNCE * 4);
+        assert.deepStrictEqual([events, errors], [[], []]);
+        await modified(events);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('tells errorCallback once that its directory can\'t be watched again, and keeps trying', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+      try {
+        await watch.start();
+        control.startFailures = 2;
+        await control.fail();
+        await waitUntil(() => control.starts === 4, { message: 'Not watched again' });
+        await modified(events);
+        assert.deepStrictEqual(errors.map(error => error.message),
+          ['NSFW was unable to start watching that directory.']);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('tells errorCallback again of a later failure to watch its directory after watching it again', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+      try {
+        await watch.start();
+        control.startFailures = 1;
+        await control.fail();
+        await waitUntil(() => control.starts === 3, { message: 'Not watched again' });
+        await modified(events);
+        control.startFailures = 1;
+        await control.fail();
+        await waitUntil(() => errors.length === 2, { message: 'The second failure was not told' });
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('tells errorCallback again of a later failure to watch its directory once it was restarted',
+      async function() {
+        const { nativeBinding, control } = failingBinding();
+        const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+        try {
+          await watch.start();
+          control.startFailures = 1;
+          await control.fail();
+          await waitUntil(() => errors.length === 1, { message: 'The first failure was not told' });
+          await watch.stop();
+          await watch.start();
+          await modified(events);
+          control.startFailures = 1;
+          await control.fail();
+          await waitUntil(() => errors.length === 2, { message: 'The second failure was not told' });
+        } finally {
+          await watch.stop();
+        }
+      });
+
+    it('reports nothing once stop() was called while its directory is being watched again', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+      let release;
+      try {
+        await watch.start();
+        control.held = new Promise(resolve => { release = resolve; });
+        await control.fail();
+        await fsp.appendFile(filePath(), 'unseen by the failed watcher');
+        await waitUntil(() => control.starts === 2, { message: 'Not watched again' });
+        const stopped = watch.stop();
+        release();
+        await stopped;
+        await sleep(DEBOUNCE * 4);
+        assert.deepStrictEqual([events, errors], [[], []]);
+      } finally {
+        release?.();
+        await watch.stop();
+      }
+    });
+
+    for (const [what, stalledName] of [['its file', () => file], ['its directory', () => path.basename(inPath())]]) {
+      it(`stops and pauses while a look at ${what} after a failure is stalled`, async function() {
+        const { nativeBinding, control } = failingBinding();
+        const { watch, events } = await watchFile(filePath(), { nativeBinding });
+        const fsPromises = require('fs').promises;
+        const { stat } = fsPromises;
+        let stalled = false;
+        let release;
+        const held = new Promise(resolve => { release = resolve; });
+        try {
+          await watch.start();
+          // As on a share that stopped answering.
+          fsPromises.stat = async (...args) => {
+            if (path.basename(String(args[0])) === stalledName()) {
+              stalled = true;
+              await held;
+            }
+            return stat.apply(fsPromises, args);
+          };
+          await control.fail();
+          await waitUntil(() => stalled, { message: `${what} was not looked at` });
+          await watch.pause();
+          await watch.stop();
+          // What the stalled look finds once it returns is not reported.
+          await fsp.unlink(filePath());
+          fsPromises.stat = stat;
+          release();
+          await sleep(DEBOUNCE * 4);
+          assert.deepStrictEqual(events, []);
+          await fsp.writeFile(filePath(), 'back');
+          await watch.start();
+          await modified(events);
+        } finally {
+          fsPromises.stat = stat;
+          release();
+          await watch.stop();
+        }
+      });
+    }
+
+    it('reports on resume the removal a pause kept the look after a failure from reporting', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+      const fsPromises = require('fs').promises;
+      const { stat } = fsPromises;
+      let stalled = false;
+      let release;
+      const held = new Promise(resolve => { release = resolve; });
+      try {
+        await watch.start();
+        fsPromises.stat = async (...args) => {
+          if (path.basename(String(args[0])) === file) {
+            stalled = true;
+            await held;
+          }
+          return stat.apply(fsPromises, args);
+        };
+        await control.fail();
+        await waitUntil(() => stalled, { message: 'The file was not looked at' });
+        await watch.pause();
+        await fsp.unlink(filePath());
+        fsPromises.stat = stat;
+        release();
+        await sleep(DEBOUNCE * 4);
+        assert.deepStrictEqual(events, []);
+        await watch.resume();
+        await reported(events, nsfw.actions.DELETED);
+        await fsp.writeFile(filePath(), 'back');
+        await reported(events, nsfw.actions.CREATED);
+        await modified(events);
+        assert.deepStrictEqual(actionsBut(events, nsfw.actions.MODIFIED), [nsfw.actions.DELETED, nsfw.actions.CREATED]);
+        assert.deepStrictEqual(errors, []);
+      } finally {
+        fsPromises.stat = stat;
+        release();
+        await watch.stop();
+      }
+    });
+
+    it('takes a file changed while paused as it is on resume, after a pause cut the look after a failure short',
+      async function() {
+        const { nativeBinding, control } = failingBinding();
+        const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+        const witnessEvents = [];
+        const witness = await nsfw(inPath(), batch => witnessEvents.push(...batch), { debounceMS: DEBOUNCE });
+        const fsPromises = require('fs').promises;
+        const { stat } = fsPromises;
+        let stalled = false;
+        let release;
+        const held = new Promise(resolve => { release = resolve; });
+        try {
+          await watch.start();
+          fsPromises.stat = async (...args) => {
+            if (path.basename(String(args[0])) === file) {
+              stalled = true;
+              await held;
+            }
+            return stat.apply(fsPromises, args);
+          };
+          await control.fail();
+          await waitUntil(() => stalled, { message: 'The file was not looked at' });
+          await watch.pause();
+          await witness.start();
+          await fsp.appendFile(filePath(), 'changed while paused');
+          // Once a watcher started before it reports the change, FSEvents won't report it to one started after.
+          await waitForEvent(witnessEvents, event => event.file === file, 'change seen by the witness');
+          fsPromises.stat = stat;
+          release();
+          await watch.resume();
+          await sleep(DEBOUNCE * 4);
+          assert.deepStrictEqual(events, []);
+          await modified(events);
+          assert.deepStrictEqual(errors, []);
+        } finally {
+          fsPromises.stat = stat;
+          release();
+          await watch.stop();
+          await witness.stop().catch(() => {});
+        }
+      });
+
+    it('reports nothing of a failure while paused, and watches again once resumed', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding });
+      try {
+        await watch.start();
+        await watch.pause();
+        await control.fail();
+        await fsp.unlink(filePath());
+        await sleep(1500);
+        assert.deepStrictEqual([events, errors, control.starts], [[], [], 1]);
+        await fsp.writeFile(filePath(), 'back');
+        await watch.resume();
+        await modified(events);
+        assert.deepStrictEqual(errors, []);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('watches again after being stopped while paused', async function() {
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        await watch.pause();
+        await watch.stop();
+        await watch.start();
+        await modified(events);
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('rejects start() when its directory is there but can\'t be watched', async function() {
+      const { nativeBinding, control } = failingBinding();
+      const { watch, events } = await watchFile(filePath(), { nativeBinding });
+      control.startFailures = 1;
+      await assert.rejects(watch.start(), /unable to start watching/);
+      try {
         await watch.start();
         await modified(events);
       } finally {
@@ -1050,8 +1452,8 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
-    for (const [when, paused] of [['resumed', true], ['started', false]]) {
-      it(`does not deliver an error once stop() was called before it, on a watcher being ${when}`, async function(t) {
+    for (const [when, paused] of [['resuming', true], ['starting', false]]) {
+      it(`reports nothing once stop() was called before its directory goes, on a ${when} watcher`, async function(t) {
         // Windows doesn't let a directory go while it is watched.
         if (process.platform === 'win32') return t.skip();
         const fsPromises = require('fs').promises;
@@ -1092,13 +1494,13 @@ describe('Node Sentinel File Watcher', function() {
       });
     }
 
-    it('delivers an error before a resume() called before it', async function(t) {
+    it('keeps watching through a resume() called before its directory goes', async function(t) {
       // Windows doesn't let a directory go while it is watched.
       if (process.platform === 'win32') return t.skip();
       const fsPromises = require('fs').promises;
       const { stat } = fsPromises;
       const spy = errorSpy();
-      const { watch, errors } = await watchFile(filePath(), { nativeBinding: spy.nativeBinding });
+      const { watch, events, errors } = await watchFile(filePath(), { nativeBinding: spy.nativeBinding });
       let looked = false;
       let release;
       const held = new Promise(resolve => { release = resolve; });
@@ -1118,11 +1520,13 @@ describe('Node Sentinel File Watcher', function() {
         await waitUntil(() => spy.taken.length > 0, { message: 'The removal of the directory was not reported' });
         release();
         await started;
-        // The error comes first, then resume() starts the watcher again, which fails or fails later as the directory
-        // is gone, depending on the system.
         await resumed;
-        assert.ok(errors.length > 0, 'The error was not delivered');
-        assert.strictEqual(errors[0].message, 'Service shutdown: root path changed (renamed or deleted)');
+        fsPromises.stat = stat;
+        await mkdirp(inPath());
+        await fsp.writeFile(filePath(), 'back');
+        await reported(events, nsfw.actions.CREATED);
+        assert.strictEqual(await resumed, null);
+        assert.deepStrictEqual(errors, []);
       } finally {
         fsPromises.stat = stat;
         release();

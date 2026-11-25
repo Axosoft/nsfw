@@ -124,6 +124,10 @@ function stripTrailingSeparators(value: string): string {
   return value;
 }
 
+// Node's metadata APIs reject extended drive roots that the native watcher can open.
+const metadataPath = (value: string): string =>
+  isWin32 && /^\\\\\?\\[A-Za-z]:\\$/.test(value) ? value.slice(4) : value;
+
 async function canonicalPath(value: string): Promise<string> {
   if (isWin32) {
     if (isExtendedUnc(value)) {
@@ -269,11 +273,25 @@ function escapePatternName(name: string): string {
 
 type FileChange = 'appeared' | 'gone' | 'changed';
 
+// How often a file watcher whose directory is gone looks for it. On whole seconds of the monotonic clock, as the Linux
+// watcher of a directory checks its path, so that the watchers of a process wake together.
+const DIRECTORY_CHECK_MS = 1000;
+const untilNextCheck = (): number =>
+  DIRECTORY_CHECK_MS - Number(process.hrtime.bigint() / 1000000n % BigInt(DIRECTORY_CHECK_MS));
+
+// Whether a file looked at twice is the same one, unchanged.
+const unchanged = (before: Stats | undefined, after: Stats): boolean => before !== undefined &&
+  before.dev === after.dev && before.ino === after.ino && before.size === after.size &&
+  before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs;
+
 // Watches the directory of the file, natively filtered down to the file's own entry: its siblings are not reported
-// and, on Linux, its subdirectories cost no inotify watch.
+// and, on Linux, its subdirectories cost no inotify watch. Like the poller it replaces, it outlives its directory: when
+// the watcher of the directory fails, as when the directory is renamed or removed, the file's state is looked at once,
+// and the directory is looked for once a second, without any inotify watch, until it can be watched again.
 async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, reportedPath: string,
-  eventCallback: EventCallback, errorCallback: (error: unknown) => void, debounceMS: number, excludedPaths: string[],
-  isExcluded: (value: string) => boolean, excludedPatterns: string[]): Promise<Implementation> {
+  eventCallback: EventCallback, errorCallback: ((error: unknown) => void) | undefined, debounceMS: number,
+  excludedPaths: string[], isExcluded: (value: string) => boolean,
+  excludedPatterns: string[]): Promise<Implementation> {
   // Writes through a symlink notify the directory of the file it leads to. Elsewhere canonical paths are real already.
   let target = watchedFile;
   if (isWin32) {
@@ -281,7 +299,7 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
       target = await canonicalPath(await fs.realpath(watchedFile));
     } catch { /* Some filesystems can't tell the final path of a file: it is watched as named. */ }
   }
-  let parent;
+  let parent: string;
   try {
     parent = await canonicalPath(path.dirname(target));
   } catch {
@@ -296,37 +314,41 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
   let currentExcludedPaths = excludedPaths;
   // Kept, though only a watched directory applies them.
   let currentExcludedPatterns = excludedPatterns;
-  // Whether the file is there: a file renamed over the watched one, which the native watcher reports as created, is
-  // reported as modified.
-  let exists: boolean | undefined;
-  let observedDuringStat: boolean | undefined;
-  let running = false;
-  let paused = false;
-  // stop() calls whose job has not run yet: the caller no longer wants an error of the run it stops.
-  let pendingStops = 0;
-  // The error of the run, until delivered: before whatever job comes next, as the native watcher delivers an error
-  // before its next job runs, so that a start() called before it can't restart the watcher over it.
-  let failure: { error: unknown } | undefined;
 
-  // The events still queued when the directory went are lost with the run, the removal of the file among them.
-  const deliverFailure = async (): Promise<void> => {
-    if (!failure) return;
-    const { error } = failure;
-    failure = undefined;
-    const found = await fileExists();
-    if (pendingStops > 0) return;
-    if (!found && !paused) uncaught(() => report(['gone']));
-    // eventCallback may have stopped the watcher.
-    if (pendingStops > 0) return;
-    uncaught(() => errorCallback(error));
-  };
+  // watching: the native watcher runs, from just before it starts. waiting: its directory is looked for once a second.
+  // paused: the native watcher runs paused. paused-waiting: neither runs.
+  let state: 'stopped' | 'watching' | 'waiting' | 'paused' | 'paused-waiting' = 'stopped';
+  // What one start() after a stop begins, until the next stop.
+  interface Session {
+    // The stop() calls made before the start() that began it: any later one ends it, before its job has even run.
+    readonly stops: number;
+    // Whether the file is there: a file renamed over the watched one, which the native watcher reports as created, is
+    // reported as modified.
+    exists?: boolean;
+    // The file as last looked at, to tell whether it changed while no event could tell it.
+    lastSeen?: Stats;
+    observedDuringStat?: boolean;
+    // The native watcher failed: the next job takes it into account before running.
+    failed: boolean;
+    // Whether the error of a directory that is there but can't be watched again was told since it last could be.
+    rearmErrorDelivered: boolean;
+    // A failure while watching whose look at the file a pause cut short: resuming reports what that look would have.
+    unsettled?: boolean;
+    directoryCheck?: ReturnType<typeof setTimeout>;
+    // Replaced whenever a look for the directory is scheduled or cancelled, so that one under way can't act for
+    // another.
+    check?: object;
+  }
+  let session: Session | undefined;
+  let stops = 0;
+  const live = (current: Session): boolean => current === session && current.stops === stops;
 
   // One at a time in call order, as the native watcher runs them, so each finds the state the one before left: a pause
   // can't be undone by a start called before it.
   let jobs: Promise<unknown> = Promise.resolve();
   const serial = <T>(job: () => Promise<T>): Promise<T> => {
     const result = jobs.then(async () => {
-      await deliverFailure();
+      await takeFailure();
       return job();
     });
     jobs = result.catch(() => {});
@@ -341,19 +363,19 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
     }
   };
 
-  const report = (changes: FileChange[]): void => {
+  const report = (current: Session, changes: FileChange[]): void => {
     const events: nsfw.FileChangeEvent[] = [];
     for (const change of changes) {
       let action: nsfw.ActionType.CREATED | nsfw.ActionType.DELETED | nsfw.ActionType.MODIFIED;
       if (change === 'gone') {
-        if (!exists) continue;
+        if (!current.exists) continue;
         action = nsfw.ActionType.DELETED;
-      } else if (!exists) {
+      } else if (!current.exists) {
         action = nsfw.ActionType.CREATED;
       } else {
         action = nsfw.ActionType.MODIFIED;
       }
-      exists = change !== 'gone';
+      current.exists = change !== 'gone';
       // Replaced within a batch, say by a rename over it that Windows reports as a removal first: modified.
       if (action === nsfw.ActionType.CREATED && events[events.length - 1]?.action === nsfw.ActionType.DELETED) {
         events.pop();
@@ -362,21 +384,48 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
       if (action === nsfw.ActionType.MODIFIED && events[events.length - 1]?.action === action) continue;
       events.push({ action, kind: nsfw.EntryKind.FILE, directory, file });
     }
-    if (events.length > 0 && !currentExcludedPaths.some(isExcluded)) eventCallback(events);
+    if (events.length > 0 && !currentExcludedPaths.some(isExcluded)) uncaught(() => eventCallback(events));
   };
 
-  const fileExists = (): Promise<boolean> => fs.stat(target).then(() => true, () => false);
+  const look = (): Promise<Stats | undefined> => fs.stat(target).catch(() => undefined);
+  const isDirectory = (value: string): Promise<boolean> =>
+    fs.stat(value).then(stats => stats.isDirectory(), () => false);
+  // Should Node's metadata APIs reject an extended share root, as they do an extended drive root, the share is looked
+  // at through its plain spelling.
+  const directoryExists = async (): Promise<boolean> => await isDirectory(metadataPath(parent)) ||
+    (isWin32 && isExtendedUnc(parent) && isDirectory('\\\\' + parent.slice(8)));
 
   // A single look once watching starts, as no event tells whether the file is there. Taken after the watch is armed:
-  // it sees what changed before, and start() resolves knowing the state every later change is told from.
-  const establish = async (): Promise<void> => {
-    observedDuringStat = undefined;
-    const found = await fileExists();
-    exists = observedDuringStat ?? found;
+  // it sees what changed before, and start() resolves knowing the state every later change is told from. When the
+  // watcher comes back after a failure, what changed meanwhile is reported ('changes'). When it resumes from a pause
+  // that kept the look after a failure from reporting, only a removal is ('removal'), as a pause takes the rest as is.
+  const establish = async (current: Session, reconcile: 'none' | 'removal' | 'changes'): Promise<void> => {
+    const before = current.exists;
+    const previous = current.lastSeen;
+    current.exists = undefined;
+    current.observedDuringStat = undefined;
+    const stats = await look();
+    current.lastSeen = stats;
+    const touched = current.observedDuringStat !== undefined;
+    const found = current.observedDuringStat ?? stats !== undefined;
+    if (reconcile === 'none') {
+      current.exists = found;
+      return;
+    }
+    current.exists = before;
+    if (!live(current)) return;
+    if (!found) {
+      report(current, ['gone']);
+    } else if (reconcile === 'removal') {
+      current.exists = true;
+    } else if (!before || touched || !stats || !unchanged(previous, stats)) {
+      report(current, ['changed']);
+    }
   };
 
   const onEvents = (events: nsfw.FileChangeEvent[]): void => {
-    if (!running || paused) return;
+    const current = session;
+    if (!current || state !== 'watching') return;
     const changes: FileChange[] = [];
     for (const event of events) {
       if (event.action === nsfw.ActionType.RENAMED) {
@@ -389,19 +438,21 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
           event.action === nsfw.ActionType.DELETED ? 'gone' : 'changed');
       }
     }
-    if (exists !== undefined) {
-      report(changes);
+    if (current.exists !== undefined) {
+      report(current, changes);
     } else if (changes.length > 0) {
       // A callback can arrive after stat observed the file but before its result reaches JavaScript.
-      observedDuringStat = changes[changes.length - 1] !== 'gone';
+      current.observedDuringStat = changes[changes.length - 1] !== 'gone';
     }
   };
 
-  const onError = (error: unknown): void => {
-    // A run being stopped.
-    if (!running || pendingStops > 0) return;
-    running = false;
-    failure = { error };
+  // Whatever failed, the native watcher has stopped: its directory renamed or removed, its event queue overflowed, a
+  // network share gone. None of it reaches errorCallback, as the poller never failed. A stop() called meanwhile stops
+  // the native watcher itself.
+  const onError = (): void => {
+    const current = session;
+    if (!current || !live(current) || (state !== 'watching' && state !== 'paused')) return;
+    current.failed = true;
     void serial(async () => {});
   };
 
@@ -417,45 +468,166 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
     recursive: false
   });
 
-  // Unlike a directory watcher's, these never reject over the state they find: starting or resuming a running watcher
-  // and stopping or pausing one that isn't do nothing, and resuming starts a stopped one.
-  const start = (): Promise<void> => serial(async () => {
-    if (running && !paused) return;
-    // An error while resuming is the next job's to deliver, not a stop to start over.
-    const wasRunning = running;
-    exists = undefined;
-    if (paused) {
-      await native.resume();
-      paused = false;
-    }
-    if (!wasRunning) {
-      // Before the run exists, so that its error is taken.
-      running = true;
-      await native.start().catch((error: unknown) => {
-        running = false;
-        throw error;
+  const cancelDirectoryCheck = (current: Session): void => {
+    clearTimeout(current.directoryCheck);
+    current.directoryCheck = undefined;
+    current.check = undefined;
+  };
+
+  // Looks for the directory from the next whole second on. After a failure, first looks at the file, to report its
+  // removal if it went with its directory. Both looks run outside the job queue, so that a stat stalled on a share gone
+  // away holds no stop() or pause().
+  const scheduleDirectoryCheck = (current: Session, afterFailure = false): void => {
+    cancelDirectoryCheck(current);
+    const check = {};
+    current.check = check;
+    const due = (): boolean => current.check === check && live(current) && state === 'waiting';
+    if (afterFailure) {
+      current.unsettled = true;
+      void look().then(stats => {
+        if (!due()) return;
+        current.unsettled = false;
+        if (!stats) report(current, ['gone']);
+        // eventCallback may have stopped the watcher.
+        if (due()) scheduleDirectoryCheck(current);
       });
+      return;
     }
-    await establish();
-  });
+    current.directoryCheck = setTimeout(async () => {
+      current.directoryCheck = undefined;
+      const found = await directoryExists();
+      if (!due()) return;
+      if (!found) {
+        scheduleDirectoryCheck(current);
+        return;
+      }
+      void serial(async () => {
+        if (!due()) return;
+        try {
+          if (await arm(current, true)) {
+            await establish(current, 'changes');
+            return;
+          }
+        } catch (error) {
+          if (!live(current)) return;
+          // The directory is back but can't be watched, say for want of inotify watches: told once, and tried again.
+          if (!current.rearmErrorDelivered && errorCallback) {
+            current.rearmErrorDelivered = true;
+            uncaught(() => errorCallback?.(error));
+          }
+        }
+        if (live(current)) scheduleDirectoryCheck(current);
+      });
+    }, untilNextCheck());
+  };
+
+  // Starts the native watcher and resolves true, or leaves the watcher waiting and resolves false when the directory is
+  // not there; rejects when it is but can't be watched. The directory is looked at first, unless it was just found, as
+  // on macOS a watch of a missing path starts all the same, and again after, should it have gone meanwhile.
+  const arm = async (current: Session, found = false): Promise<boolean> => {
+    state = 'waiting';
+    if (!found && !await directoryExists()) return false;
+    // Before the run exists, so that its error is taken.
+    state = 'watching';
+    try {
+      await native.start();
+    } catch (error) {
+      state = 'waiting';
+      if (!await directoryExists()) return false;
+      throw error;
+    }
+    if (await directoryExists()) {
+      current.rearmErrorDelivered = false;
+      return true;
+    }
+    state = 'waiting';
+    await native.stop().catch(() => {});
+    return false;
+  };
+
+  // The native watcher failed: the file's removal, if it went with its directory, is reported, and its directory is
+  // watched again, or looked for, from the next whole second on, so that a watcher that keeps failing can't spin.
+  const takeFailure = async (): Promise<void> => {
+    const current = session;
+    if (!current?.failed) return;
+    current.failed = false;
+    if (!live(current)) return;
+    await native.stop().catch(() => {});
+    if (state === 'paused') {
+      // The native watcher stays paused through its runs until resumed.
+      await native.resume();
+      state = 'paused-waiting';
+      return;
+    }
+    state = 'waiting';
+    scheduleDirectoryCheck(current, true);
+  };
+
+  // Unlike a directory watcher's, these never reject over the state they find: starting or resuming a running watcher
+  // and stopping or pausing one that isn't do nothing, and resuming starts a stopped one. Nor do they reject when the
+  // file's directory is gone: it is watched once it is back.
+  const start = (): Promise<void> => {
+    const stopsBefore = stops;
+    return serial(async () => {
+      if (state === 'watching' || state === 'waiting') return;
+      if (state === 'paused' && session) {
+        await native.resume();
+        state = 'watching';
+        await establish(session, 'none');
+        return;
+      }
+      const resumed = state === 'paused-waiting' && session !== undefined;
+      const current: Session = resumed && session ? session : { stops: stopsBefore, failed: false,
+        rearmErrorDelivered: false };
+      session = current;
+      // What the run reports before the look establish() takes is told from that look, unless a failure left the file's
+      // state to settle from the one before it.
+      const unsettled = current.unsettled ?? false;
+      current.unsettled = false;
+      if (!unsettled) current.exists = undefined;
+      let watching;
+      try {
+        watching = await arm(current);
+      } catch (error) {
+        // A resumed watcher keeps waiting for a directory it can watch.
+        if (!resumed) {
+          state = 'stopped';
+          session = undefined;
+          throw error;
+        }
+        watching = false;
+      }
+      await establish(current, unsettled ? 'removal' : 'none');
+      if (!watching && live(current)) scheduleDirectoryCheck(current);
+    });
+  };
 
   return {
     start,
     resume: start,
     stop() {
-      ++pendingStops;
+      stops++;
       return serial(async () => {
-        --pendingStops;
-        if (!running) return;
-        running = false;
+        const current = session;
+        if (!current) return;
+        const was = state;
+        state = 'stopped';
+        session = undefined;
+        cancelDirectoryCheck(current);
+        // The native watcher stays paused through its runs until resumed.
+        if (was === 'paused') await native.resume();
         // A run that failed meanwhile has stopped already.
-        await native.stop().catch(() => {});
+        if (was === 'watching' || was === 'paused') await native.stop().catch(() => {});
       });
     },
     pause: () => serial(async () => {
-      if (!running || paused) return;
-      paused = true;
-      await native.pause();
+      if (state === 'watching') {
+        state = 'paused';
+        await native.pause();
+      } else if (state === 'waiting' && session) {
+        cancelDirectoryCheck(session);
+        state = 'paused-waiting';
+      }
     }),
     getExcludedPaths: async () => [...currentExcludedPaths],
     updateExcludedPaths: async paths => {
@@ -510,10 +682,7 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
   let context: PathContext, stats: Stats;
   try {
     context = await createPathContext(watchPath);
-    // Node's metadata APIs reject extended drive roots that the native watcher can open.
-    const metadataPath = isWin32 && /^\\\\\?\\[A-Za-z]:\\$/.test(context.watchPath) ?
-      context.watchPath.slice(4) : context.watchPath;
-    stats = await fs.stat(metadataPath);
+    stats = await fs.stat(metadataPath(context.watchPath));
   } catch {
     throw new Error('Path must be a valid path to a file or a directory.');
   }
@@ -545,8 +714,8 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
     if (_errorCallback && typeof _errorCallback !== 'function') {
       throw new TypeError('options.errorCallback must be a function.');
     }
-    implementation = await createFileWatcher(NSFW, context.watchPath, watchPath, eventCallback, errorCallback,
-      debounceMS, effectivePaths, context.isWatchPath, [...excludedPatterns]);
+    implementation = await createFileWatcher(NSFW, context.watchPath, watchPath, eventCallback,
+      _errorCallback || undefined, debounceMS, effectivePaths, context.isWatchPath, [...excludedPatterns]);
   } else {
     throw new Error('Path must be a valid path to a file or a directory');
   }

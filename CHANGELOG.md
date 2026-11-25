@@ -93,6 +93,8 @@
   and then created.
 - On macOS, a move between two directories of the watched path is reported as `RENAMED`, with `newDirectory` set to
   the destination's, as on Linux (#150). Before, only renames within a directory were paired.
+- On macOS, a rename that only changes the case of a name (`index.js` to `Index.js`) on a case-insensitive volume is
+  reported as `RENAMED` (#146), instead of as two `MODIFIED`.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

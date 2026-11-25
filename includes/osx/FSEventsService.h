@@ -82,6 +82,9 @@ private:
   void handle(std::vector<Event> events);
   static void pairSides(std::vector<RenameSide> &sides, size_t from, size_t to);
   void pairRenames(const std::vector<Event> &events, std::vector<RenameSide> &sides);
+  void pairCaseRenames(const std::vector<Event> &events, const std::vector<size_t> &present, size_t source,
+    std::vector<RenameSide> &sides);
+  std::string storedName(const std::string &path);
   void passThrough(const Event &event, const RenameSide &side);
   bool isSinceStart(const struct timespec &time) const;
   bool readAddedTime(const std::string &path, uint64_t inode, struct timespec &added) const;

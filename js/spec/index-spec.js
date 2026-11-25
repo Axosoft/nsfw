@@ -497,6 +497,38 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('reports a rename that only changes the case of the name', async function() {
+      const { RENAMED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test6');
+      const oldFile = 'testing6.file';
+      const newFile = 'Testing6.file';
+      const events = [];
+      const about = () => events.filter(event => event.directory === inPath &&
+        [event.file, event.oldFile, event.newFile].some(name => name === oldFile || name === newFile));
+
+      let watch = await nsfw(workDir, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        await fsp.rename(path.join(inPath, oldFile), path.join(inPath, newFile));
+        await waitUntil(() => about().some(event => event.action === RENAMED),
+          { message: () => `No rename in ${JSON.stringify(events)}` });
+        await barrier(events, workDir);
+        const expected = { action: RENAMED, directory: inPath, oldFile, newDirectory: inPath, newFile };
+        const actual = about().map(event => ({ action: event.action, directory: event.directory,
+          oldFile: event.oldFile, newDirectory: event.newDirectory, newFile: event.newFile }));
+        // ReadDirectoryChangesW also reports a removal next to the rename.
+        if (process.platform === 'win32') {
+          assert.ok(actual.some(event => isDeepStrictEqual(event, expected)), JSON.stringify(events));
+        } else {
+          assert.deepStrictEqual(actual, [expected]);
+        }
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     it('can listen for a move event', async function() {
       const file = 'testing.file';
       const srcInPath = path.resolve(workDir, 'test4', 'src');

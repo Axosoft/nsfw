@@ -3,6 +3,7 @@
 #include <unordered_set>
 #include <iostream>
 #include <cerrno>
+#include <climits>
 #include <cstring>
 #include <iterator>
 #include <sys/attr.h>
@@ -151,6 +152,16 @@ namespace {
     const bool isSymlink = (flags & kFSEventStreamEventFlagItemIsSymlink) != 0;
     return isSymlink ? PathFilter::Kind::DIRECTORY : isDirectory == isFile ?
       PathFilter::Kind::UNKNOWN : (isDirectory ? PathFilter::Kind::DIRECTORY : PathFilter::Kind::FILE);
+  }
+
+  bool equalIgnoringCase(const std::string &first, const std::string &second) {
+    CFStringRef firstRef = CFStringCreateWithCString(NULL, first.c_str(), kCFStringEncodingUTF8);
+    CFStringRef secondRef = CFStringCreateWithCString(NULL, second.c_str(), kCFStringEncodingUTF8);
+    const bool equal = firstRef != NULL && secondRef != NULL &&
+      CFStringCompare(firstRef, secondRef, kCFCompareCaseInsensitive | kCFCompareNonliteral) == kCFCompareEqualTo;
+    if (firstRef != NULL) CFRelease(firstRef);
+    if (secondRef != NULL) CFRelease(secondRef);
+    return equal;
   }
 }
 
@@ -369,10 +380,6 @@ void FSEventsService::pairRenames(const std::vector<Event> &events, std::vector<
         present.push_back(i);
       }
     }
-    // Two places hold the entry: not a rename of it.
-    if (present.size() > 1) {
-      continue;
-    }
     // Where the entry was before the batch: where it was reported, else the first place it was at.
     size_t source = places.front();
     for (size_t i : places) {
@@ -384,6 +391,10 @@ void FSEventsService::pairRenames(const std::vector<Event> &events, std::vector<
     }
     for (size_t i : places) {
       sides[i].transient = !sides[i].present && i != source;
+    }
+    if (present.size() > 1) {
+      pairCaseRenames(events, present, source, sides);
+      continue;
     }
     if (present.empty()) {
       continue;
@@ -413,6 +424,41 @@ void FSEventsService::pairRenames(const std::vector<Event> &events, std::vector<
   }
 }
 
+// On a case-insensitive volume, the old name of a rename that only changes its case still leads to the entry, so
+// several places hold it: the destination is the one spelled as the volume stores the name. Elsewhere they are hard
+// links, not a rename.
+void FSEventsService::pairCaseRenames(
+  const std::vector<Event> &events,
+  const std::vector<size_t> &present,
+  size_t source,
+  std::vector<RenameSide> &sides
+) {
+  if (mCaseSensitive) {
+    return;
+  }
+  // Else the latest other than the source: the name was changed again since, or can't be read.
+  size_t destination = present.back() != source ? present.back() : present.front();
+  for (size_t i : present) {
+    const std::string &path = events[i].path;
+    if (storedName(path) == path.substr(path.find_last_of('/') + 1)) {
+      destination = i;
+      break;
+    }
+  }
+  for (size_t i : present) {
+    if (!equalIgnoringCase(events[i].path, events[destination].path)) {
+      return;
+    }
+  }
+  // The other spellings only lead to the entry at the destination.
+  for (size_t i : present) {
+    sides[i].repeated = i != destination && i != source;
+  }
+  if (source != destination) {
+    pairSides(sides, source, destination);
+  }
+}
+
 // A place an entry renamed again within the batch passed through: it was never reported there, so only what was
 // there before or is there now is news.
 void FSEventsService::passThrough(const Event &event, const RenameSide &side) {
@@ -425,6 +471,26 @@ void FSEventsService::passThrough(const Event &event, const RenameSide &side) {
   }
 }
 
+// A case-insensitive lookup can resolve a spelling that is no longer stored after a rename.
+std::string FSEventsService::storedName(const std::string &path) {
+  struct attrlist request;
+  memset(&request, 0, sizeof(request));
+  request.bitmapcount = ATTR_BIT_MAP_COUNT;
+  request.commonattr = ATTR_CMN_NAME;
+  alignas(4) char buffer[sizeof(uint32_t) + sizeof(attrreference_t) + NAME_MAX * 3 + 1];
+  if (getattrlist(path.c_str(), &request, buffer, sizeof(buffer), FSOPT_NOFOLLOW) != 0) {
+    return {};
+  }
+  attrreference_t reference;
+  memcpy(&reference, buffer + sizeof(uint32_t), sizeof(reference));
+  const size_t offset = sizeof(uint32_t) + (size_t)reference.attr_dataoffset;
+  if (reference.attr_dataoffset < 0 || offset > sizeof(buffer) || reference.attr_length > sizeof(buffer) - offset) {
+    return {};
+  }
+  const char *stored = buffer + offset;
+  return std::string(stored, strnlen(stored, reference.attr_length));
+}
+
 bool FSEventsService::isExcluded(std::string filePath) {
   std::string directory, name;
   splitFilePath(directory, name, filePath);
@@ -434,7 +500,7 @@ bool FSEventsService::isExcluded(std::string filePath) {
     kCFStringEncodingUTF8
   );
   if (fileDirectory == NULL) {
-    return false;
+    return {};
   }
   CFIndex lenDirectory = CFStringGetLength(fileDirectory);
   const CFStringCompareFlags flags = pathCompareFlags();

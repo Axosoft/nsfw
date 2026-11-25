@@ -204,11 +204,10 @@ An array of events as they have happened in a directory, it's children, or to a 
 ]
 ```
 
-A directory that appears in the watched one is reported as `CREATED`, and so is what it holds, whether it was created,
-copied or moved in, on Linux and Windows: each entry once, except for the directories that are excluded, which are not
-looked into. On Windows a move from one directory to another inside the watched one is reported as `DELETED` and
-`CREATED`, so a directory moved that way has what it holds reported as `CREATED` again; on Linux it is a `RENAMED`
-alone. On macOS a directory moved in is reported alone, without what it holds.
+A directory that appears in the watched one is reported as `CREATED`, and so are its visible contents, whether it was
+created, copied or moved in. A move between directories inside the watched one is reported as `RENAMED` on Linux and
+macOS. On Windows that move is reported as `DELETED` and `CREATED`, followed by `CREATED` events for the directory's
+visible contents.
 
 Event are enumerated by the nsfw.actions enumeration
 ```js

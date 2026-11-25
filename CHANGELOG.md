@@ -95,6 +95,11 @@
   the destination's, as on Linux (#150). Before, only renames within a directory were paired.
 - On macOS, a rename that only changes the case of a name (`index.js` to `Index.js`) on a case-insensitive volume is
   reported as `RENAMED` (#146), instead of as two `MODIFIED`.
+- On macOS, an entry moved into the watched path from outside, such as a folder restored from the Trash, is reported
+  as `CREATED`, and so is what a directory holds, as on Linux, except what the excluded patterns or the ignore files
+  exclude (#31). Before, it could be reported as `MODIFIED`, and what a directory held wasn't reported. An entry moved
+  out, such as to the Trash, is reported as `DELETED`, or as `RENAMED` when FSEvents delivers its other side in
+  another batch and the entry is still found below the watched path on the same volume.
 
 ### Documentation
 - The README explains the Linux inotify limits: what happens when `fs.inotify.max_user_watches` is reached, how to

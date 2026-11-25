@@ -608,6 +608,39 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('reports a directory moved out as deleted, and moved back with what it holds as created', async function() {
+      // Moves to and from a directory outside the watched one, as moving to the Trash and restoring from it does.
+      const { CREATED, DELETED } = nsfw.actions;
+      const inPath = path.resolve(workDir, 'test7');
+      const trash = path.resolve(workDir, 'trash');
+      const directory = path.join(inPath, 'trashed');
+      await outputFile(path.join(directory, 'inner.file'), 'Inner');
+      await outputFile(path.join(directory, 'nested', 'deep.file'), 'Deep');
+      await mkdirp(trash);
+      const events = [];
+      const reported = (action, eventDirectory, file, since = 0) => events.slice(since).some(event =>
+        event.action === action && event.directory === eventDirectory && event.file === file);
+
+      let watch = await nsfw(inPath, batch => events.push(...batch), { debounceMS: DEBOUNCE });
+
+      try {
+        await watch.start();
+        await fsp.rename(directory, path.join(trash, 'trashed'));
+        await waitUntil(() => reported(DELETED, inPath, 'trashed'),
+          { message: () => `No deletion in ${JSON.stringify(events)}` });
+        const movedOut = events.length;
+        await fsp.rename(path.join(trash, 'trashed'), directory);
+        const created = [[inPath, 'trashed'], [directory, 'inner.file'], [directory, 'nested'],
+          [path.join(directory, 'nested'), 'deep.file']];
+        await waitUntil(
+          () => created.every(([eventDirectory, file]) => reported(CREATED, eventDirectory, file, movedOut)),
+          { message: () => `Missing creations in ${JSON.stringify(events)}` });
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
     it('can run multiple watchers at once', async function() {
       const dirA = path.resolve(workDir, 'test0');
       const fileA = 'testing1.file';
@@ -1209,11 +1242,9 @@ describe('Node Sentinel File Watcher', function() {
 
     }
 
-    // FSEvents reports a directory moved in, but not what it holds.
     for (const how of ['moved', 'copied']) {
       it(`reports once each entry of a directory ${how} into the watched one, but not the ignored ones`,
-        async function(t) {
-          if (process.platform === 'darwin' && how === 'moved') return t.skip();
+        async function() {
           const inPath = path.join(workDir, 'test4');
           const source = path.join(workDir, 'test5', 'arriving');
           const target = path.join(inPath, 'arriving');
@@ -1242,13 +1273,9 @@ describe('Node Sentinel File Watcher', function() {
             }
             await barrier(events, inPath);
 
-            let reported = events.filter(event => event.action !== nsfw.actions.MODIFIED &&
+            const reported = events.filter(event => event.action !== nsfw.actions.MODIFIED &&
               !(event.directory === inPath && event.file?.startsWith('barrier-')))
               .map(event => `${event.action} ${path.relative(inPath, path.join(event.directory, event.file))}`);
-            // FSEvents can report a creation more than once, when it reports the flags of several events at a time.
-            if (process.platform === 'darwin') {
-              reported = [...new Set(reported)];
-            }
             const expected = ['arriving', ...entries.map(entry => path.join('arriving', entry))]
               .map(entry => `${nsfw.actions.CREATED} ${entry}`);
             assert.deepStrictEqual(reported.sort(), expected.sort());

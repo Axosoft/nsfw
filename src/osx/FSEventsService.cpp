@@ -6,7 +6,10 @@
 #include <climits>
 #include <cstring>
 #include <iterator>
+#include <unistd.h>
 #include <sys/attr.h>
+#include <sys/fsgetpath.h>
+#include <sys/mount.h>
 
 namespace {
   // How many paths FSEventsService remembers it reported gone.
@@ -20,14 +23,28 @@ namespace {
     kFSEventStreamEventFlagItemChangeOwner | kFSEventStreamEventFlagItemXattrMod;
 }
 
-FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
-  bool recursive):
-  mPath(path), mQueue(queue), mRootChanged(false), mRecursive(recursive) {
+FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string path,
+  const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter, bool recursive):
+  mPath(path), mQueue(queue), mFilter(filter), mRootChanged(false), mRecursive(recursive), mDevice(0), mCanLocate(false) {
   mCaseSensitive = pathconf(path.c_str(), _PC_CASE_SENSITIVE) > 0;
   mExcludedPaths = createExcludedPaths(excludedPaths);
   mRootExcluded = excludesRoot(mExcludedPaths);
   clock_gettime(CLOCK_REALTIME, &mStartTime);
   mStartEventId = FSEventsGetCurrentEventId();
+
+  // Use the same spelling for the watched path and for entries looked up by inode.
+  struct statfs volume;
+  struct stat root;
+  if (statfs(path.c_str(), &volume) == 0 && stat(path.c_str(), &root) == 0) {
+    mVolume = volume.f_fsid;
+    mDevice = root.st_dev;
+    char buffer[PATH_MAX];
+    const ssize_t length = fsgetpath(buffer, sizeof(buffer), &mVolume, root.st_ino);
+    if (length > 0) {
+      mVolumePath.assign(buffer, strnlen(buffer, (size_t)length));
+      mCanLocate = true;
+    }
+  }
 
   mRunLoop = new RunLoop(this, path);
 
@@ -41,6 +58,7 @@ FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string 
 FSEventsService::~FSEventsService() {
   // Stops the run loop thread, the only other reader of mExcludedPaths.
   if (mRunLoop != NULL) {
+    mStopping = true;
     delete mRunLoop;
   }
   releaseExcludedPaths(mExcludedPaths);
@@ -136,15 +154,6 @@ namespace {
     return true;
   }
 
-  // What an entry is for the filter, which needs it once the entry is gone. A symlink counts as a directory, which it
-  // most often leads to, as the filter follows it when it can, so its removal is judged like its creation was.
-  PathFilter::Kind kindFromMode(mode_t mode) {
-    if (S_ISDIR(mode) || S_ISLNK(mode)) {
-      return PathFilter::Kind::DIRECTORY;
-    }
-    return PathFilter::Kind::FILE;
-  }
-
   // As kindFromMode(), unless the flags coalesce two entries.
   PathFilter::Kind kindOf(FSEventStreamEventFlags flags) {
     const bool isDirectory = (flags & kFSEventStreamEventFlagItemIsDir) != 0;
@@ -163,6 +172,14 @@ namespace {
     if (secondRef != NULL) CFRelease(secondRef);
     return equal;
   }
+}
+
+// The filter needs a type after the entry disappears. A symlink can still be a directory to the filter.
+PathFilter::Kind FSEventsService::kindFromMode(mode_t mode) {
+  if (S_ISDIR(mode) || S_ISLNK(mode)) {
+    return PathFilter::Kind::DIRECTORY;
+  }
+  return PathFilter::Kind::FILE;
 }
 
 // data: an extended data dictionary, or the bare path when the system doesn't give one.
@@ -208,9 +225,10 @@ void FSEventsService::handle(std::vector<Event> events) {
       side.inode = file.st_ino;
       side.present = events[i].inode == 0 || events[i].inode == side.inode;
       side.kind = kindFromMode(file.st_mode);
+      side.isDirectory = S_ISDIR(file.st_mode);
       side.device = file.st_dev;
-    } else if (events[i].inode != 0) {
       side.hardLinked = side.present && !S_ISDIR(file.st_mode) && file.st_nlink > 1;
+    } else if (events[i].inode != 0) {
       // Only an entry FSEvents told the inode of is looked for by volume. The nearest directory still there: one gone
       // too was on the same volume as its parent, unless it was a mount point.
       std::string directory = events[i].path, name;
@@ -229,8 +247,13 @@ void FSEventsService::handle(std::vector<Event> events) {
     if (sides[i].renamed) {
       auto earlier = first.find(events[i].path);
       if (earlier != first.end()) {
-        events[i].flags |= events[earlier->second].flags;
-        sides[earlier->second].repeated = true;
+        const Event &previous = events[earlier->second];
+        if (previous.inode == 0 || events[i].inode == 0 || previous.inode == events[i].inode) {
+          sides[i].creationObserved = (previous.flags & kFSEventStreamEventFlagItemCreated) != 0 &&
+            (previous.flags & kFSEventStreamEventFlagItemRemoved) == 0;
+          events[i].flags |= previous.flags;
+          sides[earlier->second].repeated = true;
+        }
         first.erase(earlier);
       }
       continue;
@@ -276,6 +299,9 @@ void FSEventsService::handle(std::vector<Event> events) {
     }
     for (size_t i = 0; i < events.size(); ++i) {
       if (splitRenames[i] && sides[i].from && !mRootChanged) {
+        if (sides[i].creationObserved) {
+          rememberMissing(events[i].path, events[i].inode, true);
+        }
         remove(events[i].path, sides[sides[i].partner].kind, events[i].inode);
       }
     }
@@ -284,6 +310,9 @@ void FSEventsService::handle(std::vector<Event> events) {
   for (size_t i = 0; i < events.size(); ++i) {
     const Event &event = events[i];
     const RenameSide &side = sides[i];
+    if (side.creationObserved && !side.repeated && !splitRenames[i] && !mRootChanged) {
+      rememberMissing(event.path, event.inode, true);
+    }
     if (!side.renamed) {
       if (!side.repeated) {
         classify(event, kindOf(event.flags));
@@ -293,21 +322,23 @@ void FSEventsService::handle(std::vector<Event> events) {
       continue;
     } else if (splitRenames[i]) {
       if (!side.from) {
-        create(event.path, side.inode, side.kind);
+        appear(event.path, side);
       }
     } else if (side.repeated) {
       // A later side at the same path speaks for it.
       continue;
     } else if (side.transient) {
       passThrough(event, side);
+    } else if (side.partner < 0 && side.present) {
+      arrive(event, side);
     } else if (side.partner < 0) {
-      classify(event, kindOf(event.flags));
+      depart(event, side);
     } else if (side.from) {
       const RenameSide &to = sides[side.partner];
       rename(event.path, events[side.partner].path, to.inode, to.kind);
       // Something took the place the entry left.
       if (side.exists && !side.replaced && side.inode != to.inode) {
-        create(event.path, side.inode, side.kind);
+        appear(event.path, side);
       }
     }
   }
@@ -345,7 +376,6 @@ void FSEventsService::pairRenames(const std::vector<Event> &events, std::vector<
     const uint64_t inode = entry.first.second;
     std::vector<size_t> &candidates = entry.second;
     std::sort(candidates.begin(), candidates.end(), byId);
-    // One side speaks for each place the entry was at, its latest, in the order the entry first was there.
     const bool hardLinked = std::any_of(candidates.begin(), candidates.end(), [&](size_t i) {
       return sides[i].hardLinked || (events[i].flags & kFSEventStreamEventFlagItemIsHardlink) != 0;
     });
@@ -362,6 +392,7 @@ void FSEventsService::pairRenames(const std::vector<Event> &events, std::vector<
       }
       continue;
     }
+    // One side speaks for each place the entry was at, its latest, in the order the entry first was there.
     std::vector<size_t> places;
     std::unordered_map<std::string, size_t> placeOf;
     for (size_t i : candidates) {
@@ -370,7 +401,9 @@ void FSEventsService::pairRenames(const std::vector<Event> &events, std::vector<
         placeOf.emplace(events[i].path, places.size());
         places.push_back(i);
       } else {
-        sides[places[found->second]].repeated = true;
+        RenameSide &previous = sides[places[found->second]];
+        sides[i].creationObserved = sides[i].creationObserved || previous.creationObserved;
+        previous.repeated = true;
         places[found->second] = i;
       }
     }
@@ -465,10 +498,126 @@ void FSEventsService::passThrough(const Event &event, const RenameSide &side) {
   uint64_t reported = 0;
   const bool known = lookUpReported(event.path, reported);
   if (side.exists && !side.replaced && !(known && reported == side.inode)) {
-    create(event.path, side.inode, side.kind);
+    appear(event.path, side);
   } else if (!side.exists && (known || (event.flags & kFSEventStreamEventFlagItemRemoved) != 0)) {
     remove(event.path, kindOf(event.flags));
   }
+}
+
+// A renamed side with no other side in the batch: an entry that moved in from outside the watched path, as when
+// restored from the Trash, one that left and came back within the batch, or one the watcher already reported there and
+// whose flags still hold an earlier rename.
+void FSEventsService::arrive(const Event &event, const RenameSide &side) {
+  if (!mCaseSensitive && !side.returned) {
+    std::string directory, name;
+    splitFilePath(directory, name, event.path);
+    const std::string spelling = storedName(event.path);
+    if (!spelling.empty() && spelling != name && equalIgnoringCase(name, spelling)) {
+      const std::string destination = (directory == "/" ? directory : directory + "/") + spelling;
+      struct stat file;
+      if (lstat(destination.c_str(), &file) == 0 && (uint64_t)file.st_ino == side.inode &&
+        file.st_dev == side.device) {
+        rename(event.path, destination, side.inode, side.kind);
+        return;
+      }
+    }
+  }
+  uint64_t reported = 0;
+  const bool known = lookUpReported(event.path, reported);
+  if (side.returned || (known && reported == side.inode)) {
+    auto pending = mGone.find(event.path);
+    if (!known && pending != mGone.end() && pending->second.pendingCreation &&
+      (pending->second.inode == 0 || pending->second.inode == side.inode)) {
+      appear(event.path, side);
+    } else if ((event.flags & kModifiedFlags) != 0) {
+      modify(event.path);
+    }
+    return;
+  }
+  struct timespec added;
+  if (!known && !wasReportedGone(event) && (event.flags & kModifiedFlags) != 0 &&
+    readAddedTime(event.path, side.inode, added) && !isSinceStart(added)) {
+    modify(event.path);
+    return;
+  }
+  // The entry reported there left, under an event FSEvents coalesced with this one.
+  if (known) {
+    remove(event.path);
+  }
+  appear(event.path, side);
+}
+
+// Reports what a side's path holds now as created, and what it holds if a directory, as FSEvents only reports the
+// directory when one comes from elsewhere.
+void FSEventsService::appear(const std::string &path, const RenameSide &side) {
+  create(path, side.inode, side.kind);
+  if (side.isDirectory) {
+    createContents(path, side.inode, side.device);
+  }
+}
+
+// A renamed side whose entry is gone with no other side in the batch: an entry that moved out of the watched path, as
+// when moved to the Trash, or whose other side FSEvents delivers in a later batch. Where it is now tells which.
+void FSEventsService::depart(const Event &event, const RenameSide &side) {
+  uint64_t reported = 0;
+  const bool known = lookUpReported(event.path, reported);
+  if (side.exists && known && reported == side.inode) {
+    // Its departure was reported before what took its place.
+    if ((event.flags & kModifiedFlags) != 0) {
+      modify(event.path);
+    }
+    return;
+  }
+  // Its departure was reported with an earlier batch, whose flags this one repeats.
+  if (!side.exists && wasReportedGone(event)) {
+    return;
+  }
+  // Created and gone with nothing reported there, as classify() reports it.
+  if ((event.flags & kFSEventStreamEventFlagItemCreated) != 0 && !known) {
+    rememberMissing(event.path, event.inode, true);
+  }
+  std::string destination;
+  // fsgetpath() only looks on the watched path's volume.
+  const bool onVolume = side.device == mDevice;
+  if (
+    event.inode != 0 && onVolume && (event.flags & kFSEventStreamEventFlagItemIsHardlink) == 0 &&
+    locate(event.inode, destination) && destination != event.path &&
+    !isExcluded(destination)
+  ) {
+    rename(event.path, destination, event.inode, PathFilter::Kind::UNKNOWN);
+  } else {
+    remove(event.path, kindOf(event.flags), event.inode);
+  }
+  if (side.exists && !side.replaced) {
+    appear(event.path, side);
+  }
+}
+
+// Where the entry with inode is now, if its absolute path is inside the watched tree.
+bool FSEventsService::locate(uint64_t inode, std::string &path) {
+  if (!mCanLocate) {
+    return false;
+  }
+  char buffer[PATH_MAX];
+  fsid_t volume = mVolume;
+  const ssize_t length = fsgetpath(buffer, sizeof(buffer), &volume, inode);
+  if (length <= 0) {
+    return false;
+  }
+  const std::string found(buffer, strnlen(buffer, (size_t)length));
+  const std::string prefix = mVolumePath == "/" ? mVolumePath : mVolumePath + "/";
+  if (found.size() <= prefix.size() || found.compare(0, prefix.size(), prefix) != 0) {
+    return false;
+  }
+  path = (mPath == "/" ? mPath : mPath + "/") + found.substr(prefix.size());
+  if (isOutsideChildren(path.c_str())) {
+    return false;
+  }
+  // Another volume mounted below the watched path can hide the one found there. With another hard link, the path
+  // found may be that link rather than where the entry went; a directory's link count only counts what it holds.
+  struct stat file;
+  return lstat(path.c_str(), &file) == 0 && file.st_dev == mDevice && (uint64_t)file.st_ino == inode &&
+    (S_ISDIR(file.st_mode) || file.st_nlink == 1);
 }
 
 // A case-insensitive lookup can resolve a spelling that is no longer stored after a rename.
@@ -494,13 +643,18 @@ std::string FSEventsService::storedName(const std::string &path) {
 bool FSEventsService::isExcluded(std::string filePath) {
   std::string directory, name;
   splitFilePath(directory, name, filePath);
+  return isExcludedDirectory(directory);
+}
+
+// Whether what directory holds is excluded.
+bool FSEventsService::isExcludedDirectory(const std::string &directory) {
   CFStringRef fileDirectory = CFStringCreateWithCString(
     NULL,
     directory.c_str(),
     kCFStringEncodingUTF8
   );
   if (fileDirectory == NULL) {
-    return {};
+    return false;
   }
   CFIndex lenDirectory = CFStringGetLength(fileDirectory);
   const CFStringCompareFlags flags = pathCompareFlags();
@@ -578,10 +732,13 @@ bool FSEventsService::readAddedTime(const std::string &path, uint64_t inode, str
 }
 
 bool FSEventsService::appearedWhileWatching(const Event &event, const struct stat &file) const {
+  if (event.inode != 0 && event.inode != (uint64_t)file.st_ino) {
+    return false;
+  }
   if (isSinceStart(file.st_birthtimespec)) {
     return true;
   }
-  if ((event.flags & kCreatedFlags) == 0 || (event.inode != 0 && event.inode != (uint64_t)file.st_ino)) {
+  if ((event.flags & kCreatedFlags) == 0) {
     return false;
   }
   // Backdating a copy's modification time can also backdate its birth time. Its addition time can still
@@ -620,11 +777,8 @@ void FSEventsService::classify(const Event &event, PathFilter::Kind kind) {
       }
       return;
     }
-    const auto missing = mGone.find(event.path);
-    const bool wasCreated = missing != mGone.end() && missing->second.pendingCreation &&
-      (event.inode == 0 || missing->second.inode == 0 || event.inode == missing->second.inode);
-    if ((hasCreation || wasCreated) && !known) {
-      create(event.path, 0, kind);
+    if (hasCreation && !known) {
+      rememberMissing(event.path, event.inode, true);
     }
     remove(event.path, kind, known ? reported : event.inode);
     return;
@@ -700,8 +854,18 @@ void FSEventsService::modify(std::string path) {
 }
 
 void FSEventsService::remove(std::string path, PathFilter::Kind kind, uint64_t inode) {
+  reportPendingCreation(path, inode, kind);
   dispatch(DELETED, path, kind);
   noteGone(path, inode);
+}
+
+void FSEventsService::reportPendingCreation(const std::string &path, uint64_t inode, PathFilter::Kind kind) {
+  const auto found = mGone.find(path);
+  if (found != mGone.end() && found->second.pendingCreation && mReported.count(path) == 0 &&
+    (found->second.inode == 0 || inode == 0 || found->second.inode == inode)) {
+    forgetGone(path);
+    dispatch(CREATED, path, kind);
+  }
 }
 
 void FSEventsService::noteGone(const std::string &path, uint64_t inode) {
@@ -753,19 +917,29 @@ void FSEventsService::noteReported(const std::string &path, uint64_t inode) {
 }
 
 void FSEventsService::rename(const std::string &from, const std::string &to, uint64_t inode, PathFilter::Kind kind) {
+  reportPendingCreation(from, inode, kind);
   std::string fromDirectory, fromName, toDirectory, toName;
   splitFilePath(fromDirectory, fromName, from);
   splitFilePath(toDirectory, toName, to);
+  const bool hiddenSource = mFilter && mFilter->isDirectoryIgnored(fromDirectory, fromName);
   mQueue->enqueue(RENAMED, fromDirectory, fromName, toDirectory, toName, kind);
   // What a directory holds moves along with it, over what the destination held.
   noteReported(to, 0);
   const std::vector<std::pair<std::string, uint64_t>> held(
     mReported.lower_bound(from + "/"), mReported.lower_bound(from + "0"));
   noteGone(from, inode);
-  for (const auto &entry : held) {
-    mReported[to + entry.first.substr(from.size())] = entry.second;
+  if (!hiddenSource) {
+    for (const auto &entry : held) {
+      noteReported(to + entry.first.substr(from.size()), entry.second);
+    }
   }
   noteReported(to, inode);
+  if (mRecursive && hiddenSource) {
+    struct stat file;
+    if (lstat(to.c_str(), &file) == 0 && (uint64_t)file.st_ino == inode && S_ISDIR(file.st_mode)) {
+      createContents(to, inode, file.st_dev);
+    }
+  }
 }
 
 void FSEventsService::splitFilePath(std::string &directory, std::string &name, const std::string &path) {

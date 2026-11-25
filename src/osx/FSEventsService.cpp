@@ -105,25 +105,48 @@ void FSEventsServiceCallback(
   const FSEventStreamEventId eventIds[]
 ) {
   FSEventsService *eventsService = (FSEventsService *)clientCallBackInfo;
+  if (eventsService->mLostEvents != FSEventsService::LostEvents::NONE) {
+    return;
+  }
+  const FSEventStreamEventFlags rootChanged = kFSEventStreamEventFlagRootChanged;
+  auto isRootChange = [&](size_t i) { return eventIds[i] == 0 && (eventFlags[i] & rootChanged) == rootChanged; };
   CFArrayRef eventData = (CFArrayRef)eventPaths;
   std::vector<FSEventsService::Event> events;
   events.reserve(numEvents);
   for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
-    const FSEventStreamEventFlags rootChanged = kFSEventStreamEventFlagRootChanged;
-    if (eventIds[i] == 0 && (eventFlags[i] & rootChanged) == rootChanged) {
+    if (isRootChange(i)) {
       eventsService->mRootChanged = true;
       eventsService->mQueue->wake(EventQueue::WAKE_ERROR);
       break;
     }
     FSEventsService::Event event;
-    if (!FSEventsService::readEventData(CFArrayGetValueAtIndex(eventData, i), event.path, event.inode)) {
-      continue;
-    }
-    if (eventsService->isOutsideChildren(event.path.c_str())) {
-      continue;
+    const bool readable =
+      FSEventsService::readEventData(CFArrayGetValueAtIndex(eventData, i), event.path, event.inode);
+    if (!readable) {
+      event.path.clear();
     }
     event.flags = eventFlags[i];
     event.id = eventIds[i];
+    #ifdef NSFW_TEST_SLOW_1
+      eventsService->runTestHook(event);
+    #endif
+    // Before any filtering: the path of such an event is the directory whose changes are lost, not an entry.
+    const FSEventsService::LostEvents lost = eventsService->lostEventsOf(event);
+    if (lost != FSEventsService::LostEvents::NONE) {
+      // A root change later in the batch is what to report: restarting at the same path won't help until it is fixed.
+      for (size_t later = i + 1; later < numEvents; ++later) {
+        if (isRootChange(later)) {
+          eventsService->mRootChanged = true;
+          break;
+        }
+      }
+      eventsService->mLostEvents = lost;
+      eventsService->mQueue->wake(EventQueue::WAKE_ERROR);
+      return;
+    }
+    if (!readable || eventsService->isOutsideChildren(event.path.c_str())) {
+      continue;
+    }
     // A stream that starts now can still deliver the latest changes made before it started. Id 0 is about the
     // stream or a volume, not a change of an entry.
     if (event.id <= eventsService->mStartEventId) {
@@ -855,12 +878,95 @@ std::string FSEventsService::getError() {
   if (mRootChanged) {
     return "Service shutdown: root path changed (renamed or deleted)";
   }
+  switch (mLostEvents.load()) {
+    case LostEvents::DROPPED:
+      return "FSEvents dropped events, events were lost";
+    case LostEvents::COALESCED:
+      return "FSEvents coalesced the events of a directory tree, events were lost";
+    case LostEvents::NONE:
+      break;
+  }
   return "Service shutdown unexpectedly";
 }
 
 bool FSEventsService::hasErrored() {
-  return !isWatching() || mRootChanged;
+  return !isWatching() || mRootChanged || mLostEvents != LostEvents::NONE;
 }
+
+// Whether the event says events were lost that this watcher would have reported. FSEvents then sets MustScanSubDirs,
+// and the path is the directory to scan again, with all it holds; UserDropped or KernelDropped tell its queues
+// overflowed, which may have lost events anywhere, so they count whatever the event's id. An event without a path, or
+// with id 0, which isn't about a change made before watching, counts as lost all the same.
+// The id of an event is that of the latest change it stands for, so a request to scan again numbered before the stream
+// started lost nothing made since. One numbered later may still stand only for changes made just before, which
+// FSEvents can number late: nothing tells those apart, so it counts as lost.
+FSEventsService::LostEvents FSEventsService::lostEventsOf(const Event &event) {
+  const FSEventStreamEventFlags dropped = kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped;
+  if ((event.flags & dropped) != 0) {
+    return LostEvents::DROPPED;
+  }
+  if ((event.flags & kFSEventStreamEventFlagMustScanSubDirs) == 0 || (event.id != 0 && event.id <= mStartEventId)) {
+    return LostEvents::NONE;
+  }
+  return reportsBelow(event.path) ? LostEvents::COALESCED : LostEvents::NONE;
+}
+
+// Whether this watcher reports changes to what directory holds, or to what the directories in it hold. An empty
+// directory is unknown, so it may hold the watched path.
+bool FSEventsService::reportsBelow(std::string directory) {
+  directory = filterpaths::withoutTrailingSeparators(directory);
+  // ASCII case aside on a case-insensitive volume, as the watched path and FSEvents may spell a name differently.
+  auto within = [this](const std::string &inner, const std::string &outer) {
+    return filterpaths::startsWith(inner + "/", outer == "/" ? outer : outer + "/", mCaseSensitive);
+  };
+  // The stream only tells of the watched path, what it holds and its ancestors: a path neither below nor above it is
+  // spelled otherwise, as in another normalization, and may be any of them.
+  if (directory.empty() || within(mPath, directory) || !within(directory, mPath)) {
+    return !isExcludedDirectory(mPath);
+  }
+  // A non-recursive watcher reports the entries of the watched directory, never what one of them holds. A request to
+  // scan one of them again may still stand for changes of the entry itself, which file events are spelled as.
+  if (isOutsideChildren(directory.c_str()) || isExcludedDirectory(directory)) {
+    return false;
+  }
+  std::string parent, name;
+  splitFilePath(parent, name, directory);
+  return !(mFilter && mFilter->isDirectoryIgnored(parent, name));
+}
+
+#ifdef NSFW_TEST_SLOW_1
+// Lets js/spec/index-slow-spec.js inject the events FSEvents sends when it loses some, which it can't cause from
+// outside, by creating a file with one of these names: as if FSEvents dropped events, or coalesced the changes of the
+// directory the file is in. Followed by -before-start, the name numbers the event as the last one before the stream
+// started. Only for the creation of a file still there: the stream of the next test can deliver the events of the
+// files an earlier one created and removed.
+void FSEventsService::runTestHook(Event &event) {
+  std::string directory, name;
+  splitFilePath(directory, name, event.path);
+  struct stat file;
+  if (
+    (event.flags & kFSEventStreamEventFlagItemCreated) == 0 || lstat(event.path.c_str(), &file) != 0 ||
+    (event.inode != 0 && (uint64_t)file.st_ino != event.inode)
+  ) {
+    return;
+  }
+  const std::string drop = "nsfw-test-drop-events", coalesce = "nsfw-test-coalesce-events", early = "-before-start";
+  const bool beforeStart = name == drop + early || name == coalesce + early;
+  if (name == drop || name == drop + early) {
+    event.flags |= kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped;
+  } else if (name == coalesce || name == coalesce + early) {
+    // With the trailing separator FSEvents gives a directory to scan again.
+    event.path = directory + "/";
+    event.flags = kFSEventStreamEventFlagMustScanSubDirs;
+    event.inode = 0;
+  } else {
+    return;
+  }
+  if (beforeStart) {
+    event.id = mStartEventId;
+  }
+}
+#endif
 
 void FSEventsService::runLoopExited() {
   mQueue->wake(EventQueue::WAKE_ERROR);

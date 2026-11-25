@@ -5,7 +5,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 
 const {
-  DEBOUNCE, WORKDIR: workDir, countInotifyWatches, it, mkdirp, readDescriptors, remove, sleep
+  DEBOUNCE, WORKDIR: workDir, countInotifyWatches, eventually, it, mkdirp, readDescriptors, remove, sleep
 } = require('./common');
 
 const nsfw = require('../dist');
@@ -88,24 +88,26 @@ describe('Node Sentinel File Watcher (slow)', function() {
     }
   });
 
+  const touch = file => fs.closeSync(fs.openSync(path.join(workDir, file), 'w'));
+
+  async function createWatcher(watchPath = workDir, options = {}) {
+    let resolveError;
+    const errored = new Promise(resolve => { resolveError = resolve; });
+    const events = [];
+    const watch = await nsfw(watchPath, batch => events.push(...batch),
+      { debounceMS: DEBOUNCE, errorCallback: resolveError, ...options });
+    return { watch, errored, events };
+  }
+
+  async function expectError(errored, timeout) {
+    const error = await Promise.race([errored, sleep(timeout).then(() => null)]);
+    assert.ok(error instanceof Error, `errorCallback was not called within ${timeout} ms`);
+    return error.message;
+  }
+
   // The slow build has test hooks in the Linux backend, triggered by files with these names in the watched directory.
   // FreeBSD builds the same backend on libinotify, which these hooks weren't written for and has no /proc limit.
   describe('inotify errors', { skip: process.platform !== 'linux' }, function() {
-    const touch = file => fs.closeSync(fs.openSync(path.join(workDir, file), 'w'));
-
-    async function createWatcher() {
-      let resolveError;
-      const errored = new Promise(resolve => { resolveError = resolve; });
-      const watch = await nsfw(workDir, () => {}, { debounceMS: DEBOUNCE, errorCallback: resolveError });
-      return { watch, errored };
-    }
-
-    async function expectError(errored, timeout) {
-      const error = await Promise.race([errored, sleep(timeout).then(() => null)]);
-      assert.ok(error instanceof Error, `errorCallback was not called within ${timeout} ms`);
-      return error.message;
-    }
-
     function maxQueuedEventsOrSkip(test) {
       const maxQueuedEvents = Number(fs.readFileSync('/proc/sys/fs/inotify/max_queued_events', 'utf8'));
       if (!(maxQueuedEvents <= 50000)) {
@@ -238,4 +240,142 @@ describe('Node Sentinel File Watcher (slow)', function() {
     });
   });
 
+  // The slow build injects the events FSEvents sends when it loses some, as the events of files with these names.
+  describe('FSEvents lost events', { skip: process.platform !== 'darwin' }, function() {
+    const dropped = 'FSEvents dropped events, events were lost';
+    const coalesced = 'FSEvents coalesced the events of a directory tree, events were lost';
+
+    // The events injected come before the one of file, so an error they caused would come by then, or soon after.
+    async function expectNoError(errored, events, file) {
+      const failed = errored.then(error => error.message);
+      const reported = eventually(() => events.some(event => event.file === file), { timeout: 10000 });
+      assert.strictEqual(await Promise.race([failed, reported]), true, `no event for ${file}, or an error`);
+      assert.strictEqual(await Promise.race([failed, sleep(DEBOUNCE * 5).then(() => null)]), null);
+    }
+
+    async function expectStopped(options, file, message) {
+      const { watch, errored } = await createWatcher(workDir, options);
+      try {
+        await watch.start();
+        touch(file);
+        assert.strictEqual(await expectError(errored, 10000), message);
+        await assert.rejects(watch.stop(), /not running/);
+      } finally {
+        await watch.stop().catch(() => {});
+      }
+    }
+
+    it('reports dropped events and stops the watcher', async function() {
+      await expectStopped({}, 'nsfw-test-drop-events', dropped);
+    });
+
+    it('reports dropped events in an excluded directory', async function() {
+      await fsp.mkdir(path.join(workDir, 'excluded'));
+      await expectStopped({ excludedPatterns: ['/excluded'] }, 'excluded/nsfw-test-drop-events', dropped);
+    });
+
+    it('reports events coalesced in the watched directory and stops the watcher', async function() {
+      await expectStopped({}, 'nsfw-test-coalesce-events', coalesced);
+    });
+
+    it('reports events coalesced in a directory below the watched one', async function() {
+      await fsp.mkdir(path.join(workDir, 'sub'));
+      await expectStopped({}, 'sub/nsfw-test-coalesce-events', coalesced);
+    });
+
+    it('reports dropped events whatever their id', async function() {
+      await expectStopped({}, 'nsfw-test-drop-events-before-start', dropped);
+    });
+
+    it('ignores events coalesced before the watcher started', async function() {
+      const { watch, errored, events } = await createWatcher();
+      try {
+        await watch.start();
+        touch('nsfw-test-coalesce-events-before-start');
+        touch('reported');
+        await expectNoError(errored, events, 'reported');
+      } finally {
+        await watch.stop().catch(() => {});
+      }
+    });
+
+    it('ignores events coalesced in an excluded or ignored directory', async function() {
+      await fsp.mkdir(path.join(workDir, 'excluded', 'deeper'), { recursive: true });
+      await fsp.mkdir(path.join(workDir, 'ignored', 'deeper'), { recursive: true });
+      const { watch, errored, events } = await createWatcher(workDir, {
+        excludedPaths: [path.join(workDir, 'excluded')],
+        excludedPatterns: ['ignored/']
+      });
+      try {
+        await watch.start();
+        touch('excluded/nsfw-test-coalesce-events');
+        touch('excluded/deeper/nsfw-test-coalesce-events');
+        touch('ignored/nsfw-test-coalesce-events');
+        touch('ignored/deeper/nsfw-test-coalesce-events');
+        touch('reported');
+        await expectNoError(errored, events, 'reported');
+      } finally {
+        await watch.stop().catch(() => {});
+      }
+    });
+
+    // A watched file recovers from any failure of its native watcher, so what that watcher reports can only be seen on
+    // one built here with the options a watched file uses, see createFileWatcher() in js/src/index.ts.
+    function createFileNativeWatcher(name) {
+      let resolveError;
+      const errored = new Promise(resolve => { resolveError = resolve; });
+      const events = [];
+      const watch = new nsfw._native(workDir, batch => events.push(...batch), {
+        debounceMS: DEBOUNCE,
+        errorCallback: resolveError,
+        excludedPaths: [],
+        excludedPatterns: ['/*', `!/${name}`, `/${name}/*`],
+        respectGitignore: false,
+        followFileSymlinks: false,
+        recursive: false
+      });
+      return { watch, errored, events };
+    }
+
+    it('ignores, for a watched file, events coalesced below its directory', async function() {
+      await fsp.mkdir(path.join(workDir, 'sub'));
+      touch('watched');
+      const { watch, errored, events } = createFileNativeWatcher('watched');
+      try {
+        await watch.start();
+        touch('sub/nsfw-test-coalesce-events');
+        await fsp.appendFile(path.join(workDir, 'watched'), 'changed');
+        await expectNoError(errored, events, 'watched');
+      } finally {
+        await watch.stop().catch(() => {});
+      }
+    });
+
+    it('reports, for a watched file, events coalesced in its directory', async function() {
+      touch('watched');
+      const { watch, errored } = createFileNativeWatcher('watched');
+      try {
+        await watch.start();
+        touch('nsfw-test-coalesce-events');
+        assert.strictEqual(await expectError(errored, 10000), coalesced);
+      } finally {
+        await watch.stop().catch(() => {});
+      }
+    });
+
+    it('recovers, for a watched file, from events coalesced in its directory', async function() {
+      touch('watched');
+      const { watch, errored, events } = await createWatcher(path.join(workDir, 'watched'));
+      try {
+        await watch.start();
+        // Fails its native watcher, as the spec above shows; the directory is watched again from the next whole second.
+        touch('nsfw-test-coalesce-events');
+        await sleep(2500);
+        await fsp.appendFile(path.join(workDir, 'watched'), 'changed');
+        await expectNoError(errored, events, 'watched');
+      } finally {
+        await watch.stop().catch(() => {});
+      }
+    });
+  });
 });

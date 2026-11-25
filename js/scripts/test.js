@@ -34,7 +34,7 @@ exec('node --test --test-reporter=dot js/scripts/release-notes-test.js');
 // One file at a time: the specs share the mockfs work directory.
 const nodeTest = 'node --test --test-concurrency=1 --test-force-exit --expose-gc --test-reporter=spec';
 
-if (process.platform !== 'win32' && process.platform !== 'darwin') {
+if (process.platform !== 'win32') {
   // When ran as a npm script we can invoke npm bins such as node-gyp directly
   if (runsSlow) {
     exec('node-gyp rebuild', { env: { ...process.env, NSFW_TEST_SLOW: 1 } });

@@ -4,10 +4,25 @@
 #pragma unmanaged
 
 void EventQueue::clear() {
+  Dropped dropped;
   std::lock_guard<std::mutex> lock(mutex);
-  queue.clear();
-  mHeldFrom = 0;
+  dropLocked(dropped);
   ++mEpoch;
+}
+
+// Also the batches JavaScript hasn't taken yet: a stop, a pause or an overflow drops them, and a new run doesn't
+// inherit them. A batch JavaScript has taken counts until it is done with it.
+void EventQueue::dropLocked(Dropped &dropped) {
+  dropped.queued.swap(queue);
+  mHeldFrom = 0;
+  for (auto &weakBatch : mBatches) {
+    auto batch = weakBatch.lock();
+    if (!batch || batch->state != EventBatch::WAITING) continue;
+    mInFlight -= batch->count;
+    batch->state = EventBatch::DONE;
+    dropped.batches.push_back(std::move(batch->events));
+  }
+  mBatches.clear();
 }
 
 void EventQueue::holdEvents() {
@@ -20,6 +35,7 @@ void EventQueue::holdEvents() {
 bool EventQueue::releaseEvents(bool keepTrailingRemoval) {
   bool keptRemoval;
   bool released;
+  bool flush;
   {
     std::lock_guard<std::mutex> lock(mutex);
     if (!mHolding) return false;
@@ -28,8 +44,9 @@ bool EventQueue::releaseEvents(bool keepTrailingRemoval) {
     released = deliverable > mHeldFrom;
     mHolding = keptRemoval;
     mHeldFrom = keptRemoval ? deliverable : 0;
+    flush = flushDueLocked();
   }
-  if (released) wake(WAKE_EVENTS);
+  if (released) wake(flush ? WAKE_EVENTS | WAKE_FLUSH : WAKE_EVENTS);
   return keptRemoval;
 }
 
@@ -52,23 +69,74 @@ std::unique_ptr<Event> EventQueue::dequeue() {
   return retVal;
 }
 
-std::unique_ptr<std::vector<std::unique_ptr<Event>>> EventQueue::dequeueAll(uint64_t &epoch) {
+std::shared_ptr<EventBatch> EventQueue::dequeueAll() {
   std::lock_guard<std::mutex> lock(mutex);
-  const auto queueSize = mHolding ? mHeldFrom : queue.size();
+  const auto queueSize = deliverableLocked();
   if (queueSize == 0) {
     return nullptr;
   }
 
-  std::unique_ptr<std::vector<std::unique_ptr<Event>>> events(new std::vector<std::unique_ptr<Event>>);
+  auto batch = std::make_shared<EventBatch>();
   for (size_t i = 0; i < queueSize; ++i) {
     auto &front = queue.front();
-    events->emplace_back(std::move(front));
+    batch->events.emplace_back(std::move(front));
     queue.pop_front();
   }
+  batch->count = queueSize;
   mHeldFrom = 0;
-  epoch = mEpoch;
+  mInFlight += queueSize;
+  mBatches.push_back(batch);
 
-  return events;
+  return batch;
+}
+
+std::vector<std::unique_ptr<Event>> EventQueue::takeBatch(EventBatch &batch) {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (batch.state != EventBatch::WAITING) return {};
+  batch.state = EventBatch::TAKEN;
+  // JavaScript takes them in order: the ones before it are gone too, or never were sent.
+  while (!mBatches.empty()) {
+    auto front = mBatches.front().lock();
+    if (front && front->state == EventBatch::WAITING) break;
+    mBatches.pop_front();
+  }
+  return std::move(batch.events);
+}
+
+void EventQueue::releaseBatch(EventBatch &batch) {
+  // Freed once the lock is released, if JavaScript never took them.
+  std::vector<std::unique_ptr<Event>> events;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (batch.state == EventBatch::DONE) return;
+  mInFlight -= batch.count;
+  batch.state = EventBatch::DONE;
+  events.swap(batch.events);
+}
+
+void EventQueue::setMaxQueuedEvents(std::size_t maxQueuedEvents) {
+  std::lock_guard<std::mutex> lock(mutex);
+  mMaxQueuedEvents = maxQueuedEvents;
+}
+
+bool EventQueue::flushDue() {
+  std::lock_guard<std::mutex> lock(mutex);
+  return flushDueLocked();
+}
+
+// Half of the room the batches leave: while JavaScript works through one, the next has as much room again. Not what
+// waits in batches: delivering early doesn't free those.
+bool EventQueue::flushDueLocked() const {
+  const std::size_t room = mMaxQueuedEvents - mInFlight;
+  return deliverableLocked() >= room - room / 2;
+}
+
+bool EventQueue::overflowed() {
+  return mOverflowed;
+}
+
+void EventQueue::resetOverflow() {
+  std::lock_guard<std::mutex> lock(mutex);
+  mOverflowed = false;
 }
 
 void EventQueue::enqueue(
@@ -80,6 +148,8 @@ void EventQueue::enqueue(
   PathFilter::Kind filterKind,
   PathFilter::Kind kind
 ) {
+  // The run ends with the error: the filter and the symlinks it would keep up to date go with it.
+  if (mOverflowed) return;
   const auto eventEpoch = epoch();
   std::shared_ptr<SymlinkIndex> symlinks;
   {
@@ -208,14 +278,29 @@ void EventQueue::push(
   const std::string &toFile,
   PathFilter::Kind kind
 ) {
-  bool held;
+  bool held = false;
+  bool flush = false;
+  bool overflowed = false;
+  Dropped dropped;
   {
     std::lock_guard<std::mutex> lock(mutex);
-    if (mPaused || epoch != mEpoch) return;
-    queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile, kind)));
-    held = mHolding;
+    if (mPaused || epoch != mEpoch || mOverflowed) return;
+    if (queue.size() + mInFlight >= mMaxQueuedEvents) {
+      // The run ends with an error: what waits for JavaScript only goes to be dropped.
+      mOverflowed = overflowed = true;
+      dropLocked(dropped);
+    } else {
+      queue.emplace_back(std::unique_ptr<Event>(new Event(type, fromDirectory, fromFile, toDirectory, toFile, kind)));
+      held = mHolding;
+      flush = !held && flushDueLocked();
+    }
   }
-  if (!held) wake(WAKE_EVENTS);
+  if (overflowed) {
+    wake(WAKE_ERROR);
+  } else if (!held) {
+    // Held events can't flush: releaseEvents() tells instead.
+    wake(flush ? WAKE_EVENTS | WAKE_FLUSH : WAKE_EVENTS);
+  }
 }
 
 void EventQueue::wake(unsigned reasons) {

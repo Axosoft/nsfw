@@ -149,6 +149,8 @@ void InotifyEventLoop::work() {
   std::string error;
   auto nextRetry = std::chrono::steady_clock::now();
   for (;;) {
+    // The run ends with the overflow, whichever thread queued the event that caused it: nothing more to watch for it.
+    if (inotifyService->mQueue->overflowed()) break;
     int timeout = -1;
     {
       auto lock = lockEventHandling();
@@ -225,6 +227,9 @@ void InotifyEventLoop::work() {
         error = "Inotify event queue overflowed, events were lost";
         break;
       }
+      // So did the queue JavaScript takes events from: the delivery thread reports it, and the run ends without the
+      // watches and scans the rest of this read would take.
+      if (inotifyService->mQueue->overflowed()) break;
 
       #ifdef NSFW_TEST_SLOW_1
         runTestHook(event);
@@ -289,9 +294,9 @@ void InotifyEventLoop::work() {
         inotifyService->removeDirectory(event->wd);
       }
     } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);
-    if (!error.empty()) {
-      // The run is about to end with this error and the events still queued are discarded, so a pending rename is
-      // dropped instead of being reported as a removal.
+    if (!error.empty() || inotifyService->mQueue->overflowed()) {
+      // The run is about to end with this error, or the queue's overflow, and the events still queued are discarded,
+      // so a pending rename is dropped instead of being reported as a removal.
       break;
     }
     inotifyService->finishRead(eventsRead, bytesRead);
@@ -327,8 +332,8 @@ void InotifyEventLoop::work() {
   }
 
   // Errors are terminal: the delivery thread reports this one (or the one recorded before it, or the root path error if
-  // the watched path is gone, see InotifyTree::getError()) through errorCallback and stops the watcher. isStarted()
-  // stays true, see its declaration.
+  // the watched path is gone, see InotifyTree::getError(), or the queue's overflow, which records none here) through
+  // errorCallback and stops the watcher. isStarted() stays true, see its declaration.
   auto lock = lockEventHandling();
   if (!error.empty()) inotifyService->setError(error);
   inotifyService->mTree->cancelFound();

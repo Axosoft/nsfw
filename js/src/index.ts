@@ -6,7 +6,8 @@ type Implementation = nsfw.NSFW;
 interface NativeBinding {
   // recursive: internal, false only reports the entries of watchPath itself. Defaults to true.
   new (watchPath: string, eventCallback: EventCallback,
-    options: Required<Omit<nsfw.Options, 'nativeBinding'>> & { recursive?: boolean }): Implementation;
+    options: Required<Omit<nsfw.Options, 'nativeBinding' | 'maxQueuedEvents'>> &
+      { recursive?: boolean; maxQueuedEvents?: number }): Implementation;
   getAllocatedInstanceCount?: () => number;
 }
 
@@ -650,7 +651,8 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
   excludedPatterns = [],
   nativeBinding,
   respectGitignore = false,
-  followFileSymlinks = false
+  followFileSymlinks = false,
+  maxQueuedEvents
 }: Partial<nsfw.Options> = {}): Promise<{ implementation: Implementation; context: PathContext }> {
   if (excludedPaths === undefined) {
     excludedPaths = [];
@@ -671,6 +673,9 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
   }
   if (typeof followFileSymlinks !== 'boolean') {
     throw new TypeError('followFileSymlinks must be a boolean.');
+  }
+  if (maxQueuedEvents !== undefined && !(Number.isSafeInteger(maxQueuedEvents) && maxQueuedEvents >= 1)) {
+    throw new TypeError('maxQueuedEvents must be a positive integer.');
   }
   const NSFW = await resolveBinding(nativeBinding);
 
@@ -709,7 +714,8 @@ async function buildNSFW(watchPath: string, eventCallback: EventCallback, {
         excludedPaths: effectivePaths,
         excludedPatterns: [...excludedPatterns],
         respectGitignore,
-        followFileSymlinks
+        followFileSymlinks,
+        maxQueuedEvents
       });
   } else if (stats.isFile()) {
     if (_errorCallback && typeof _errorCallback !== 'function') {
@@ -924,6 +930,15 @@ namespace nsfw {
      * Defaults to false.
      */
     followFileSymlinks?: boolean;
+    /**
+     * The most events that can wait for the JavaScript thread: the ones queued natively and the ones in batches
+     * `eventCallback` hasn't returned from yet. Events that fill half of the room left are delivered without waiting
+     * out `debounceMS`, so they only pile up when the thread doesn't keep up with a burst of changes. One more
+     * overflows the queue: like an overflow of the system's own queue, the watcher stops and `errorCallback` gets
+     * `Event queue exceeded maxQueuedEvents, events were lost`, see the README. Only for a watched directory: a
+     * watched file keeps the default and recovers from an overflow on its own. Defaults to 1000000.
+     */
+    maxQueuedEvents?: number;
   }
 
   /** The watcher class that nsfw's `.node` file exports. */

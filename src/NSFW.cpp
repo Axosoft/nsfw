@@ -1,6 +1,9 @@
 #include "../includes/NSFW.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <exception>
 #include <thread>
 
@@ -18,10 +21,15 @@ namespace {
 }
 
 struct NSFW::EventDelivery {
-  std::vector<std::unique_ptr<Event>> events;
-  // Set for a single-file watcher, whose events only go out if the queue is still at the epoch they were taken at.
+  EventDelivery(std::shared_ptr<EventBatch> batch, std::shared_ptr<EventQueue> queue):
+    batch(std::move(batch)), queue(std::move(queue)) {}
+  // However it ends, its events no longer wait for JavaScript.
+  ~EventDelivery() { queue->releaseBatch(*batch); }
+  EventDelivery(const EventDelivery &) = delete;
+  EventDelivery &operator=(const EventDelivery &) = delete;
+
+  std::shared_ptr<EventBatch> batch;
   std::shared_ptr<EventQueue> queue;
-  uint64_t epoch;
   DeliveryCount count;
 };
 
@@ -80,7 +88,7 @@ class NSFW::Run {
   private:
     void deliver();
     bool reportError();
-    void deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events, uint64_t epoch);
+    void deliverEvents(std::shared_ptr<EventBatch> batch);
 
     std::unique_ptr<NativeInterface> mInterface;
     std::shared_ptr<EventQueue> mQueue;
@@ -105,8 +113,9 @@ static uint32_t toJsKind(PathFilter::Kind kind) {
 }
 
 // Sleeps until the queue wakes it: an idle watcher costs no wakeups. The first events after a quiet period are
-// delivered as they come; the ones that follow a delivery wait until debounceMS after it, and go together. An error is
-// reported as soon as it is recorded, even while they wait, and the events still queued are dropped with the run.
+// delivered as they come; the ones that follow a delivery wait until debounceMS after it, and go together, unless they
+// fill half of the room maxQueuedEvents leaves first. An error is reported as soon as it is recorded, even while they
+// wait, and the events still queued are dropped with the run.
 void NSFW::Run::deliver() {
   using Clock = std::chrono::steady_clock;
   // What came before the thread waited, an error recorded while the watcher started say, is checked for first.
@@ -117,20 +126,20 @@ void NSFW::Run::deliver() {
     if (woken & EventQueue::WAKE_STOP) break;
     if ((woken & EventQueue::WAKE_ERROR) && reportError()) break;
     eventsPending = eventsPending || (woken & EventQueue::WAKE_EVENTS);
-    if (eventsPending && Clock::now() >= quietUntil) {
+    // A flush wake is only a hint: the queue tells whether one is still due.
+    if (eventsPending && (Clock::now() >= quietUntil || ((woken & EventQueue::WAKE_FLUSH) && mQueue->flushDue()))) {
       eventsPending = false;
       // A watcher only notices some errors between its own reads (a directory above the root renamed, say), and one
       // read can take long: none of the events it queued go out under a path that is known to lead elsewhere.
       if (reportError()) break;
-      uint64_t epoch;
-      auto events = mQueue->dequeueAll(epoch);
-      if (events != nullptr) {
-        deliverEvents(std::move(events), epoch);
+      auto batch = mQueue->dequeueAll();
+      if (batch != nullptr) {
+        deliverEvents(std::move(batch));
         quietUntil = Clock::now() + std::chrono::milliseconds(mDebounceMS);
       }
     }
     woken = eventsPending
-      ? mQueue->waitForWake(EventQueue::WAKE_STOP | EventQueue::WAKE_ERROR, quietUntil)
+      ? mQueue->waitForWake(EventQueue::WAKE_STOP | EventQueue::WAKE_ERROR | EventQueue::WAKE_FLUSH, quietUntil)
       : mQueue->waitForWake(EventQueue::WAKE_STOP | EventQueue::WAKE_ERROR | EventQueue::WAKE_EVENTS);
   }
 
@@ -139,13 +148,18 @@ void NSFW::Run::deliver() {
   mEventCallback.Release();
 }
 
-// Whether the watcher has failed, which ends the run.
+// Whether the watcher has failed or the queue overflowed, which ends the run.
 bool NSFW::Run::reportError() {
   std::string error;
   {
     std::lock_guard<std::mutex> lock(mLock);
-    if (!mInterface->hasErrored()) return false;
-    error = mInterface->getError();
+    if (mInterface->hasErrored()) {
+      error = mInterface->getError();
+    } else if (mQueue->overflowed()) {
+      error = "Event queue exceeded maxQueuedEvents, events were lost";
+    } else {
+      return false;
+    }
   }
   auto delivery = std::unique_ptr<ErrorDelivery>(new ErrorDelivery{ std::move(error), mWatcher, mRunId, {} });
   if (mErrorCallback.NonBlockingCall(delivery.get()) == napi_ok) delivery.release();
@@ -163,37 +177,40 @@ void NSFW::callErrorJs(Napi::Env env, Napi::Function jsCallback, std::nullptr_t 
   jsCallback.Call({ jsError });
 }
 
-void NSFW::Run::deliverEvents(std::unique_ptr<std::vector<std::unique_ptr<Event>>> events, uint64_t epoch) {
-  // A single-file watcher uses these events to establish file state after restarting or resuming.
-  auto queue = mWatcher->mRecursive ? nullptr : mQueue;
-  auto delivery = std::unique_ptr<EventDelivery>(new EventDelivery{ std::move(*events), std::move(queue), epoch, {} });
+void NSFW::Run::deliverEvents(std::shared_ptr<EventBatch> batch) {
+  auto delivery = std::unique_ptr<EventDelivery>(new EventDelivery(std::move(batch), mQueue));
   if (mEventCallback.NonBlockingCall(delivery.get()) == napi_ok) delivery.release();
 }
 
 void NSFW::callEventJs(Napi::Env env, Napi::Function jsCallback, std::nullptr_t *, EventDelivery *deliveryRaw) {
   std::unique_ptr<EventDelivery> delivery(deliveryRaw);
   if (static_cast<napi_env>(env) == nullptr) return;
-  if (delivery->queue && delivery->queue->epoch() != delivery->epoch) return;
+  // Dropped by a stop or a pause since: a single-file watcher, say, establishes the state of its file again after
+  // restarting or resuming. They still count until delivery releases the batch, but are freed before the callback.
+  Napi::Array eventArray;
+  {
+    auto events = delivery->queue->takeBatch(*delivery->batch);
+    if (events.empty()) return;
 
-  auto &events = delivery->events;
-  int numEvents = events.size();
-  Napi::Array eventArray = Napi::Array::New(env, numEvents);
+    int numEvents = events.size();
+    eventArray = Napi::Array::New(env, numEvents);
 
-  for (int i = 0; i < numEvents; ++i) {
-    auto event = Napi::Object::New(env);
-    event["action"] = Napi::Number::New(env, events[i]->type);
-    event["kind"] = Napi::Number::New(env, toJsKind(events[i]->kind));
-    event["directory"] = Napi::String::New(env, events[i]->fromDirectory);
+    for (int i = 0; i < numEvents; ++i) {
+      auto event = Napi::Object::New(env);
+      event["action"] = Napi::Number::New(env, events[i]->type);
+      event["kind"] = Napi::Number::New(env, toJsKind(events[i]->kind));
+      event["directory"] = Napi::String::New(env, events[i]->fromDirectory);
 
-    if (events[i]->type == RENAMED) {
-      event["oldFile"] = Napi::String::New(env, events[i]->fromFile);
-      event["newDirectory"] = Napi::String::New(env, events[i]->toDirectory);
-      event["newFile"] = Napi::String::New(env, events[i]->toFile);
-    } else {
-      event["file"] = Napi::String::New(env, events[i]->fromFile);
+      if (events[i]->type == RENAMED) {
+        event["oldFile"] = Napi::String::New(env, events[i]->fromFile);
+        event["newDirectory"] = Napi::String::New(env, events[i]->toDirectory);
+        event["newFile"] = Napi::String::New(env, events[i]->toFile);
+      } else {
+        event["file"] = Napi::String::New(env, events[i]->fromFile);
+      }
+
+      eventArray[(uint32_t)i] = event;
     }
-
-    eventArray[(uint32_t)i] = event;
   }
 
   jsCallback.Call({ eventArray });
@@ -320,6 +337,21 @@ NSFW::NSFW(const Napi::CallbackInfo &info):
     }
     if (maybeRecursive.IsBoolean()) {
       mRecursive = maybeRecursive.As<Napi::Boolean>().Value();
+    }
+
+    // maxQueuedEvents
+    Napi::Value maybeMaxQueuedEvents = options["maxQueuedEvents"];
+    if (!maybeMaxQueuedEvents.IsUndefined()) {
+      const double maxQueuedEvents =
+        maybeMaxQueuedEvents.IsNumber() ? maybeMaxQueuedEvents.As<Napi::Number>().DoubleValue() : 0.0;
+      // Up to Number.MAX_SAFE_INTEGER; a 32-bit build can't hold more than SIZE_MAX events anyway.
+      const double maxSafeInteger = 9007199254740991.0;
+      if (!(maxQueuedEvents >= 1 && maxQueuedEvents <= maxSafeInteger) ||
+        std::floor(maxQueuedEvents) != maxQueuedEvents) {
+        throw Napi::TypeError::New(env, "options.maxQueuedEvents must be a positive integer.");
+      }
+      mQueue->setMaxQueuedEvents(static_cast<std::size_t>(
+        std::min<uint64_t>(static_cast<uint64_t>(maxQueuedEvents), SIZE_MAX)));
     }
 
     // followFileSymlinks
@@ -466,6 +498,8 @@ void NSFW::StartWorker::Execute() {
 
   try {
     mNSFW->mQueue->clear();
+    // What the last run lost is told by its own error, or not at all once it was stopped.
+    mNSFW->mQueue->resetOverflow();
     std::unique_ptr<NativeInterface> nativeInterface(
       new NativeInterface(mNSFW->mPath, excludedPaths, filterOptions, mNSFW->mRecursive, mNSFW->mFollowFileSymlinks,
         mNSFW->mQueue)

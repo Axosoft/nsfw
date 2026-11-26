@@ -71,6 +71,7 @@ return nsfw(
 
 - debounceMS: delays notifications emitted by the library. Default 500 ms. It is the only spacing between two
 deliveries of events: since 3.1.0 there is no implicit 50 ms tick, so set it to 50 to keep at least 50 ms between them.
+Only events that fill half of the room `maxQueuedEvents` leaves before it ends are delivered at once.
 - errorCallback(errors): the library will call this callback when an error happens. For a watched directory,
 on Linux that includes an overflow of the inotify event queue (`fs.inotify.max_queued_events`), which means events
 were lost: restart the watcher and rescan what you track.
@@ -88,8 +89,11 @@ changes of a directory tree into a request to scan it again reads
 `FSEvents coalesced the events of a directory tree, events were lost`, unless that directory is excluded or ignored.
 FSEvents can tell of such a loss in the changes made just before the watcher started, so a watcher started during
 heavy activity, such as a package install, may report it at once.
+On every platform, more events than `maxQueuedEvents` waiting to be delivered to JavaScript, which also means events
+were lost, reads `Event queue exceeded maxQueuedEvents, events were lost`.
 A directory watcher retires the failed run and releases that run's native resources before calling `errorCallback`.
-Errors queued by a run that has already been explicitly stopped or replaced are discarded.
+Errors queued by a run that has already been explicitly stopped or replaced are discarded. So are the events it had
+not delivered yet, including batches already waiting for the JavaScript thread; the same goes for a pause.
 After fixing the cause (for example, recreating a deleted directory), call `start()` to watch again;
 calling `stop()` first is unnecessary. A previously queued `start()` may already have restarted the watcher,
 in which case another `start()` rejects as already running. `stop()` on an already stopped watcher rejects.
@@ -161,6 +165,16 @@ watched directories, not to a watched file.
 - nativeBinding: the addon to use instead of the one nsfw finds next to itself, see
 [Custom binary location](#custom-binary-location): the absolute path to its `.node` file, or the module a `require()`
 of that file returned.
+- maxQueuedEvents: the most events that can wait for the JavaScript thread, counting both the ones the watcher has
+queued and the ones in batches `eventCallback` hasn't returned from yet. Once the queue holds half of the room those
+batches leave, it is delivered without waiting out `debounceMS`, so events only pile up when the thread doesn't keep
+up with a burst of changes, a checkout or a package install say, because it is busy or the batches are that large.
+One more overflows the queue: the watcher drops them, stops and calls `errorCallback` with
+`Event queue exceeded maxQueuedEvents, events were lost`, like an overflow of the system's own queue: restart the
+watcher and rescan what you track. A limit below what one native read can queue (a directory tree moved in on
+Linux, a full buffer on Windows) can overflow even while the thread is idle. Each event takes a few hundred bytes
+natively. Default `1000000`; a positive integer. Only for a watched directory: a watched file keeps the default, and
+recovers from an overflow on its own, see [Watching a single file](#watching-a-single-file).
 
 ## Watching a single file
 

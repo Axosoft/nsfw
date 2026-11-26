@@ -9,7 +9,8 @@ async function watch(): Promise<void> {
     excludedPaths: ['/watched/ignored'],
     excludedPatterns: ['*.log', '!keep.log'],
     respectGitignore: true,
-    followFileSymlinks: true
+    followFileSymlinks: true,
+    maxQueuedEvents: 1000000
   };
   const watcher: nsfw.NSFW = await nsfw('/watched', (events: nsfw.FileChangeEvent[]) => {
     for (const event of events) {

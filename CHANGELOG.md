@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+- `maxQueuedEvents` bounds the events that wait to be delivered to JavaScript, which grew without bound in native
+  memory while a burst of changes went on and the JavaScript thread was busy (#281). One more than it stops a
+  directory watcher with `Event queue exceeded maxQueuedEvents, events were lost` in `errorCallback`, like an
+  inotify queue overflow on Linux or a buffer overflow on Windows. Defaults to 1000000. Events that fill half of the
+  room it leaves are delivered without waiting out `debounceMS`, so a burst alone doesn't overflow it while
+  JavaScript keeps up.
+
+### Changed
+- A directory watcher drops the batches of events still waiting for the JavaScript thread when it is stopped, paused
+  or fails, as a watched file already did, instead of delivering them afterwards (#281).
+
 ### Fixed
 - On Linux, a watcher whose root couldn't be watched closed its inotify descriptor twice: once when `start()` failed
   and again when it was released, by then possibly a file or socket another part of the process had opened under the

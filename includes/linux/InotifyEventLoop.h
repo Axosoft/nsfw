@@ -26,7 +26,8 @@ public:
   );
 
   // Whether the thread was created. It stays true after the loop stops on its own, since that always records a tree
-  // error, which is how the delivery thread finds out (also when the loop stops before start() checks isWatching()).
+  // error, which is how the delivery thread finds out (also when the loop stops before start() checks isWatching()),
+  // or follows an overflow of the event queue, which the queue tells the delivery thread itself.
   bool isStarted();
 
   // Holds off event handling while the returned lock lives, so another thread can change the tree the handlers use.

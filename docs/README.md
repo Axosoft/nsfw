@@ -11,9 +11,14 @@ const nsfw = require('nsfw');
    - **debounceMS**: time in milliseconds to debounce the event callback
    - **errorCallback**: callback to fire in the case of errors, including, for a watched directory, an overflow of the
      inotify event queue on Linux, which means events were lost. A watched file only reports a directory that is there
-     but can't be watched again, see [Watching a single file](../README.md#watching-a-single-file)
+     but can't be watched again, see [Watching a single file](../README.md#watching-a-single-file). For a watched
+     directory it also includes, on every platform, more events than **maxQueuedEvents** waiting to be delivered to
+     JavaScript
    - **excludedPaths**: array of absolute paths inside **watchPath** whose events are not reported; the ones outside
      it are ignored, see [excluded paths](#excluded-paths)
+   - **maxQueuedEvents**: the most events that can wait for the JavaScript thread before the watcher stops with
+     `Event queue exceeded maxQueuedEvents, events were lost`; events that fill half of the room left are delivered
+     without waiting out **debounceMS**. Default 1000000
 
 
   Returns a Promise that resolves to the created NSFW Object.

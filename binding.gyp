@@ -29,6 +29,9 @@
         },
         "conditions": [
             ["OS=='win'", {
+                "defines": [
+                    "NSFW_TEST_FAULTS_<!(node -p process.env.NSFW_TEST_FAULTS)"
+                ],
                 "sources": [
                     "src/win32/Controller.cpp",
                     "src/win32/Watcher.cpp"

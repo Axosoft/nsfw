@@ -24,10 +24,15 @@ class Watcher
     bool isRunning() const { return mRunning; }
     std::string getError();
     void updateExcludedPaths(const std::vector<std::wstring> &excludedPaths);
+#ifdef NSFW_TEST_FAULTS_1
+    // The bytes the read buffers of all watchers hold.
+    static std::size_t testBufferBytes() { return sTestBufferBytes; }
+#endif
 
   private:
     void run();
     bool pollDirectoryChanges();
+    DWORD readDirectoryChanges();
     void start();
     void stop();
 
@@ -50,7 +55,8 @@ class Watcher
     void parentChanged(DWORD errorCode);
     HANDLE openDirectory(const std::wstring &path);
 
-    void resizeBuffers(std::size_t size);
+    bool retryWithNetworkBuffer(DWORD error);
+    void allocateWriteBuffer();
 
     std::string getUTF8Directory(std::wstring path) ;
     bool isExcluded(const std::wstring &fileName);
@@ -77,7 +83,26 @@ class Watcher
     std::vector<std::wstring> mExcludedPaths;
     std::shared_ptr<PathFilter> mFilter;
 
+    // The size of the next reads' buffer. Only used on the watcher thread.
+    std::size_t mBufferSize;
     std::vector<BYTE> mReadBuffer, mWriteBuffer;
+#ifdef NSFW_TEST_FAULTS_1
+    // NSFW_TEST_READ_FAULT, read when the watcher is created: network-sync and network-async fail the reads of a
+    // buffer larger than a share takes, at once or on completion, as a share does; later-async fails every read after
+    // the first on completion, so the failure comes once the watcher has started.
+    enum class TestFault { NONE, NETWORK_SYNC, NETWORK_ASYNC, LATER_ASYNC };
+    static TestFault readTestFault();
+    const TestFault mTestFault = readTestFault();
+    unsigned mTestReads = 0;
+    bool injectReadFault(DWORD &error);
+    static std::atomic<std::size_t> sTestBufferBytes;
+    static void countTestBufferBytes(std::size_t added, std::size_t removed) {
+      sTestBufferBytes += added;
+      sTestBufferBytes -= removed;
+    }
+#else
+    static void countTestBufferBytes(std::size_t, std::size_t) {}
+#endif
     // Reads aborted in a row while running. Only used on the watcher thread.
     unsigned mAbortedReads = 0;
     // The old name of a rename whose new name hasn't been read yet, empty if none. Only used on the watcher thread.

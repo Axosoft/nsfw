@@ -89,6 +89,11 @@ std::string getUTF8FileName(std::wstring path) {
 }
 
 static const unsigned MAX_ABORTED_READS = 3;
+// What a read of a recursive watch holds: a whole tree changes at once, a checkout say.
+static constexpr std::size_t RECURSIVE_BUFFER_SIZE = 1024 * 1024;
+// The largest buffer a read over the network takes, see the ReadDirectoryChangesW docs. Also what a watcher that isn't
+// recursive reads into: it only watches a file, whose watcher recovers from an overflow on its own.
+static constexpr std::size_t NETWORK_BUFFER_SIZE = 64 * 1024;
 static constexpr DWORD SPLIT_READ_WAIT_MS = 10;
 
 // What the entry itself is, see Event::kind: the attributes of a symlink or a junction are its own, and one that leads
@@ -130,7 +135,8 @@ Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
   mRecursive(recursive),
   mQueue(queue),
   mExcludedPaths(excludedPaths),
-  mFilter(filter)
+  mFilter(filter),
+  mBufferSize(recursive ? RECURSIVE_BUFFER_SIZE : NETWORK_BUFFER_SIZE)
 {
   mDirectoryHandle = openDirectory(mPath);
   if (mDirectoryHandle == INVALID_HANDLE_VALUE) {
@@ -138,7 +144,6 @@ Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
   } else {
     ZeroMemory(&mOverlapped, sizeof(OVERLAPPED));
     mOverlapped.hEvent = this;
-    resizeBuffers(1024 * 1024);
     mWatchedPath = getWatchedPathFromHandle();
     openParent();
     start();
@@ -147,6 +152,7 @@ Watcher::Watcher(std::shared_ptr<EventQueue> queue, const std::wstring &path,
 
 Watcher::~Watcher() {
   stop();
+  countTestBufferBytes(0, mReadBuffer.capacity() + mWriteBuffer.capacity());
   std::lock_guard<std::mutex> lock(mHandleMutex);
   if (mDirectoryHandle != INVALID_HANDLE_VALUE) {
     CancelIo(mDirectoryHandle);
@@ -156,11 +162,6 @@ Watcher::~Watcher() {
     CancelIo(mParentHandle);
     CloseHandle(mParentHandle);
   }
-}
-
-void Watcher::resizeBuffers(std::size_t size) {
-  mReadBuffer.resize(size);
-  mWriteBuffer.resize(size);
 }
 
 void Watcher::run() {
@@ -225,14 +226,97 @@ bool Watcher::hasError() {
   return !mError.empty();
 }
 
-bool Watcher::pollDirectoryChanges() {
-  DWORD bytes = 0;
+#ifdef NSFW_TEST_FAULTS_1
+std::atomic<std::size_t> Watcher::sTestBufferBytes{0};
 
+// GetEnvironmentVariableW, not _wgetenv: the specs set it through process.env after the CRT copied the environment.
+Watcher::TestFault Watcher::readTestFault() {
+  wchar_t value[32];
+  const DWORD length = GetEnvironmentVariableW(L"NSFW_TEST_READ_FAULT", value, 32);
+  const std::wstring fault = length > 0 && length < 32 ? std::wstring(value, length) : std::wstring();
+  if (fault == L"network-sync") {
+    return TestFault::NETWORK_SYNC;
+  } else if (fault == L"network-async") {
+    return TestFault::NETWORK_ASYNC;
+  } else if (fault == L"later-async") {
+    return TestFault::LATER_ASYNC;
+  }
+  return TestFault::NONE;
+}
+
+// True when the read fails as mTestFault says, with the error the call gives.
+bool Watcher::injectReadFault(DWORD &error) {
+  const bool fails = mTestFault == TestFault::LATER_ASYNC
+    ? mTestReads++ > 0
+    : mTestFault != TestFault::NONE && mBufferSize > NETWORK_BUFFER_SIZE;
+  if (!fails) {
+    return false;
+  }
+  if (mTestFault == TestFault::NETWORK_SYNC) {
+    error = ERROR_INVALID_PARAMETER;
+    return true;
+  }
+  // On this thread, as a completion routine would run.
+  QueueUserAPC([](__in ULONG_PTR self) {
+    reinterpret_cast<Watcher*>(self)->eventCallback(ERROR_INVALID_PARAMETER, 0);
+  }, GetCurrentThread(), (ULONG_PTR)this);
+  error = ERROR_SUCCESS;
+  return true;
+}
+#endif
+
+// A share rejects a larger buffer with ERROR_INVALID_PARAMETER, either at once or when the read completes. The next
+// reads take one of NETWORK_BUFFER_SIZE instead, on a handle opened again: the system may keep the size of the first
+// read on a handle. False, with nothing done, for another error or when the buffer is that small already: the failure
+// has another cause.
+bool Watcher::retryWithNetworkBuffer(DWORD error) {
+  if (error != ERROR_INVALID_PARAMETER || mBufferSize <= NETWORK_BUFFER_SIZE) {
+    return false;
+  }
+  mBufferSize = NETWORK_BUFFER_SIZE;
+  reopenWathedFolder();
+  return true;
+}
+
+bool Watcher::pollDirectoryChanges() {
   if (!isRunning()) {
     return false;
   }
 
+  const DWORD error = readDirectoryChanges();
+  if (retryWithNetworkBuffer(error)) {
+    return !hasError();
+  }
+  if (error != ERROR_SUCCESS) {
+    setError(describeError("Service shutdown unexpectedly", error));
+    return false;
+  }
+  return true;
+}
+
+// Assigned, not resized: resizing keeps the capacity.
+void Watcher::allocateWriteBuffer() {
+  const std::size_t freed = mWriteBuffer.capacity();
+  mWriteBuffer = std::vector<BYTE>(mBufferSize);
+  countTestBufferBytes(mWriteBuffer.capacity(), freed);
+}
+
+// Issues the next read, into the write buffer, which no read holds then. The read buffer may hold the batch being
+// handled: it takes the size of the next reads when it becomes the write buffer, so a buffer allocated before a shrink
+// is freed after the next read, and a watcher that has read nothing yet holds a single buffer.
+DWORD Watcher::readDirectoryChanges() {
+  if (mWriteBuffer.size() != mBufferSize) {
+    allocateWriteBuffer();
+  }
+  DWORD bytes = 0;
+
   std::lock_guard<std::mutex> lock(mHandleMutex);
+#ifdef NSFW_TEST_FAULTS_1
+  DWORD fault;
+  if (injectReadFault(fault)) {
+    return fault;
+  }
+#endif
   if (!ReadDirectoryChangesW(
     mDirectoryHandle,
     mWriteBuffer.data(),
@@ -250,12 +334,9 @@ bool Watcher::pollDirectoryChanges() {
       watcher->eventCallback(errorCode, numBytes);
     }))
   {
-    const DWORD error = GetLastError();
-    setError(describeError("Service shutdown unexpectedly", error));
-    return false;
+    return GetLastError();
   }
-
-  return true;
+  return ERROR_SUCCESS;
 }
 
 HANDLE Watcher::openDirectory(const std::wstring &path) {
@@ -365,11 +446,8 @@ void Watcher::eventCallback(DWORD errorCode, DWORD numBytes) {
       }
     } else if (errorCode == ERROR_NOTIFY_ENUM_DIR) {
       setError("Buffer filled up and service needs a restart");
-    } else if (errorCode == ERROR_INVALID_PARAMETER) {
-      // resize the buffers because we're over the network, 64kb is the max buffer size for networked transmission
-      resizeBuffers(64 * 1024);
-
-      pollDirectoryChanges();
+    } else if (retryWithNetworkBuffer(errorCode)) {
+      // Read again.
     } else if (errorCode == ERROR_ACCESS_DENIED) {
       // Access denied can happen when we try to delete the watched folder
       // In Windows Server 2019 and older the folder is not removed until folder handler is released

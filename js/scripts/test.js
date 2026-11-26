@@ -22,7 +22,8 @@ const runsSlow = suite !== 'normal';
 const runsNormal = suite === 'all' || suite === 'normal';
 const slowFiles = slowSuites.includes(suite) ? slowParts[slowSuites.indexOf(suite)] : slowParts.flat();
 // NSFW_TEST_PREBUILT=1 runs the normal suite against the binary prebuildify left in prebuilds/ for this platform
-// instead of building one. The slow suite always builds its own, which only differs in the NSFW_TEST_SLOW define.
+// instead of building one. The slow suite always builds its own, which only differs in the NSFW_TEST_SLOW define; on
+// Windows, where there is no slow suite, the faults suite builds one with the NSFW_TEST_FAULTS define instead.
 const prebuilt = process.env.NSFW_TEST_PREBUILT === '1';
 
 // The specs load js/dist, so they never run against a stale build.
@@ -34,13 +35,19 @@ exec('node --test --test-reporter=dot js/scripts/release-notes-test.js');
 // One file at a time: the specs share the mockfs work directory.
 const nodeTest = 'node --test --test-concurrency=1 --test-force-exit --expose-gc --test-reporter=spec';
 
-if (process.platform !== 'win32') {
-  // When ran as a npm script we can invoke npm bins such as node-gyp directly
+// The build with test hooks, and the specs that need it.
+const testBuild = process.platform === 'win32'
+  ? { define: 'NSFW_TEST_FAULTS', files: ['js/spec/win32-faults-spec.js'] }
+  : { define: 'NSFW_TEST_SLOW', files: slowFiles };
+// When ran as a npm script we can invoke npm bins such as node-gyp directly
+try {
   if (runsSlow) {
-    exec('node-gyp rebuild', { env: { ...process.env, NSFW_TEST_SLOW: 1 } });
-    exec(`${nodeTest} ${slowFiles.join(' ')}`);
+    exec('node-gyp rebuild', { env: { ...process.env, [testBuild.define]: 1 } });
+    exec(`${nodeTest} ${testBuild.files.join(' ')}`);
   }
-  if (!prebuilt) {
+} finally {
+  // Not left with the test build's hooks. On Windows the install built the addon already.
+  if (!prebuilt && (runsSlow || process.platform !== 'win32')) {
     exec('node-gyp rebuild');
   }
 }

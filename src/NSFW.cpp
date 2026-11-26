@@ -749,6 +749,12 @@ Napi::Value NSFW::ExcludedPatterns() {
   return toJsArray(Env(), mFilterOptions.excludedPatterns);
 }
 
+#ifdef NSFW_TEST_FAULTS_1
+static Napi::Value ReadBufferBytes(const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), static_cast<double>(Watcher::testBufferBytes()));
+}
+#endif
+
 Napi::Value NSFW::InstanceCount(const Napi::CallbackInfo &info) {
   return Napi::Number::New(info.Env(), instanceCount);
 }
@@ -788,6 +794,18 @@ Napi::Object NSFW::Init(Napi::Env env, Napi::Object exports) {
     nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Value(
       "NSFW_TEST_SLOW",
       Napi::Boolean::New(env, true)
+    ));
+  #endif
+
+  #ifdef NSFW_TEST_FAULTS_1
+    nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Value(
+      "NSFW_TEST_FAULTS",
+      Napi::Boolean::New(env, true)
+    ));
+    nsfwConstructor.DefineProperty(Napi::PropertyDescriptor::Function(
+      "getReadBufferBytes",
+      &ReadBufferBytes,
+      napi_static
     ));
   #endif
 

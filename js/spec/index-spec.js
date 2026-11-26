@@ -19,6 +19,7 @@ const execFile = promisify(cp.execFile);
 describe('Node Sentinel File Watcher', function() {
 
   assert.ok(typeof nsfw._native.NSFW_TEST_SLOW === 'undefined', 'NSFW should NOT be built in slow mode');
+  assert.ok(typeof nsfw._native.NSFW_TEST_FAULTS === 'undefined', 'NSFW should NOT be built with NSFW_TEST_FAULTS');
 
   beforeEach(async function() {
     async function makeDir(identifier) {

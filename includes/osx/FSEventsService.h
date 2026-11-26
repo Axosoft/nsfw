@@ -67,6 +67,9 @@ private:
 
   using Kinds = FSEventsKinds;
 
+  // Why FSEvents lost events this watcher would have reported, see lostEventsOf().
+  enum class LostEvents { NONE, DROPPED, COALESCED };
+
   // What the path of an event with the renamed flag holds now, and the other side of its rename once paired.
   struct RenameSide {
     bool renamed = false;
@@ -96,6 +99,11 @@ private:
   static Kinds kindsOf(FSEventStreamEventFlags flags);
   static PathFilter::Kind reportedKindAt(FSEventStreamEventFlags flags, const std::string &path);
   static bool readEventData(const void *data, std::string &path, uint64_t &inode);
+  LostEvents lostEventsOf(const Event &event);
+  bool reportsBelow(std::string directory);
+#ifdef NSFW_TEST_SLOW_1
+  void runTestHook(Event &event);
+#endif
   void handle(std::vector<Event> events);
   void pairRenames(const std::vector<Event> &events, std::vector<RenameSide> &sides);
   static void pairSides(std::vector<RenameSide> &sides, size_t from, size_t to);
@@ -143,7 +151,9 @@ private:
   std::mutex mExcludedPathsLock;
   std::vector<CFStringRef> mExcludedPaths;
   bool mRootExcluded;
-  bool mRootChanged;
+  // Both set on the FSEvents run loop thread and read by the thread that reports errors.
+  std::atomic<bool> mRootChanged;
+  std::atomic<LostEvents> mLostEvents{LostEvents::NONE};
   std::atomic<bool> mStopping{false};
   bool mCaseSensitive;
   bool mRecursive;

@@ -457,6 +457,7 @@ async function createFileWatcher(NSFW: NativeBinding, watchedFile: string, repor
   };
 
   const pattern = '/' + escapePatternName(name);
+  // js/spec/index-slow-spec.js builds a native watcher with these options to test what FSEvents losses it reports.
   const native = new NSFW(parent, onEvents, {
     debounceMS: Math.min(debounceMS, MAX_NATIVE_DEBOUNCE_MS),
     errorCallback: onError,

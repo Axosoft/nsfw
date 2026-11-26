@@ -83,6 +83,11 @@ being delivered when the rename happens may still reach `eventCallback` under th
 On Windows an overflow of the system watcher's buffer, which also means events were lost, reads `Buffer filled up and
 service needs a restart`, and another unexpected failure of the system watcher reads
 `Service shutdown unexpectedly: <system message> (Windows error <code>)`.
+On macOS, FSEvents dropping events reads `FSEvents dropped events, events were lost`, and FSEvents coalescing the
+changes of a directory tree into a request to scan it again reads
+`FSEvents coalesced the events of a directory tree, events were lost`, unless that directory is excluded or ignored.
+FSEvents can tell of such a loss in the changes made just before the watcher started, so a watcher started during
+heavy activity, such as a package install, may report it at once.
 A directory watcher retires the failed run and releases that run's native resources before calling `errorCallback`.
 Errors queued by a run that has already been explicitly stopped or replaced are discarded.
 After fixing the cause (for example, recreating a deleted directory), call `start()` to watch again;
@@ -184,10 +189,11 @@ Unlike a watched directory, a watched file outlives its directory, as the poller
   looks are taken outside the queue of `start()`, `stop()`, `pause()` and `resume()` calls, so a share that stopped
   answering doesn't hold them. When a pause called after a failure while watching comes before the look at the file,
   a removal of the file is reported on resume, while a file created or changed meanwhile is taken as it is.
-- Any other failure of the watcher of the directory, such as its event queue overflowing under heavy activity in the
-  directory, doesn't stop it either: the directory is watched again from the next whole second on, and a `stat()` of
-  the file then reports what changed meanwhile, `DELETED`, `CREATED`, or `MODIFIED` when its size, times, device or
-  inode differ from the last look the watcher took, when it started or last recovered. As events may have been lost, a
+- Any other failure of the watcher of the directory, such as its event queue overflowing or, on macOS, FSEvents losing
+  events under heavy activity in the directory, doesn't stop it either: the directory is watched again from the next
+  whole second on, and a `stat()` of the file then reports what changed meanwhile, `DELETED`, `CREATED`, or
+  `MODIFIED` when its size, times, device or inode differ from the last look the watcher took, when it started or last
+  recovered. As events may have been lost, a
   change already reported may be reported again as `MODIFIED`.
 - `errorCallback` only gets an error when the directory is there but can't be watched again, as when no inotify watch
   is left: once until the directory is watched again, while the watcher keeps trying. Without an `errorCallback`,

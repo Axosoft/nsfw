@@ -212,6 +212,8 @@ jobs:
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
+      # Also builds the slow binary and runs the slow suite, whose macOS specs inject the events FSEvents sends when
+      # it loses some.
       - name: Run tests
         id: tests
         env:

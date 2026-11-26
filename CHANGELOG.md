@@ -7,6 +7,12 @@
   and again when it was released, by then possibly a file or socket another part of the process had opened under the
   same number (#274). A `start()` that failed with an exception no longer leaves the descriptor and its watches
   behind, and the descriptor is no longer inherited by child processes.
+- macOS: events FSEvents lost are reported through `errorCallback` and stop a directory watcher, like an inotify queue
+  overflow on Linux or a buffer overflow on Windows, instead of being silently missed (#275). Dropped events read
+  `FSEvents dropped events, events were lost`. Changes FSEvents coalesced into a request to scan a directory again read
+  `FSEvents coalesced the events of a directory tree, events were lost`, unless that directory is excluded or ignored.
+  A watched file recovers from such a loss as, since 3.1.1, from any other failure of its watcher, and takes no notice
+  of changes coalesced below its directory.
 
 ## 3.1.1
 

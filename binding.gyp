@@ -44,6 +44,9 @@
             }],
             ["OS=='mac'", {
                 "cflags+": ["-fvisibility-hidden"],
+                "defines": [
+                    "NSFW_TEST_SLOW_<!(node -p process.env.NSFW_TEST_SLOW)"
+                ],
                 "sources": [
                     "src/osx/RunLoop.cpp",
                     "src/osx/FSEventsService.cpp",

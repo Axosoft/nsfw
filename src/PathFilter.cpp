@@ -49,10 +49,47 @@ void PathFilter::setPatterns(const std::vector<std::string> &patterns) {
     rules.insert(rules.end(), parsed.begin(), parsed.end());
   }
   std::lock_guard<std::mutex> lock(mMutex);
+  // What an entry was when last seen only stays up to date while judge() looks at what it is: one the patterns stop
+  // telling kinds apart for may be replaced meanwhile, unseen. Looked up again once they tell them apart, under the
+  // lock as judge() does. A replacement whose events still wait to be judged then has the old entry's removal judged
+  // as the new one.
+  std::vector<std::pair<std::string, std::string>> untracked;
+  if (rules != mPatterns) {
+    for (const auto &seen : mSeenKinds) {
+      std::string relative = relativeOf(seen.first);
+      if (!tellsKindsApart(relative)) {
+        untracked.emplace_back(seen.first, std::move(relative));
+      }
+    }
+  }
   mPatterns = std::move(rules);
   mPatternsDiverged = mTracksApplied && mPatterns != mAppliedPatterns;
   // The applied patterns still count until committed.
   mActive = !mPatterns.empty() || !mAppliedPatterns.empty() || mGitignore;
+  for (const auto &entry : untracked) {
+    if (!tellsKindsApart(entry.second)) {
+      continue;
+    }
+    // Gone, or a symlink leading nowhere: kept for its removal, as judge() keeps it.
+    const Kind actual = kindOf(mWatchedPath, entry.second);
+    if (actual != Kind::UNKNOWN) {
+      mSeenKinds[entry.first] = actual;
+    }
+  }
+}
+
+// The entry, relative to the watched path, that key is the key of in mSeenKinds, spelled as the key: what a
+// case-insensitive filesystem still finds and the rules still match. Every key is one of an entry below the watched
+// path, see judge().
+std::string PathFilter::relativeOf(const std::string &key) const {
+  return mWatchedRelative.empty() ? key : key.substr(keyOf(mWatchedRelative).size() + 1);
+}
+
+// Whether the rules in force tell its kinds apart, so judge() looks at what it is: only rules for directories match
+// it, and no directory it is in is ignored.
+bool PathFilter::tellsKindsApart(const std::string &relative) {
+  return !isAncestorIgnored(relative, false) &&
+    isIgnoredBelowWatched(relative, false) != isIgnoredBelowWatched(relative, true);
 }
 
 void PathFilter::commitPatterns() {

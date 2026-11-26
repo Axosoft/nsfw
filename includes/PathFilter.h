@@ -7,6 +7,7 @@
 #include <set>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "FilterPaths.h"
@@ -128,6 +129,21 @@ private:
     uint64_t changedAt = 0;
   };
 
+  enum class Answer : unsigned char { UNKNOWN, NO, YES };
+
+  // What is known about a directory that paths were judged in, see directoryOf(): filled in as judging reaches it, so
+  // an ignore file is read when the uncached walk would have read it.
+  struct DirectoryState {
+    // The rules of its .gitignore, read again through rulesOf() when stale.
+    const CachedRules *rules = NULL;
+    // The directory it is in; mBase has none.
+    DirectoryState *parent = NULL;
+    // Whether it, or a directory it is in, is ignored, as asked for the tree or not.
+    Answer ignored[2] = { Answer::UNKNOWN, Answer::UNKNOWN };
+  };
+  // Beyond it, what is known about the directories is dropped.
+  static constexpr size_t MAX_DIRECTORIES = 10000;
+
   bool toRelative(const std::string &directory, std::string &relative) const;
   bool toEntry(const std::string &directory, const std::string &name, std::string &entry,
     bool *unresolved = NULL) const;
@@ -151,6 +167,11 @@ private:
   bool isAncestorIgnored(const std::string &path, bool tree);
   std::string relativeOf(const std::string &key) const;
   bool tellsKindsApart(const std::string &relative);
+  DirectoryState &directoryOf(const std::string &directory);
+  // Everything that what is known about the directories depends on changing calls it: the rules in force or applied,
+  // the patterns, or the directories the rules were read for. Dropped by the next judgement, see startJudging().
+  void invalidateDirectories() { mDirectoriesStale = true; }
+  void startJudging();
   void dropSeenBelow(const std::string &key);
   void moveSeenBelow(const std::string &fromKey, const std::string &toKey);
   void seenMoved(const std::string &fromDirectory, const std::string &fromName, const std::string &toDirectory,
@@ -194,6 +215,10 @@ private:
   // judge(). Dropped and moved along with the rules below them, see dropBelow() and moveBelow(), and looked up again
   // once the patterns tell their kinds apart again, see setPatterns().
   std::map<std::string, Kind> mSeenKinds;
+  // By the keys of the directories' paths relative to mBase. Pointers to their elements stay valid while more are
+  // added, which judging does as it goes.
+  std::unordered_map<std::string, DirectoryState> mDirectories;
+  bool mDirectoriesStale = false;
   std::mutex mMutex;
 };
 

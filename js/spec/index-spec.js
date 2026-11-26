@@ -5133,10 +5133,10 @@ describe('Node Sentinel File Watcher', function() {
       assert.deepEqual(await runChild('worker-error', path.join(workDir, 'test2')), { code: 0, signal: null });
     });
 
-    it('tears down workers terminated while many watchers are busy', async function() {
+    it('tears down workers terminated while many watchers are busy, and frees their queued events', async function() {
       // 15 workers that each start 40 watchers: give slow CI runners more time.
       assert.deepEqual(
-        await runChild('worker-terminate-busy', path.join(workDir, 'test4'), [], 60000),
+        await runChild('worker-terminate-busy', path.join(workDir, 'test4'), ['--expose-gc'], 60000),
         { code: 0, signal: null }
       );
     });

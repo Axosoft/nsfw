@@ -34,6 +34,15 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
     // Everything that exists only while the watcher runs, see NSFW.cpp.
     class Run;
 
+    // What the delivery thread hands to the main thread. Each CallJs takes ownership of it, also when the environment
+    // is torn down with the call still queued and it only frees it.
+    struct EventDelivery;
+    struct ErrorDelivery;
+    static void callEventJs(Napi::Env env, Napi::Function jsCallback, std::nullptr_t *, EventDelivery *delivery);
+    static void callErrorJs(Napi::Env env, Napi::Function jsCallback, std::nullptr_t *, ErrorDelivery *delivery);
+    using EventCallback = Napi::TypedThreadSafeFunction<std::nullptr_t, EventDelivery, &NSFW::callEventJs>;
+    using ErrorCallback = Napi::TypedThreadSafeFunction<std::nullptr_t, ErrorDelivery, &NSFW::callErrorJs>;
+
     static const char *const EVENT_CALLBACK_KEY;
     static const char *const ERROR_CALLBACK_KEY;
 
@@ -97,8 +106,8 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
 
       private:
         enum JobStatus { STARTED, ALREADY_RUNNING, COULD_NOT_START, JOB_NOT_EXECUTED_YET };
-        Napi::ThreadSafeFunction mErrorCallback;
-        Napi::ThreadSafeFunction mEventCallback;
+        ErrorCallback mErrorCallback;
+        EventCallback mEventCallback;
         JobStatus mStatus;
         uint64_t mRunId;
     };
@@ -194,6 +203,7 @@ class NSFW : public Napi::ObjectWrap<NSFW> {
   public:
     static Napi::Object Init(Napi::Env, Napi::Object exports);
     static Napi::Value InstanceCount(const Napi::CallbackInfo &info);
+    static Napi::Value LiveDeliveryCount(const Napi::CallbackInfo &info);
     static void onEnvCleanup(void *data);
     void pauseQueue();
     void resumeQueue();

@@ -83,7 +83,7 @@ async function main() {
     for (let iteration = 1; iteration <= repetitions; iteration++) {
       const startedAt = new Date().toISOString();
       const result = await runChild([
-        path.join(repoRoot, 'js/spec/lifecycle-child.js'), 'worker-terminate-busy', watchDir
+        '--expose-gc', path.join(repoRoot, 'js/spec/lifecycle-child.js'), 'worker-terminate-busy', watchDir
       ], path.join(outputDir, `child-${iteration}.log`)).catch(error => ({
         pid: null, startedAt, code: null, signal: null, timedOut: false,
         error: { code: error.code || null, message: error.message }

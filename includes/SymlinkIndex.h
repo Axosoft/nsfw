@@ -38,6 +38,9 @@ public:
 
   // Whether name in directory is a directory not to look into.
   using IgnoredDirectory = std::function<bool(const std::string &directory, const std::string &name)>;
+  // Sets reported to the path the watcher reports the real directory `directory` under, as of the events it told so
+  // far; false to keep `directory`.
+  using ReportedDirectory = std::function<bool(const std::string &directory, std::string &reported)>;
 
   // throughDirectoryLinks: the watcher follows symlinks to directories, so it may report a path in the tree through
   // one of them (the Linux tree holds a directory where it saw it first).
@@ -51,6 +54,11 @@ public:
   void stopWalk();
 
   void setExcludedPaths(const std::vector<std::string> &excludedPaths);
+
+  // For a watcher that reports a directory through a symlink to it: the changes under a symlink in it are reported
+  // where the watcher reports the symlink's own. Called from eventHappened() only, so it must be safe to call from
+  // whatever thread tells events; nullptr to stop.
+  void setReportedDirectory(ReportedDirectory reportedDirectory);
 
   // name in directory, which a watcher listing the tree found to be a symlink.
   void linkFound(const std::string &directory, const std::string &name);
@@ -112,6 +120,7 @@ private:
   std::string mWatchedKey;
   std::string mRealWatchedKey;
   std::vector<std::string> mExcludedKeys;
+  ReportedDirectory mReportedDirectory;
   // By the keys of their paths: comparable, '/' separated.
   std::map<std::string, Link> mLinks;
   // The keys of the symlinks each path in a chain is in, by that path's key. Ordered, so the paths below a directory

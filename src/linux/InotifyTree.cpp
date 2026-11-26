@@ -207,6 +207,24 @@ bool InotifyTree::getPath(std::string &out, int wd) {
   return true;
 }
 
+// Where the tree has a node at path, its events are reported there. Only a directory it holds elsewhere is looked up
+// on disk, which may be ahead of the events: a directory renamed over path would be taken for it. A directory still
+// being scanned for the first time isn't found that way: its node is only reserved, see createChild().
+bool InotifyTree::reportedPathOf(const std::string &path, std::string &reported) {
+  InotifyNode *node = findNodeAtTreePath(path);
+  if (node != NULL && node->getWatchDescriptor() != -1) {
+    reported = path;
+    return true;
+  }
+  node = findNodeByPath(path);
+  if (node == NULL || node->getWatchDescriptor() == -1 ||
+    findNodeByWatchDescriptor(node->getWatchDescriptor()) != node) {
+    return false;
+  }
+  reported = node->getFullPath();
+  return true;
+}
+
 bool InotifyTree::isRootExcluded() const {
   return mRootExcluded;
 }

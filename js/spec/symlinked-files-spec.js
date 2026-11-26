@@ -7,7 +7,7 @@ const { WORKDIR: workDir, barrier, it, remove, untilNextSecond, waitForEvent } =
 
 const nsfw = require('../dist');
 
-const { CREATED, DELETED, MODIFIED } = nsfw.actions;
+const { CREATED, DELETED, MODIFIED, RENAMED } = nsfw.actions;
 const { FILE } = nsfw.kinds;
 // The watchers that list the tree when they start find the symlinks already there.
 const listsTree = process.platform === 'linux' || process.platform === 'freebsd';
@@ -78,14 +78,14 @@ describe('Symlinked files', function() {
   });
 
   // A walk in the background finds the symlinks already there at some point after start(): changes the target until
-  // one is reported under the symlink.
-  async function modifyUntilReportedUnder(directory, file) {
+  // one is reported under the symlink, as isReported tells.
+  async function modifyUntilReported(isReported) {
     for (let attempt = 0; attempt < 20; ++attempt) {
       events.length = 0;
       await modify(target);
       await waitFor('target.file', MODIFIED, 'modification');
       await barrier(events, inPath);
-      if (events.some(event => event.directory === directory && event.file === file)) return true;
+      if (events.some(isReported)) return true;
     }
     return false;
   }
@@ -96,7 +96,8 @@ describe('Symlinked files', function() {
     await fsp.symlink(path.join('..', '..', 'target.file'), path.join(nested, 'link'), 'file');
     await fsp.symlink('target.file', path.join(inPath, 'link'), 'file');
     await watchTree({ followFileSymlinks: true });
-    assert.ok(await modifyUntilReportedUnder(nested, 'link'), JSON.stringify(events));
+    assert.ok(await modifyUntilReported(event => event.directory === nested && event.file === 'link'),
+      JSON.stringify(events));
     await waitFor('link', MODIFIED, 'modification');
   });
 
@@ -266,6 +267,96 @@ describe('Symlinked files', function() {
       assert.ok(events.some(event => event.directory === path.join(inPath, 'a-alias') && event.file === 'inner.file'),
         JSON.stringify(events));
     }
+  });
+
+  describe('in a directory a symlink to it is listed before', function() {
+    // Listed first, the alias is where the Linux tree watches the real directory, and reports its entries.
+    const real = path.join(inPath, 'z-real');
+    const isLink = (event, action) => event.file === 'file-link' && (action === undefined || event.action === action);
+    const waitForLink = (action, name) => waitForEvent(events, event => isLink(event, action), `${name} of file-link`);
+    const linkDirectories = () => new Set(events.filter(event => isLink(event)).map(event => event.directory));
+
+    async function makeAlias(directory = inPath) {
+      await fsp.mkdir(real);
+      await fsp.mkdir(directory, { recursive: true });
+      await fsp.symlink(real, path.join(directory, 'a-alias'), 'dir');
+    }
+
+    const makeLink = () => fsp.symlink(path.join('..', 'target.file'), path.join(real, 'file-link'), 'file');
+
+    // The changes of the target, then the removal of the symlink, under the same path.
+    async function assertModifiedAndRemovedUnderOnePath() {
+      await modify(target);
+      await waitForLink(MODIFIED, 'modification');
+      await fsp.unlink(path.join(real, 'file-link'));
+      await waitForLink(DELETED, 'removal');
+      await barrier(events, inPath);
+      assert.strictEqual(linkDirectories().size, 1, JSON.stringify(events));
+    }
+
+    it('reports a symlink created there under one path', async function() {
+      await makeAlias();
+      await watchTree();
+      await makeLink();
+      await waitForLink(APPEARED, 'creation');
+      await barrier(events, inPath);
+      await assertModifiedAndRemovedUnderOnePath();
+      if (listsTree) {
+        // Else the tree held the directory at its own path, and this didn't test what it meant to.
+        assert.ok(linkDirectories().has(path.join(inPath, 'a-alias')), JSON.stringify(events));
+      }
+    });
+
+    it('reports a symlink there when it started under one path', async function() {
+      await makeAlias();
+      await makeLink();
+      await watchTree({ followFileSymlinks: true });
+      assert.ok(await modifyUntilReported(event => isLink(event, MODIFIED)), JSON.stringify(events));
+      await settle();
+      await assertModifiedAndRemovedUnderOnePath();
+    });
+
+    const waitForRoot = action => waitForEvent(events, event => event.directory === inPath && event.action === action,
+      'change of the alias');
+
+    for (const [change, act, action] of [
+      ['removed', () => fsp.unlink(path.join(inPath, 'a-alias')), DELETED],
+      ['renamed', () => fsp.rename(path.join(inPath, 'a-alias'), path.join(inPath, 'b-alias')), RENAMED],
+      ['repointed', async () => {
+        const other = path.join(inPath, 'y-real');
+        await fsp.mkdir(other);
+        // Windows doesn't rename a symlink to a directory over another.
+        if (process.platform === 'win32') {
+          await fsp.unlink(path.join(inPath, 'a-alias'));
+          await fsp.symlink(other, path.join(inPath, 'a-alias'), 'dir');
+          return;
+        }
+        await fsp.symlink(other, path.join(inPath, 'new-alias'), 'dir');
+        await fsp.rename(path.join(inPath, 'new-alias'), path.join(inPath, 'a-alias'));
+      }, process.platform === 'win32' ? CREATED : RENAMED],
+    ]) {
+      it(`reports a symlink there under one path once the alias is ${change}`, async function() {
+        await makeAlias();
+        await watchTree();
+        await makeLink();
+        await waitForLink(APPEARED, 'creation');
+        await act();
+        await waitForRoot(action);
+        await settle();
+        await assertModifiedAndRemovedUnderOnePath();
+      });
+    }
+
+    it('reports a symlink there under one path once the directory holding the alias is renamed', async function() {
+      await makeAlias(path.join(inPath, 'outer'));
+      await watchTree();
+      await makeLink();
+      await waitForLink(APPEARED, 'creation');
+      await fsp.rename(path.join(inPath, 'outer'), path.join(inPath, 'outer2'));
+      await waitForRoot(RENAMED);
+      await settle();
+      await assertModifiedAndRemovedUnderOnePath();
+    });
   });
 
   it('follows a chain retargeted in the middle by what is on disk', async function() {

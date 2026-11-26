@@ -6,6 +6,7 @@
 #include "InotifyTree.h"
 #include "../PathFilter.h"
 #include "../Queue.h"
+#include "../SymlinkIndex.h"
 #include <memory>
 #include <queue>
 #include <map>
@@ -15,9 +16,10 @@ class InotifyTree;
 
 class InotifyService {
 public:
-  // filter: what the tree doesn't watch, besides the excluded paths.
+  // filter: what the tree doesn't watch, besides the excluded paths. symlinks: told about the symlinks the tree finds,
+  // and where it reports their directories.
   InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
-    std::shared_ptr<PathFilter> filter, LinkFound linkFound = nullptr);
+    std::shared_ptr<PathFilter> filter, std::shared_ptr<SymlinkIndex> symlinks);
 
   std::string getError();
   bool hasErrored();
@@ -63,6 +65,7 @@ private:
 
   std::shared_ptr<EventQueue> mQueue;
   std::shared_ptr<PathFilter> mFilter;
+  std::shared_ptr<SymlinkIndex> mSymlinks;
   // The filter's generation committed last (see PathFilter::commit()), the one whose exclusions alone the tree
   // applied, the last one seen, when it was seen, and when the first one not committed was, see settleFilterChange().
   // And below which directories the answers changed since, or all of them.

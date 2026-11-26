@@ -26,9 +26,7 @@ NativeInterface::NativeInterface(const std::string &path, const std::vector<std:
   // recursive: the single file watcher excludes the subdirectories by patterns, so they cost no inotify watch. It lists
   // every directory it watches, so it tells the symlinks it finds there.
   (void)recursive;
-  std::shared_ptr<SymlinkIndex> symlinks = mSymlinks;
-  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter,
-    [symlinks](const std::string &directory, const std::string &name) { symlinks->linkFound(directory, name); }));
+  mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter, mSymlinks));
 #elif defined(_WIN32) || defined(__APPLE_CC__)
   mQueue->setFilter(mFilter);
   // These watchers skip the directories the filter ignores when they report what a directory that appeared holds.

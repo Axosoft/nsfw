@@ -89,6 +89,9 @@ public:
   bool hadDirectoryAt(int wd, const std::string &name);
   // Whether the tree holds the directory with wd at a symlink that leads to it.
   bool isHeldAtLink(int wd);
+  // The path the tree reports the directory at path under, by the events handled so far; false if it watches no such
+  // directory.
+  bool reportedPathOf(const std::string &path, std::string &reported);
 
   // In bytes: what one read of the event loop takes at most, which removeDroppedWatches() paces itself by.
   static const int READ_SIZE = 8192;

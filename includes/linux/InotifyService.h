@@ -17,7 +17,7 @@ class InotifyTree;
 class InotifyService {
 public:
   // filter: what the tree doesn't watch, besides the excluded paths. symlinks: told about the symlinks the tree finds,
-  // and where it reports their directories.
+  // and where it reports their directories; null to follow none.
   InotifyService(std::shared_ptr<EventQueue> queue, std::string path, const std::vector<std::string> &excludedPaths,
     std::shared_ptr<PathFilter> filter, std::shared_ptr<SymlinkIndex> symlinks);
 

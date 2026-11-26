@@ -15,7 +15,11 @@ NativeInterface::NativeInterface(const std::string &path, const std::vector<std:
   const FilterOptions &filterOptions, bool recursive, bool followFileSymlinks, std::shared_ptr<EventQueue> queue):
   mQueue(queue),
   mFilter(std::make_shared<PathFilter>(path, filterOptions)),
-  mSymlinks(std::make_shared<SymlinkIndex>(path, excludedPaths, mFilter->isCaseSensitive(), FOLLOWS_DIRECTORY_LINKS)) {
+  // None for a watched file, the only watcher that isn't recursive: its patterns ignore every entry but the file's, so
+  // nothing would ever be reported under a symlink, and each one found or created next to the file would be looked up,
+  // and again on each change of the file it leads to, for nothing.
+  mSymlinks(!recursive ? nullptr :
+    std::make_shared<SymlinkIndex>(path, excludedPaths, mFilter->isCaseSensitive(), FOLLOWS_DIRECTORY_LINKS)) {
   mQueue->setSymlinks(mSymlinks);
 #if defined(__linux__) || defined(__FreeBSD__)
   // Its scan already finds every symlink.
@@ -23,16 +27,15 @@ NativeInterface::NativeInterface(const std::string &path, const std::vector<std:
   mFilter->trackApplied();
   mQueue->setFilter(mFilter, true);
   // The Linux watcher also skips the directories it ignores, instead of watching them for nothing. It has no use for
-  // recursive: the single file watcher excludes the subdirectories by patterns, so they cost no inotify watch. It lists
-  // every directory it watches, so it tells the symlinks it finds there.
-  (void)recursive;
+  // recursive itself: the single file watcher excludes the subdirectories by patterns, so they cost no inotify watch.
+  // It lists every directory it watches, so it tells the index, if there is one, the symlinks it finds there.
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter, mSymlinks));
 #elif defined(_WIN32) || defined(__APPLE_CC__)
   mQueue->setFilter(mFilter);
   // These watchers skip the directories the filter ignores when they report what a directory that appeared holds.
   mNativeInterface.reset(new NativeImplementation(queue, path, excludedPaths, mFilter, recursive));
   // After the watcher started, so a symlink created during the walk is followed from its event if not found by it.
-  if (followFileSymlinks && mNativeInterface->isWatching()) {
+  if (mSymlinks && followFileSymlinks && mNativeInterface->isWatching()) {
     std::shared_ptr<PathFilter> filter = mFilter;
     mSymlinks->walk([filter](const std::string &directory, const std::string &name) {
       return filter->isActive() && filter->isIgnored(directory, name, PathFilter::Kind::DIRECTORY);
@@ -46,7 +49,7 @@ NativeInterface::NativeInterface(const std::string &path, const std::vector<std:
 }
 
 NativeInterface::~NativeInterface() {
-  mSymlinks->stopWalk();
+  if (mSymlinks) mSymlinks->stopWalk();
   mNativeInterface.reset(nullptr);
   mQueue->setFilter(nullptr);
   mQueue->setSymlinks(nullptr);
@@ -65,7 +68,7 @@ bool NativeInterface::isWatching() {
 }
 
 std::future<bool> NativeInterface::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
-  mSymlinks->setExcludedPaths(excludedPaths);
+  if (mSymlinks) mSymlinks->setExcludedPaths(excludedPaths);
 #if defined(__linux__) || defined(__FreeBSD__)
   return mNativeInterface->updateExcludedPaths(excludedPaths);
 #else

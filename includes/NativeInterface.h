@@ -19,7 +19,7 @@ using NativeImplementation = InotifyService;
 
 class NativeInterface {
 public:
-  // recursive: false only reports the entries of path itself.
+  // recursive: false only reports the entries of path itself, and follows no symlink.
   NativeInterface(const std::string &path, const std::vector<std::string> &excludedPaths,
     const FilterOptions &filterOptions, bool recursive, bool followFileSymlinks,
     std::shared_ptr<EventQueue> queue);

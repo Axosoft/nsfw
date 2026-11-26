@@ -16,6 +16,13 @@
 - On Linux, a symlink to a file in a directory the watched tree reaches through a symlink to it is reported under one
   path again: since 3.1.0, the changes of what it leads to were reported under its real path, while its own creation
   and removal came under the path the tree watches the directory through (#276).
+- Windows: a watcher on a network share whose server rejects the 1 MiB read buffer at once no longer stops with
+  `Service shutdown unexpectedly: The parameter is incorrect. (Windows error 87)`: it opens the directory again and
+  retries with a 64 KiB buffer, the largest a share takes, as it already retried when the read failed on completion,
+  and frees the larger one (#280). A read that fails so with a 64 KiB buffer is reported instead of being retried
+  forever. A watched file's watcher reads into 64 KiB buffers instead of 1 MiB ones, and a watcher allocates its second
+  buffer only once it has read events, so a watcher no longer takes 2 MiB from the start. A burst of changes in a
+  watched file's directory overflows the smaller buffer sooner, from which the file's watcher recovers on its own.
 
 ## 3.1.1
 

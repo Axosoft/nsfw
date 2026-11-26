@@ -290,7 +290,8 @@ the middle is reported under the symlinks that led through it. A cycle is not fo
 directory (on Linux the watcher follows those into the directory they lead to), a symlink to a path outside the
 watched path (even one the Linux watcher reaches through a symlink to a directory outside it), an excluded symlink, or
 a symlink that leads to an excluded or ignored file. Symlinks created, removed, renamed or retargeted while watching
-are followed from then on. An event reported under a symlink has the `kind` of the symlink itself: `FILE`.
+are followed from then on. An event reported under a symlink has the `kind` of the symlink itself: `FILE`. A watched
+file follows none: it only reports its own changes, under the path it was given.
 
 Which symlinks are followed, and what it costs, depends on the platform:
 

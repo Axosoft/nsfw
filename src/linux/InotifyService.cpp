@@ -50,7 +50,7 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
   const uint64_t beforeScan = mFilter->generation();
   mTree.reset(new InotifyTree(mInotifyInstance.get(), path, excludedPaths, mFilter,
     [queue]() { queue->wake(EventQueue::WAKE_ERROR); },
-    [symlinks = mSymlinks](const std::string &directory, const std::string &name) {
+    !mSymlinks ? LinkFound() : [symlinks = mSymlinks](const std::string &directory, const std::string &name) {
       symlinks->linkFound(directory, name);
     }));
   // The scan used the rules as they are. One that changed meanwhile (read again after failing) may have decided some
@@ -76,9 +76,11 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
     #endif
     // Before the loop tells any event. The queue asks it while telling one, which is always with the event handling
     // locked (by the loop, or updateExcludedPaths() and updateExcludedPatterns()), the only time the tree changes.
-    mSymlinks->setReportedDirectory([this](const std::string &directory, std::string &reported) {
-      return mTree->reportedPathOf(directory, reported);
-    });
+    if (mSymlinks) {
+      mSymlinks->setReportedDirectory([this](const std::string &directory, std::string &reported) {
+        return mTree->reportedPathOf(directory, reported);
+      });
+    }
     mEventLoop.reset(new InotifyEventLoop(
       mInotifyInstance.get(),
       this
@@ -95,11 +97,11 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
   }
 }
 
-// The members release everything, in the order InotifyService.h declares them for. The index outlives the tree, so it
-// stops asking it once the loop no longer tells events.
+// The members release everything, in the order InotifyService.h declares them for. The index, if any, outlives the tree,
+// so it stops asking it once the loop no longer tells events.
 InotifyService::~InotifyService() {
   mEventLoop.reset();
-  mSymlinks->setReportedDirectory(nullptr);
+  if (mSymlinks) mSymlinks->setReportedDirectory(nullptr);
 }
 
 // Without IN_ISDIR the entry isn't a directory, though for the filter a symlink to one counts as one, as the tree

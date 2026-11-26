@@ -4,7 +4,7 @@ import path = require('path');
 type Implementation = nsfw.NSFW;
 
 interface NativeBinding {
-  // recursive: internal, false only reports the entries of watchPath itself. Defaults to true.
+  // recursive: internal, false only reports the entries of watchPath itself, and follows no symlink. Defaults to true.
   new (watchPath: string, eventCallback: EventCallback,
     options: Required<Omit<nsfw.Options, 'nativeBinding'>> & { recursive?: boolean }): Implementation;
   getAllocatedInstanceCount?: () => number;

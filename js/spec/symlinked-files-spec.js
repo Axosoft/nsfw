@@ -541,4 +541,21 @@ describe('Symlinked files', function() {
     assert.deepStrictEqual(reportedUnder('to-hidden'), []);
     assert.deepStrictEqual(events.filter(event => event.directory === excluded), []);
   });
+
+  it('follows a symlink that was there when it started once the patterns no longer ignore it', async function() {
+    const nested = path.join(inPath, 'nested');
+    await fsp.mkdir(nested);
+    await fsp.symlink('target.file', path.join(inPath, 'link'), 'file');
+    await fsp.symlink(path.join('..', 'target.file'), path.join(nested, 'link'), 'file');
+    await fsp.symlink('target.file', path.join(inPath, 'kept'), 'file');
+    await watchTree({ excludedPatterns: ['link'], followFileSymlinks: true });
+    assert.ok(await modifyUntilReported(event => isAt(event, 'kept', MODIFIED)), JSON.stringify(events));
+    assert.deepStrictEqual(events.filter(event => event.file === 'link'), []);
+
+    await watch.updateExcludedPatterns([]);
+    assert.ok(await modifyUntilReported(event => event.directory === nested && event.file === 'link'),
+      JSON.stringify(events));
+    await waitFor('link', MODIFIED, 'modification');
+    assertSymlinkKind('link');
+  });
 });

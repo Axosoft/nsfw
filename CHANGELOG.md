@@ -23,6 +23,10 @@
   forever. A watched file's watcher reads into 64 KiB buffers instead of 1 MiB ones, and a watcher allocates its second
   buffer only once it has read events, so a watcher no longer takes 2 MiB from the start. A burst of changes in a
   watched file's directory overflows the smaller buffer sooner, from which the file's watcher recovers on its own.
+- A watched file no longer indexes the symlinks in its directory: on Linux every one of them when it started, nor
+  resolves again every one leading to the file on each of its changes (#278). Starting next to 5,000 symlinks to the
+  file took about 50 ms and 5 MiB, and each change of the file about 45 ms more. A watched file only reports its own
+  entry, so its watcher now follows no symlink, on any platform; a watched directory follows them as before.
 
 ## 3.1.1
 

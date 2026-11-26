@@ -976,6 +976,50 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    it('reports nothing under the symlinks next to it, there before it started or made since', async function(t) {
+      if (process.platform === 'win32') return t.skip();
+      await fsp.symlink(file, path.join(inPath(), 'before.link'), 'file');
+      await fsp.symlink('missing.file', path.join(inPath(), 'dangling.link'), 'file');
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        await fsp.symlink(file, path.join(inPath(), 'after.link'), 'file');
+        await modified(events);
+        // Written through a symlink, it is the file that changes.
+        await modified(events, path.join(inPath(), 'before.link'));
+        await modified(events, path.join(inPath(), 'after.link'));
+        await fsp.writeFile(path.join(inPath(), 'missing.file'), 'no longer dangling');
+        await modified(events);
+        assert.ok(events.every(event => event.action === nsfw.actions.MODIFIED && event.directory === inPath() &&
+          event.file === file), describeEvents(events)());
+      } finally {
+        await watch.stop();
+      }
+    });
+
+    it('reports a symlink renamed over it as modified, and a file renamed over that symlink', async function(t) {
+      if (process.platform === 'win32') return t.skip();
+      const { watch, events } = await watchFile(filePath());
+      try {
+        await watch.start();
+        const temporary = path.join(inPath(), 'testing1.file.tmp');
+        await fsp.writeFile(path.join(inPath(), 'led-to.file'), 'led to');
+        await fsp.symlink('led-to.file', temporary, 'file');
+        await fsp.rename(temporary, filePath());
+        await reported(events, nsfw.actions.MODIFIED);
+        await fsp.writeFile(temporary, 'a file again');
+        const offset = events.length;
+        await fsp.rename(temporary, filePath());
+        await waitUntil(() => events.slice(offset).some(event => event.action === nsfw.actions.MODIFIED),
+          { message: () => `The file renamed over the symlink was not reported: ${JSON.stringify(events)}` });
+        await modified(events);
+        assert.ok(events.every(event => event.action === nsfw.actions.MODIFIED && event.directory === inPath() &&
+          event.file === file), describeEvents(events)());
+      } finally {
+        await watch.stop();
+      }
+    });
+
     // The native addon, whose watcher can be made to fail as on an overflow of its event queue, and whose start() can
     // be made to fail as for a directory that can't be watched.
     function failingBinding() {

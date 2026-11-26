@@ -663,7 +663,8 @@ void Watcher::reportContents(const std::wstring &directory) {
     // The parent's watch can't tell of a rename of the watched directory while the scan holds this thread, and the
     // path listed would then lead elsewhere.
     checkWatchedPath();
-    if (hasError()) {
+    // Nor is a scan whose events the overflowed queue only drops worth finishing before the run ends.
+    if (hasError() || mQueue->overflowed()) {
       return;
     }
 

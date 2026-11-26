@@ -2063,6 +2063,227 @@ describe('Node Sentinel File Watcher', function() {
       }
     });
 
+    const QUEUE_OVERFLOW = 'Event queue exceeded maxQueuedEvents, events were lost';
+
+    // Keeps the thread from taking anything meanwhile, as a busy application does.
+    function blockThread(ms) {
+      const until = Date.now() + ms;
+      while (Date.now() < until) { /* blocks the thread */ }
+    }
+
+    // Changes made while the thread is blocked, all at once: the native queue holds them meanwhile.
+    function changeWhileBusy(directory, prefix, count) {
+      for (let i = 0; i < count; i++) {
+        fs.writeFileSync(path.join(directory, `${prefix}-${i}.file`), 'Busy');
+      }
+      blockThread(1000);
+    }
+
+    it('watches no directory created after the queue overflowed, before the error reaches a busy thread',
+      async function(t) {
+        if (process.platform !== 'linux') return t.skip();
+        const inPath = path.join(workDir, 'test4');
+        const errors = [];
+        let watch = await nsfw(inPath, () => {}, {
+          debounceMS: DEBOUNCE,
+          maxQueuedEvents: 20,
+          errorCallback(error) { errors.push(error); }
+        });
+        try {
+          await watch.start();
+          changeWhileBusy(inPath, 'burst', 200);
+          const watches = countInotifyWatches();
+          for (let i = 0; i < 20; i++) {
+            fs.mkdirSync(path.join(inPath, `after-overflow-${i}`));
+          }
+          blockThread(1000);
+          assert.strictEqual(countInotifyWatches(), watches);
+          await waitUntil(() => errors.length > 0, { message: 'No overflow error' });
+          assert.deepStrictEqual(errors.map(error => error.message), [QUEUE_OVERFLOW]);
+        } finally {
+          await watch.stop().catch(() => {});
+          watch = null;
+        }
+      });
+
+    it('drops the batches a busy thread hasn\'t taken when paused', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const events = [];
+      let paused;
+      let watch = await nsfw(inPath, batch => {
+        events.push(...batch);
+        if (paused !== undefined) return;
+        // The delivery thread hands these to this thread as a batch, which the pause drops before it gets to it.
+        for (let i = 0; i < 5; i++) {
+          fs.writeFileSync(path.join(inPath, `waiting-${i}.file`), 'Waiting');
+        }
+        blockThread(DEBOUNCE * 5);
+        paused = watch.pause();
+        blockThread(DEBOUNCE * 5);
+      }, { debounceMS: DEBOUNCE });
+      try {
+        await watch.start();
+        await fsp.writeFile(path.join(inPath, 'first.file'), 'First');
+        await waitUntil(() => paused !== undefined, { message: 'No first batch' });
+        await paused;
+        await watch.resume();
+        await barrier(events, inPath);
+        assert.deepStrictEqual(events.filter(event => event.file?.startsWith('waiting-')), []);
+      } finally {
+        await watch.stop();
+        watch = null;
+      }
+    });
+
+    it('stops with an error when more events than maxQueuedEvents wait for a busy thread', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const events = [];
+      const errors = [];
+      let watch = await nsfw(inPath, batch => events.push(...batch), {
+        debounceMS: DEBOUNCE,
+        maxQueuedEvents: 20,
+        errorCallback(error) { errors.push(error); }
+      });
+      try {
+        await watch.start();
+        changeWhileBusy(inPath, 'burst', 200);
+        await waitUntil(() => errors.length > 0, { message: 'No overflow error' });
+        assert.deepStrictEqual(errors.map(error => error.message), [QUEUE_OVERFLOW]);
+        // The thread was busy all along: the overflow dropped every batch with the run.
+        assert.deepStrictEqual(events, []);
+        await assert.rejects(watch.stop(), /not running/);
+
+        // A new run starts without the overflow, and takes as many events again.
+        events.length = 0;
+        await watch.start();
+        changeWhileBusy(inPath, 'after', 5);
+        await waitForEvent(events, event => event.file === 'after-4.file', 'after-4.file');
+        await sleep(DEBOUNCE * 2);
+        assert.strictEqual(errors.length, 1);
+      } finally {
+        await watch.stop().catch(() => {});
+        watch = null;
+      }
+    });
+
+    it('restarts from errorCallback without the batches the overflowed run left for a slow eventCallback',
+      async function() {
+        const inPath = path.join(workDir, 'test4');
+        const events = [];
+        const errors = [];
+        let restarted;
+        let watch = await nsfw(inPath, batch => {
+          events.push(...batch);
+          blockThread(200);
+        }, {
+          debounceMS: DEBOUNCE,
+          maxQueuedEvents: 20,
+          errorCallback(error) {
+            errors.push(error);
+            restarted = watch.start();
+          }
+        });
+        try {
+          await watch.start();
+          changeWhileBusy(inPath, 'burst', 200);
+          await waitUntil(() => restarted !== undefined, { message: 'No overflow error' });
+          await restarted;
+          events.length = 0;
+          for (let i = 0; i < 5; i++) {
+            await fsp.writeFile(path.join(inPath, `after-${i}.file`), 'After');
+          }
+          await waitForEvent(events, event => event.file === 'after-4.file', 'after-4.file');
+          assert.deepStrictEqual(errors.map(error => error.message), [QUEUE_OVERFLOW]);
+          assert.ok(!events.some(event => event.file?.startsWith('burst-')), 'A batch of the stopped run came');
+        } finally {
+          await watch.stop().catch(() => {});
+          watch = null;
+        }
+      });
+
+    it('counts the batches waiting for a busy thread, and no longer once delivered', async function() {
+      const inPath = path.join(workDir, 'test4');
+      const events = [];
+      const errors = [];
+      let watch = await nsfw(inPath, batch => events.push(...batch), {
+        debounceMS: DEBOUNCE,
+        maxQueuedEvents: 20,
+        errorCallback(error) { errors.push(error); }
+      });
+      try {
+        await watch.start();
+        // More than maxQueuedEvents in all, but delivered as they come.
+        for (let round = 0; round < 4; round++) {
+          for (let i = 0; i < 4; i++) {
+            await fsp.writeFile(path.join(inPath, `delivered-${round}-${i}.file`), 'Delivered');
+          }
+          await waitForEvent(events, event => event.file === `delivered-${round}-3.file`, `delivered-${round}-3.file`);
+        }
+        assert.deepStrictEqual(errors, []);
+
+        // Another process changes a few files at a time, each time in a new debounce window, while this thread is
+        // blocked: the native queue never holds many, the batches that wait for this thread do.
+        cp.execFileSync(process.execPath, ['-e', `
+          const fs = require('fs');
+          const path = require('path');
+          const until = Date.now() + 3000;
+          for (let tick = 0; Date.now() < until; tick++) {
+            for (let i = 0; i < 4; i++) fs.writeFileSync(path.join(${JSON.stringify(inPath)}, tick + '-' + i), '');
+            const next = Date.now() + ${DEBOUNCE * 2};
+            while (Date.now() < next) {}
+          }
+        `]);
+        await waitUntil(() => errors.length > 0, { message: 'No overflow error' });
+        assert.deepStrictEqual(errors.map(error => error.message), [QUEUE_OVERFLOW]);
+      } finally {
+        await watch.stop().catch(() => {});
+        watch = null;
+      }
+    });
+
+    it('delivers before debounceMS the events that fill half of the room maxQueuedEvents leaves, not overflowing',
+      async function() {
+        const inPath = path.join(workDir, 'test4');
+        const events = [];
+        let batches = 0;
+        const errors = [];
+        let watch = await nsfw(inPath, batch => {
+          batches++;
+          events.push(...batch);
+        }, {
+          debounceMS: 60000,
+          maxQueuedEvents: 100,
+          errorCallback(error) { errors.push(error); }
+        });
+        try {
+          await watch.start();
+          // More than maxQueuedEvents within one debounce, while this thread takes every batch.
+          for (let i = 0; i < 200; i++) {
+            await fsp.writeFile(path.join(inPath, `flushed-${i}.file`), 'Flushed');
+          }
+          // The last ones, fewer than half of the room, wait out the debounce.
+          await waitForEvent(events, event => event.file === 'flushed-149.file', 'flushed-149.file');
+          assert.deepStrictEqual(errors, []);
+          assert.ok(batches > 2, `${batches} batches`);
+        } finally {
+          await watch.stop();
+          watch = null;
+        }
+      });
+
+    it('rejects a maxQueuedEvents that is not a positive integer', async function() {
+      const inPath = path.join(workDir, 'test4');
+      for (const maxQueuedEvents of [0, -1, 1.5, '10', Infinity, NaN, null]) {
+        await assert.rejects(() => nsfw(inPath, () => {}, { maxQueuedEvents }),
+          /^TypeError: maxQueuedEvents must be a positive integer/, String(maxQueuedEvents));
+        // Also when the native watcher is built without the JavaScript layer.
+        assert.throws(() => new nsfw._native(inPath, () => {}, { maxQueuedEvents }),
+          /^TypeError: options.maxQueuedEvents must be a positive integer/, String(maxQueuedEvents));
+      }
+      assert.throws(() => new nsfw._native(inPath, () => {}, { maxQueuedEvents: 2 ** 53 }),
+        /^TypeError: options.maxQueuedEvents must be a positive integer/);
+    });
+
     it('reports the first events at once and an error without waiting out debounceMS', async function() {
       const inPath = path.join(workDir, 'test4');
       const debounceMS = 10000;

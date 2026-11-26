@@ -45,13 +45,27 @@ struct Event {
   PathFilter::Kind kind;
 };
 
+// Events dequeued for JavaScript. Its fields belong to the queue, under its mutex.
+struct EventBatch {
+  // WAITING for JavaScript, TAKEN by it, or DONE: delivered or dropped.
+  enum State { WAITING, TAKEN, DONE };
+  std::vector<std::unique_ptr<Event>> events;
+  std::size_t count = 0;
+  State state = WAITING;
+};
+
 class EventQueue {
 public:
   void clear();
   std::size_t count();
   std::unique_ptr<Event> dequeue();
-  std::unique_ptr<std::vector<std::unique_ptr<Event>>> dequeueAll(uint64_t &epoch);
-  uint64_t epoch() const { return mEpoch; }
+  // The events it returns count as pending until the batch is released. A clear() drops them, unless JavaScript has
+  // taken them already.
+  std::shared_ptr<EventBatch> dequeueAll();
+  // The events of the batch for JavaScript, none if a clear() dropped them meanwhile.
+  std::vector<std::unique_ptr<Event>> takeBatch(EventBatch &batch);
+  // Once JavaScript is done with the batch, or it was dropped on the way.
+  void releaseBatch(EventBatch &batch);
   // filterKind: what the filter judges the entry as when it is gone, following a symlink as the watchers do; a removed
   // one can't be looked up anymore. kind: what is reported, see Event::kind; for a rename, the entry that moved.
   void enqueue(
@@ -72,10 +86,23 @@ public:
   void pause();
   void resume();
 
+  // The most events that can wait for JavaScript, in the queue and in the batches it isn't done with yet. One more
+  // overflows the queue: it drops what it holds and every later event, and wakes the delivery thread with
+  // WAKE_ERROR, as a watcher that loses events does. Only a new run forgets it, see resetOverflow(): a pause or a stop
+  // in between doesn't bring back what was lost.
+  static constexpr std::size_t DEFAULT_MAX_QUEUED_EVENTS = 1000000;
+  void setMaxQueuedEvents(std::size_t maxQueuedEvents);
+  // Whether the queue holds half of the room the batches waiting for JavaScript leave, ready to go: then they don't
+  // wait out the debounce, so that only batches JavaScript isn't done with can fill the rest.
+  bool flushDue();
+  bool overflowed();
+  void resetOverflow();
+
   // What wakes the delivery thread of the run that watches, which sleeps until one of them comes instead of checking
-  // on a timer. WAKE_EVENTS comes with every event queued, or once a hold of them is released, WAKE_ERROR from the
-  // watcher when it records an error, and WAKE_STOP from the run when it ends.
-  enum Wake : unsigned { WAKE_EVENTS = 1, WAKE_ERROR = 2, WAKE_STOP = 4 };
+  // on a timer. WAKE_EVENTS comes with every event queued, or once a hold of them is released, WAKE_FLUSH along with
+  // it once a flush is due, see flushDue(), WAKE_ERROR from the watcher when it records an error or from the queue
+  // when it overflows, and WAKE_STOP from the run when it ends.
+  enum Wake : unsigned { WAKE_EVENTS = 1, WAKE_ERROR = 2, WAKE_STOP = 4, WAKE_FLUSH = 8 };
   void wake(unsigned reasons);
   // Blocks until a wake for one of reasons comes or the deadline passes, and takes the ones that came, which the
   // later calls don't see. The wakes for other reasons stay for them, and don't interrupt this one.
@@ -106,6 +133,16 @@ private:
     PathFilter::Kind kind
   );
   void judgeDerived(uint64_t eventEpoch, const SymlinkIndex::Derived &derived);
+  // Moved out under the lock, and freed once it is released: it can be as many events as the limit.
+  struct Dropped {
+    std::deque<std::unique_ptr<Event>> queued;
+    std::vector<std::vector<std::unique_ptr<Event>>> batches;
+  };
+  void dropLocked(Dropped &dropped);
+  uint64_t epoch() const { return mEpoch; }
+  // What dequeueAll() takes: the events that aren't held.
+  std::size_t deliverableLocked() const { return mHolding ? mHeldFrom : queue.size(); }
+  bool flushDueLocked() const;
   void push(
     uint64_t epoch,
     const EventType type,
@@ -123,8 +160,15 @@ private:
   // Under mutex: whether events are held, and how many at the front of the queue can be dequeued meanwhile.
   bool mHolding = false;
   std::size_t mHeldFrom = 0;
+  // Under mutex.
+  std::size_t mMaxQueuedEvents = DEFAULT_MAX_QUEUED_EVENTS;
+  std::size_t mInFlight = 0;
+  // The batches dequeued, in order, until JavaScript takes them or a clear() drops them.
+  std::deque<std::weak_ptr<EventBatch>> mBatches;
+  // Written under mutex; read without it by enqueue(), which skips the work of a run that has lost events.
+  std::atomic<bool> mOverflowed{false};
   std::mutex mutex;
-  // A pause or stop invalidates batches that have already left the queue for JavaScript.
+  // A pause or stop ends what the watcher was queueing: what it still pushes from before is dropped.
   std::atomic<uint64_t> mEpoch{0};
   std::atomic<bool> mPaused;
   std::mutex mWakeMutex;

@@ -1,6 +1,8 @@
 #include "../../includes/linux/InotifyService.h"
 
 #ifdef NSFW_TEST_SLOW_1
+#include <new>
+
 // Lets js/spec/index-slow-spec.js stop the event loop before start() checks that the watcher runs: when the watched
 // directory holds this file, the loop's first read() fails.
 static bool failFirstRead(const std::string &path, int inotifyInstance) {
@@ -10,23 +12,42 @@ static bool failFirstRead(const std::string &path, int inotifyInstance) {
   }
   return InotifyEventLoop::failReads(inotifyInstance);
 }
+
+// Lets js/spec/index-slow-spec.js check that a root that fails to watch leaves the inotify descriptor's number alone
+// once it is closed: when the directory holding the root has this file, it is opened right after, as another thread
+// could have, and left open for the spec to find and close. Only when it gets that number, the lowest free one unless
+// another thread took it or freed a lower one meanwhile: the spec then fails rather than this closing what that thread
+// opened.
+static void takeClosedDescriptor(const std::string &path, int closedInstance) {
+  const std::string marker = path.substr(0, path.find_last_of('/')) + "/nsfw-test-take-closed-inotify";
+  int taken = open(marker.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (taken != -1 && taken != closedInstance) {
+    close(taken);
+  }
+}
+
+// Lets js/spec/index-slow-spec.js have start() fail by an exception once the tree holds its watches, as running out of
+// memory there would: when the watched directory holds this file.
+static void throwBeforeEventLoop(const std::string &path) {
+  struct stat file;
+  if (stat((path + "/nsfw-test-throw-before-loop").c_str(), &file) == 0) {
+    throw std::bad_alloc();
+  }
+}
 #endif
 
 InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path,
   const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter, LinkFound linkFound):
-  mEventLoop(NULL),
   mQueue(queue),
-  mTree(NULL),
-  mFilter(filter) {
-  mInotifyInstance = inotify_init();
-
-  if (mInotifyInstance == -1) {
+  mFilter(filter),
+  mInotifyInstance(inotify_init1(IN_CLOEXEC)) {
+  if (!mInotifyInstance.isOpen()) {
     return;
   }
 
   const uint64_t beforeScan = mFilter->generation();
-  mTree = new InotifyTree(mInotifyInstance, path, excludedPaths, mFilter,
-    [queue]() { queue->wake(EventQueue::WAKE_ERROR); }, std::move(linkFound));
+  mTree.reset(new InotifyTree(mInotifyInstance.get(), path, excludedPaths, mFilter,
+    [queue]() { queue->wake(EventQueue::WAKE_ERROR); }, std::move(linkFound)));
   // The scan used the rules as they are. One that changed meanwhile (read again after failing) may have decided some
   // directories by other rules: it stays to commit, and the event loop applies it then, like any change.
   mCommittedGeneration = mExcludedGeneration = mSeenGeneration = mFilter->commit(beforeScan);
@@ -36,18 +57,22 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
     mPendingAll = false;
   }
   if (!mTree->isRootAlive()) {
-    delete mTree;
-    mTree = NULL;
-    mEventLoop = NULL;
-    close(mInotifyInstance);
+    // Released at once rather than with the service: closing the descriptor drops the watches the scan added.
+    mTree.reset();
+    [[maybe_unused]] const int closedInstance = mInotifyInstance.get();
+    mInotifyInstance.reset();
+    #ifdef NSFW_TEST_SLOW_1
+      takeClosedDescriptor(path, closedInstance);
+    #endif
   } else {
     #ifdef NSFW_TEST_SLOW_1
-      bool failingFirstRead = failFirstRead(path, mInotifyInstance);
+      throwBeforeEventLoop(path);
+      bool failingFirstRead = failFirstRead(path, mInotifyInstance.get());
     #endif
-    mEventLoop = new InotifyEventLoop(
-      mInotifyInstance,
+    mEventLoop.reset(new InotifyEventLoop(
+      mInotifyInstance.get(),
       this
-    );
+    ));
     #ifdef NSFW_TEST_SLOW_1
       // Waits for the loop to record the error, plus a margin for it to finish, so it stops before start()'s check.
       for (int i = 0; failingFirstRead && i < 1000 && !mTree->hasErrored(); ++i) {
@@ -60,17 +85,8 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
   }
 }
 
-InotifyService::~InotifyService() {
-  if (mEventLoop != NULL) {
-    delete mEventLoop;
-  }
-
-  if (mTree != NULL) {
-    delete mTree;
-  }
-
-  close(mInotifyInstance);
-}
+// The members release everything, in the order InotifyService.h declares them for.
+InotifyService::~InotifyService() = default;
 
 // Without IN_ISDIR the entry isn't a directory, though for the filter a symlink to one counts as one, as the tree
 // follows it: the filter looks it up, see PathFilter::kindOf().
@@ -238,7 +254,7 @@ void InotifyService::dispatchRename(int fromWd, std::string fromName, int toWd, 
 }
 
 std::string InotifyService::getError() {
-  if (mTree != NULL && mTree->hasErrored()) {
+  if (mTree && mTree->hasErrored()) {
     return mTree->getError();
   }
 
@@ -250,11 +266,11 @@ std::string InotifyService::getError() {
 }
 
 bool InotifyService::hasErrored() {
-  return !isWatching() || (mTree == NULL ? false : mTree->hasErrored());
+  return !isWatching() || (mTree && mTree->hasErrored());
 }
 
 bool InotifyService::isWatching() {
-  if (mTree == NULL || mEventLoop == NULL) {
+  if (!mTree || !mEventLoop) {
     return false;
   }
 

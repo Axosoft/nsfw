@@ -1,10 +1,12 @@
 #ifndef INOTIFY_EVENT_HANDLER_H
 #define INOTIFY_EVENT_HANDLER_H
 
+#include "FileDescriptor.h"
 #include "InotifyEventLoop.h"
 #include "InotifyTree.h"
 #include "../PathFilter.h"
 #include "../Queue.h"
+#include <memory>
 #include <queue>
 #include <map>
 
@@ -59,10 +61,7 @@ private:
   void takeFilterChanges();
   void wakeForFilterChange();
 
-  InotifyEventLoop *mEventLoop;
   std::shared_ptr<EventQueue> mQueue;
-  InotifyTree *mTree;
-  int mInotifyInstance;
   std::shared_ptr<PathFilter> mFilter;
   // The filter's generation committed last (see PathFilter::commit()), the one whose exclusions alone the tree
   // applied, the last one seen, when it was seen, and when the first one not committed was, see settleFilterChange().
@@ -85,6 +84,13 @@ private:
   static constexpr std::chrono::milliseconds INCLUSION_QUIET_PERIOD = std::chrono::milliseconds(1000);
   static constexpr std::chrono::milliseconds INCLUSION_MAX_DELAY = std::chrono::milliseconds(5000);
   static constexpr std::chrono::milliseconds FAILED_READ_RETRY = std::chrono::milliseconds(1000);
+
+  // Last, and in this order: members go in reverse, also when the constructor throws. The loop first, whose thread
+  // uses all of the above and reads the descriptor, then the tree, which holds its number, then the descriptor, whose
+  // close drops the watches.
+  FileDescriptor mInotifyInstance;
+  std::unique_ptr<InotifyTree> mTree;
+  std::unique_ptr<InotifyEventLoop> mEventLoop;
 
   friend class InotifyEventLoop;
 };

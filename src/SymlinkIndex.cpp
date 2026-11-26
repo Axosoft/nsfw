@@ -158,6 +158,11 @@ void SymlinkIndex::setExcludedPaths(const std::vector<std::string> &excludedPath
   mExcludedKeys.swap(keys);
 }
 
+void SymlinkIndex::setReportedDirectory(ReportedDirectory reportedDirectory) {
+  std::lock_guard<std::mutex> lock(mMutex);
+  mReportedDirectory = std::move(reportedDirectory);
+}
+
 void SymlinkIndex::linkFound(const std::string &directory, const std::string &name) {
   std::lock_guard<std::mutex> lock(mMutex);
   addLink(directory, name);
@@ -546,6 +551,10 @@ std::vector<SymlinkIndex::Link> SymlinkIndex::takeLinksAtOrBelow(const std::stri
   return links;
 }
 
+// Under the path the watcher reports the symlink's own events under, which can be through a symlink to its directory,
+// and change when that symlink does: looked up now, at the event's place in the stream.
 void SymlinkIndex::emit(Change change, const Link &link, std::vector<Derived> &derived) const {
-  derived.push_back({ change, link.directory, link.name, link.targetDirectory, link.targetName });
+  std::string directory;
+  if (!mReportedDirectory || !mReportedDirectory(link.directory, directory)) directory = link.directory;
+  derived.push_back({ change, directory, link.name, link.targetDirectory, link.targetName });
 }

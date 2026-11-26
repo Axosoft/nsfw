@@ -37,9 +37,11 @@ static void throwBeforeEventLoop(const std::string &path) {
 #endif
 
 InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string path,
-  const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter, LinkFound linkFound):
+  const std::vector<std::string> &excludedPaths, std::shared_ptr<PathFilter> filter,
+  std::shared_ptr<SymlinkIndex> symlinks):
   mQueue(queue),
   mFilter(filter),
+  mSymlinks(std::move(symlinks)),
   mInotifyInstance(inotify_init1(IN_CLOEXEC)) {
   if (!mInotifyInstance.isOpen()) {
     return;
@@ -47,7 +49,10 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
 
   const uint64_t beforeScan = mFilter->generation();
   mTree.reset(new InotifyTree(mInotifyInstance.get(), path, excludedPaths, mFilter,
-    [queue]() { queue->wake(EventQueue::WAKE_ERROR); }, std::move(linkFound)));
+    [queue]() { queue->wake(EventQueue::WAKE_ERROR); },
+    [symlinks = mSymlinks](const std::string &directory, const std::string &name) {
+      symlinks->linkFound(directory, name);
+    }));
   // The scan used the rules as they are. One that changed meanwhile (read again after failing) may have decided some
   // directories by other rules: it stays to commit, and the event loop applies it then, like any change.
   mCommittedGeneration = mExcludedGeneration = mSeenGeneration = mFilter->commit(beforeScan);
@@ -69,6 +74,11 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
       throwBeforeEventLoop(path);
       bool failingFirstRead = failFirstRead(path, mInotifyInstance.get());
     #endif
+    // Before the loop tells any event. The queue asks it while telling one, which is always with the event handling
+    // locked (by the loop, or updateExcludedPaths() and updateExcludedPatterns()), the only time the tree changes.
+    mSymlinks->setReportedDirectory([this](const std::string &directory, std::string &reported) {
+      return mTree->reportedPathOf(directory, reported);
+    });
     mEventLoop.reset(new InotifyEventLoop(
       mInotifyInstance.get(),
       this
@@ -85,8 +95,12 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
   }
 }
 
-// The members release everything, in the order InotifyService.h declares them for.
-InotifyService::~InotifyService() = default;
+// The members release everything, in the order InotifyService.h declares them for. The index outlives the tree, so it
+// stops asking it once the loop no longer tells events.
+InotifyService::~InotifyService() {
+  mEventLoop.reset();
+  mSymlinks->setReportedDirectory(nullptr);
+}
 
 // Without IN_ISDIR the entry isn't a directory, though for the filter a symlink to one counts as one, as the tree
 // follows it: the filter looks it up, see PathFilter::kindOf().

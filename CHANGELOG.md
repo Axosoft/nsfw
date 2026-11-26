@@ -13,6 +13,9 @@
   `FSEvents coalesced the events of a directory tree, events were lost`, unless that directory is excluded or ignored.
   A watched file recovers from such a loss as, since 3.1.1, from any other failure of its watcher, and takes no notice
   of changes coalesced below its directory.
+- On Linux, a symlink to a file in a directory the watched tree reaches through a symlink to it is reported under one
+  path again: since 3.1.0, the changes of what it leads to were reported under its real path, while its own creation
+  and removal came under the path the tree watches the directory through (#276).
 
 ## 3.1.1
 

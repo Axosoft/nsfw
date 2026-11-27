@@ -1,6 +1,6 @@
 {
   "name": "nsfw",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "A simple file watcher for Node",
   "main": "js/dist/index.js",
   "scripts": {

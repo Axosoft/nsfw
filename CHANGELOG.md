@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.2.1
 
 ### Fixed
 - `updateExcludedPatterns()` judges the changes made before the call by the patterns in force then: a change the

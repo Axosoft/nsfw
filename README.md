@@ -359,18 +359,23 @@ toolchain:
 | --- | --- | --- |
 | Linux, glibc | x64, arm64 | glibc 2.28 (Debian 10, Ubuntu 20.04, RHEL 8) |
 | Linux, musl (Alpine) | x64, arm64 | Alpine with the `libstdc++` package, which Node needs too |
+| FreeBSD | x64 | FreeBSD 14.5 |
 | macOS | x64, arm64 | macOS 11 |
 | Windows | x64, arm64 | Windows 10 |
 
-Those are the oldest versions Node 22 runs on too. The binary is picked when the module loads, so a package manager
-that skips dependency install scripts, like pnpm or npm 12, works as well. Other musl distributions than Alpine need
-`LIBC=musl` in the environment to be detected as such.
+The binary is picked when the module loads, so a package manager that skips dependency install scripts, like pnpm
+or npm 12, works as well. Other musl distributions than Alpine need `LIBC=musl` in the environment to be detected
+as such.
 
 On any other platform the install script compiles the addon from source with
 [node-gyp](https://github.com/nodejs/node-gyp), which needs the toolchain it lists for your operating system and
 the install script to be allowed to run. To compile it on a supported platform as well, install with
 `npm install nsfw --build-from-source` (or `npm_config_build_from_source=true` in the environment). A binary in
 `build/Release` takes precedence over the prebuilt one.
+
+The FreeBSD x64 binary uses the base system's inotify. CI builds it on FreeBSD 14.5 and checks the same npm
+tarball on FreeBSD 14.5 and 15.1 without a compiler on `PATH` or the external `libinotify` package. On FreeBSD
+14.4 and earlier, install `libinotify` with `pkg install libinotify` and build from source using the command above.
 
 ### Custom binary location
 nsfw loads its addon the first time `nsfw()` is called, not when it is imported, from `build/Release` or `prebuilds/`

@@ -136,9 +136,40 @@ jobs:
           path: prebuilds/
           if-no-files-found: error
 
+  freebsd:
+    name: "Prebuild (freebsd-x64)"
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build on FreeBSD 14.5
+        uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: '14.5'
+          arch: x86_64
+          sync: scp
+          prepare: pkg install -y node22 npm-node22 gmake python3 gcc14
+          run: |
+            freebsd-version
+            npm install --global "$(node -p 'require("./package.json").packageManager')"
+            pnpm install --frozen-lockfile --ignore-scripts
+            # FreeBSD 15.1 ships an older libc++ than 14.5. Link libstdc++ into the addon to avoid that ABI dependency.
+            CC=gcc14 CXX=g++14 LDFLAGS="-static-libstdc++ -Wl,--exclude-libs,libstdc++.a" \
+              pnpm exec prebuildify --napi --target "$(node -p 'process.versions.node')"
+            strip --strip-all prebuilds/freebsd-x64/nsfw.node
+            file prebuilds/freebsd-x64/nsfw.node
+            rm -r build node_modules
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: prebuilds-freebsd-x64
+          path: prebuilds/
+          if-no-files-found: error
+
   package:
     name: "Pack"
-    needs: [linux, darwin, windows]
+    needs: [linux, darwin, windows, freebsd]
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -161,6 +192,7 @@ jobs:
 
       # npm pack runs prepare, which compiles js/dist.
       - name: Pack
+        shell: bash
         run: |
           npm pack
           node js/scripts/check-package.js nsfw-*.tgz | tee -a "$GITHUB_STEP_SUMMARY"

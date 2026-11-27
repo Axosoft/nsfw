@@ -39,6 +39,24 @@ describe('inotify moves (slow)', { skip: process.platform !== 'linux' }, functio
     });
   });
 
+  it('stops reporting events from a directory moved out with a zero cookie', async function() {
+    const name = 'nsfw-test-zero-move-cookie';
+    const departed = path.join(outsidePath, name);
+    await mkdirp(path.join(watchedPath, name));
+    touch(path.join(name, 'outside.file'));
+
+    await watchWhile(async events => {
+      await whileHeld(async () => {
+        await fsp.rename(path.join(watchedPath, name), departed);
+        await fsp.appendFile(path.join(departed, 'outside.file'), 'Modified outside');
+      });
+      await barrier(events);
+
+      assert.deepStrictEqual(events.filter(event => event.file === 'outside.file'), []);
+      assert.ok(events.some(event => event.action === nsfw.actions.DELETED && event.file === name));
+    });
+  });
+
   it('watches what moves back in from a directory that left in the same read', async function() {
     await mkdirp(path.join(watchedPath, 'leaving', 'inner'));
     touch(path.join('leaving', 'inner.file'));

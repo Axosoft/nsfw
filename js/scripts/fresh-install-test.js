@@ -49,13 +49,9 @@ async function main(expected, packageSpec) {
       version: '1.0.0',
       private: true,
       dependencies: { nsfw: dependency },
-      // npm 12 skips dependency install scripts unless allowed here, and matches a local tarball by its exact spec, a
-      // registry package by its name. Older npm ignores the field and always runs them. A prebuilt binary must load
-      // either way, so only the source build allows them.
-      ...expected === 'source' && {
-        allowScripts: { [fromRegistry ? 'nsfw' : dependency]: true },
-        devDependencies: selectedNodeGyp()
-      }
+      // npm 12 requires approval to exercise the install script and matches a local tarball by its exact spec.
+      allowScripts: { [fromRegistry ? 'nsfw' : dependency]: true },
+      ...expected === 'source' && { devDependencies: selectedNodeGyp() }
     }, null, 2));
 
     exec('npm install --no-package-lock --no-audit --no-fund --foreground-scripts', projectDir, { stdio: 'inherit' });
@@ -66,7 +62,7 @@ async function main(expected, packageSpec) {
     // The timeout also covers a watcher.stop() that never returns, which the child's own timeout can't.
     cp.execFileSync(process.execPath, [__filename, '--watch', expected, projectDir, watchDir], {
       stdio: 'inherit',
-      timeout: 2 * timeoutMS
+      timeout: 4 * timeoutMS
     });
   } finally {
     // A failed cleanup must not hide the result, e.g. a scanner still holding nsfw.node on Windows.
@@ -105,8 +101,7 @@ function copyTarball(tarball, projectDir) {
 }
 
 /**
- * Loads nsfw from projectDir, checks where its binary comes from and waits for a watcher on watchDir to report a new
- * file.
+ * Loads nsfw from projectDir, checks where its binary comes from and verifies file events on watchDir.
  * @param {string} expected prebuilt or source.
  * @param {string} projectDir ...
  * @param {string} watchDir ...
@@ -131,23 +126,43 @@ async function watch(expected, projectDir, watchDir) {
   }
 
   const nsfw = require(resolve('nsfw'));
-  let onEvent;
-  const sawFile = new Promise(resolvePromise => {
-    onEvent = events => {
-      if (events.some(event => event.file === 'created.txt')) {
-        resolvePromise();
-      }
-    };
-  });
-  const watcher = await nsfw(watchDir, onEvent, { debounceMS: 100 });
+  const existingFile = path.join(watchDir, 'existing.txt');
+  fs.writeFileSync(existingFile, 'nsfw');
+
+  let onEvent = () => {};
+  function expectEvent(matches, change, description) {
+    const seen = new Promise(resolvePromise => {
+      onEvent = events => {
+        if (events.some(matches)) resolvePromise();
+      };
+    });
+    change();
+    return withTimeout(seen, `no ${description} event within ${timeoutMS}ms`);
+  }
+
+  const watcher = await nsfw(watchDir, events => onEvent(events), { debounceMS: 100 });
   await watcher.start();
   try {
-    fs.writeFileSync(path.join(watchDir, 'created.txt'), 'nsfw');
-    await withTimeout(sawFile, `no event for created.txt within ${timeoutMS}ms`);
+    await expectEvent(
+      event => event.action === nsfw.actions.CREATED && event.file === 'created.txt',
+      () => fs.writeFileSync(path.join(watchDir, 'created.txt'), 'nsfw'),
+      'creation'
+    );
+    await expectEvent(
+      event => event.action === nsfw.actions.MODIFIED && event.file === 'existing.txt',
+      () => fs.appendFileSync(existingFile, ' changed'),
+      'modification'
+    );
+    await expectEvent(
+      event => event.action === nsfw.actions.RENAMED &&
+        event.oldFile === 'existing.txt' && event.newFile === 'renamed.txt',
+      () => fs.renameSync(existingFile, path.join(watchDir, 'renamed.txt')),
+      'rename'
+    );
   } finally {
     await watcher.stop();
   }
-  console.log('fresh install works: the watcher reported the new file');
+  console.log('fresh install works: the watcher reported creation, modification and rename');
 }
 
 /**

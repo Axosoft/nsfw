@@ -114,12 +114,23 @@
                 ]
             }],
             ["OS=='freebsd'", {
-                "include_dirs": [
-                    "/usr/local/include"
-                ],
-                "libraries": [
-                    "-L/usr/local/lib",
-                    "-linotify"
+                "variables": {
+                    "has_system_inotify": "<!(node -p \"Number(require('fs').existsSync('/usr/include/sys/inotify.h'))\")"
+                },
+                "conditions": [
+                    ["has_system_inotify==0", {
+                        "include_dirs": [
+                            "/usr/local/include"
+                        ],
+                        "libraries": [
+                            "-L/usr/local/lib",
+                            "-linotify"
+                        ]
+                    }, {
+                        "defines": ["NSFW_FREEBSD_SYSTEM_INOTIFY"],
+                        # Reject the prebuild at dlopen on systems where libc lacks inotify, so the installer rebuilds.
+                        "ldflags": ["-Wl,-z,now"]
+                    }]
                 ]
             }],
         ]

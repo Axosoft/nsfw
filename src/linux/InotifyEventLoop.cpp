@@ -99,9 +99,8 @@ void InotifyEventLoop::work() {
   };
 
   // A move whose IN_MOVED_TO didn't come: the entry most likely went somewhere that isn't watched (outside the watched
-  // path, or an excluded directory). An IN_MOVED_TO that comes later anyway, after an event of another cookie or the
-  // wait below, makes it a deletion and a creation. It only reads renameEvent, since the event that triggers it may be
-  // in another buffer.
+  // path, or an excluded directory). An IN_MOVED_TO that comes after abandonment is reported as a creation.
+  // The event that triggers abandonment may be in another buffer.
   auto renameAbandon = [&inotifyService, &renameEvent]() {
     if (!renameEvent.isStarted) {
       return;
@@ -116,8 +115,6 @@ void InotifyEventLoop::work() {
     }
   };
 
-  // A pending rename is abandoned before any event with another cookie is handled, so one that is still started here
-  // is this event's other half.
   auto renameEnd = [&create, &event, &inotifyService, &renameEvent]() {
     if (!renameEvent.isStarted) {
       // From a directory that isn't watched.
@@ -231,7 +228,17 @@ void InotifyEventLoop::work() {
       // watches and scans the rest of this read would take.
       if (inotifyService->mQueue->overflowed()) break;
 
+      bool hasRenameCookie = event->cookie != 0;
+      #ifdef NSFW_FREEBSD_SYSTEM_INOTIFY
+        // The kernel's rename cookie counter starts at zero.
+        hasRenameCookie = true;
+      #endif
       #ifdef NSFW_TEST_SLOW_1
+        if ((event->mask & IN_MOVED_FROM) && event->len > 0 &&
+            strcmp(event->name, "nsfw-test-zero-move-cookie") == 0) {
+          event->cookie = 0;
+          hasRenameCookie = true;
+        }
         runTestHook(event);
       #endif
 
@@ -244,8 +251,10 @@ void InotifyEventLoop::work() {
         continue;
       }
 
-      // IN_IGNORED, queued when a watch is removed, can come between the halves of a move and has no handler.
-      if (renameEvent.isStarted && event->cookie != renameEvent.cookie && !(event->mask & (uint32_t)IN_IGNORED)) {
+      // Ordinary FreeBSD events also have cookie zero. IN_IGNORED can come between the two halves because watch
+      // removal queues it separately.
+      if (renameEvent.isStarted && !(event->mask & (uint32_t)IN_IGNORED) &&
+          (!(event->mask & (uint32_t)IN_MOVED_TO) || event->cookie != renameEvent.cookie)) {
         renameAbandon();
       }
 
@@ -277,14 +286,14 @@ void InotifyEventLoop::work() {
         remove();
         inotifyService->revalidateLinks();
       } else if (event->mask & (uint32_t)IN_MOVED_TO) {
-        if (event->cookie == 0) {
+        if (!hasRenameCookie) {
           create(false);
         } else {
           renameEnd();
         }
         inotifyService->revalidateLinks();
       } else if (event->mask & (uint32_t)IN_MOVED_FROM) {
-        if (event->cookie == 0) {
+        if (!hasRenameCookie) {
           remove();
           inotifyService->revalidateLinks(isDirectoryEvent);
         } else {
@@ -305,8 +314,7 @@ void InotifyEventLoop::work() {
       eventsRead = 0;
       // The read may have split the move in two, or taken the IN_MOVED_FROM before the kernel queued its IN_MOVED_TO,
       // so its other half gets a short wait, without holding up the threads that take the lock. The pending rename is
-      // kept for the next read if events arrive (IN_IGNORED of removed watches included, which don't end it), or if
-      // poll() fails, until the next event of another cookie.
+      // kept for the next read if events arrive or poll() fails.
       syncWithDestructor.unlock();
       pollfd pending = { mInotifyInstance, POLLIN, 0 };
       int ready;

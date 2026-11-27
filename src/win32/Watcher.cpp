@@ -95,6 +95,10 @@ static constexpr std::size_t RECURSIVE_BUFFER_SIZE = 1024 * 1024;
 // recursive reads into: it only watches a file, whose watcher recovers from an overflow on its own.
 static constexpr std::size_t NETWORK_BUFFER_SIZE = 64 * 1024;
 static constexpr DWORD SPLIT_READ_WAIT_MS = 10;
+// How long flush() goes on while reads keep coming, and while a rename waits for its new name: well past the rename's
+// deadline, which the timers' resolution, about 16 ms, can put off.
+static constexpr DWORD FLUSH_READS_WAIT_MS = 3 * SPLIT_READ_WAIT_MS;
+static constexpr DWORD FLUSH_RENAME_WAIT_MS = 20 * SPLIT_READ_WAIT_MS;
 
 // What the entry itself is, see Event::kind: the attributes of a symlink or a junction are its own, and one that leads
 // to a directory has the directory attribute. The system doesn't tell what a removed entry was.
@@ -823,6 +827,60 @@ void Watcher::stop() {
   }
   // The queue outlives the watcher.
   releaseRemoval();
+}
+
+// What the watcher thread has handled, sampled there: the reads it took in, and whether a rename waits for its new
+// name. False if the thread ended first.
+bool Watcher::sampleHandled(uint64_t &reads, bool &pendingRename) {
+  struct Sample {
+    Watcher *watcher;
+    SingleshotSemaphore done;
+    uint64_t reads = 0;
+    bool pendingRename = false;
+  };
+  auto sample = std::make_shared<Sample>();
+  sample->watcher = this;
+  // Shared with the APC, which never runs if the thread ends first.
+  auto queued = new std::shared_ptr<Sample>(sample);
+  if (!QueueUserAPC([](__in ULONG_PTR queued) {
+    std::unique_ptr<std::shared_ptr<Sample>> sample(reinterpret_cast<std::shared_ptr<Sample>*>(queued));
+    (*sample)->reads = (*sample)->watcher->mReads;
+    (*sample)->pendingRename = !(*sample)->watcher->mPendingOldName.empty();
+    (*sample)->done.signal();
+  }, mRunner.native_handle(), (ULONG_PTR)queued)) {
+    delete queued;
+    return false;
+  }
+  if (!sample->done.waitWhile([this] { return isRunning(); })) {
+    return false;
+  }
+  reads = sample->reads;
+  pendingRename = sample->pendingRename;
+  return true;
+}
+
+// The completion routine of a read that completed before this call is queued to the watcher thread ahead of a later
+// APC, but only once the system runs it there, and the read it issues again completes at once with what changed while
+// it handled the previous one: so APCs go until one finds no new read, and no rename waiting for its new name, which
+// the thread reports as a removal at its deadline. Best effort: a change the system holds for want of a read issued,
+// or one a share reports late, is not covered.
+void Watcher::flush() {
+  const ULONGLONG start = GetTickCount64();
+  uint64_t lastReads;
+  bool pendingRename;
+  if (!isRunning() || !sampleHandled(lastReads, pendingRename)) {
+    return;
+  }
+  while (GetTickCount64() < start + (pendingRename ? FLUSH_RENAME_WAIT_MS : FLUSH_READS_WAIT_MS)) {
+    if (pendingRename) {
+      Sleep(SPLIT_READ_WAIT_MS);
+    }
+    uint64_t reads;
+    if (!sampleHandled(reads, pendingRename) || (reads == lastReads && !pendingRename)) {
+      return;
+    }
+    lastReads = reads;
+  }
 }
 
 void Watcher::releaseRemoval() {

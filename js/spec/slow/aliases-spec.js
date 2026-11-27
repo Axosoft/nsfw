@@ -273,7 +273,7 @@ describe('inotify aliases (slow)', { skip: process.platform !== 'linux' }, funct
           if (startsExcluded) {
             await whileHeld(move);
           } else {
-            await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+            await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
             try {
               // Leave the destination's dropped watch in the kernel so it still queues MOVED_TO.
               touch('before.file');
@@ -558,7 +558,7 @@ describe('inotify aliases (slow)', { skip: process.platform !== 'linux' }, funct
           await untilLoopWaits('nsfw-test-hold-event-loop', 'nsfw-test-release-event-loop');
           await remove(waitingPath);
           fs.unlinkSync(path.join(watchedPath, 'link'));
-          touch('nsfw-test-pause-before-lock');
+          touch('nsfw-test-pause-after-read');
           touch('nsfw-test-release-event-loop');
           await untilWaiting('The event loop never waited before the lock');
           fs.renameSync(realPath, renamedPath);
@@ -613,7 +613,7 @@ describe('inotify aliases (slow)', { skip: process.platform !== 'linux' }, funct
 
       await watchWhile(async (events, watch) => {
         // The read is held without the lock, so the update goes first.
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         await remove(path.join(ownPath, 'sub', 'held.file'));
         await fsp.writeFile(path.join(ownPath, 'written.file'), 'Written');
         await watch.updateExcludedPaths([holderPath]);

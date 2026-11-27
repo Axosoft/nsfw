@@ -4899,6 +4899,52 @@ describe('Node Sentinel File Watcher', function() {
         }, inPath);
       });
 
+      it('judges a change made before an update by the patterns in force then', async function() {
+        await withWatchers(inPath, [], async ({ watch, actual, barrier }) => {
+          await expectReported(actual, inPath, 'late.log');
+          // No barrier in between: the removal may not have been delivered when the update starts.
+          await remove(path.join(inPath, 'late.log'));
+          const start = Date.now();
+          await watch.updateExcludedPatterns(['*.log']);
+          // On macOS the update waits for a marker of its own, see FSEventsService::flush(), for up to 2 seconds.
+          if (process.platform === 'darwin') assert.ok(Date.now() - start < 1900, 'the update saw its marker');
+          await barrier();
+          assert.strictEqual(eventsNamed(actual.events, 'late.log')
+            .filter(event => event.action === nsfw.actions.DELETED).length, 1);
+        }, inPath);
+      });
+
+      it('does not report what an update waits on in the temporary directory', {
+        skip: process.platform !== 'darwin'
+      }, async function(t) {
+        // Where the barrier goes, which TMPDIR may not be.
+        const temporary = fs.realpathSync(cp.execFileSync('getconf', ['DARWIN_USER_TEMP_DIR']).toString().trim());
+        const after = path.join(temporary, `nsfw-after-update-${process.pid}`);
+        const recorder = recordEvents();
+        // Other processes keep that directory busy: FSEvents can lose events there, which stops the watcher.
+        const errors = [];
+        const errorCallback = error => errors.push(error);
+        const watching = await nsfw(temporary, recorder.callback, { debounceMS, errorCallback });
+        await watching.start();
+        try {
+          await watching.updateExcludedPatterns(['*.tmp']);
+          // Reported after whatever the update did there.
+          try {
+            await recorder.observe(after, nsfw.actions.CREATED, () => fsp.writeFile(after, 'After'));
+          } catch (error) {
+            if (errors.length === 0) throw error;
+            t.skip(`The watcher of the temporary directory stopped: ${errors[0]}`);
+            return;
+          }
+          const names = event => [event.directory, event.file, event.oldFile, event.newFile];
+          assert.deepStrictEqual(recorder.events.filter(event =>
+            names(event).some(name => (name || '').includes('.nsfw-barrier.'))), []);
+        } finally {
+          await watching.stop();
+          await remove(after);
+        }
+      });
+
       it('rejects patterns of the wrong type in an update and keeps the current ones', async function() {
         const watch = await nsfw(inPath, () => {}, { excludedPatterns: ['*.tmp'] });
         await assert.rejects(() => watch.updateExcludedPatterns('*.log'),

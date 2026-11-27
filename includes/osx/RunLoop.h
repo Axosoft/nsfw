@@ -5,6 +5,7 @@
 #include "FSEventsService.h"
 
 #include <CoreServices/CoreServices.h>
+#include <atomic>
 #include <thread>
 #include <string>
 
@@ -22,10 +23,14 @@ class FSEventsService;
 
 class RunLoop {
 public:
-  RunLoop(FSEventsService *eventsService, std::string path);
+  // barrierDirectory: watched too, see FSEventsService::flush(); none if empty.
+  RunLoop(FSEventsService *eventsService, std::string path, std::string barrierDirectory);
 
   friend void *scheduleRunLoopWork(void *runLoop);
   bool isLooping();
+  // Has the run loop thread deliver what FSEvents holds for the stream, and waits until it did, see
+  // FSEventStreamFlushSync(). Nothing once the run loop ended.
+  void flush();
 
   ~RunLoop();
 private:
@@ -33,8 +38,9 @@ private:
 
   FSEventsService *mEventsService;
   FSEventStreamRef mEventStream;
-  bool mExited;
+  std::atomic<bool> mExited;
   std::string mPath;
+  std::string mBarrierDirectory;
   CFRunLoopRef mRunLoop;
   std::thread mRunLoopThread;
   SingleshotSemaphore mReadyForCleanup;

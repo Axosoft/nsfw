@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `updateExcludedPatterns()` judges the changes made before the call by the patterns in force then: a change the
+  watcher hadn't delivered yet was judged by the new ones, so the removal of an entry whose creation was reported
+  could be lost once the new patterns excluded it, or be taken for another entry at that path (#295). Exact on Linux.
+  On macOS the update first waits, for up to 2 seconds, for FSEvents to report what changed before it, through a file
+  it creates in a private directory the watcher keeps under the user's temporary directory while it runs, which no
+  watcher reports; past that, it goes on without. On Windows, and on FreeBSD builds against `libinotify`, a change the
+  system hasn't handed to the watcher yet, or a rename whose new name it hands over late, may still be judged by the
+  new patterns, as may, against `libinotify`, what goes past the first megabyte of events queued.
+
 ## 3.2.0
 
 ### Added

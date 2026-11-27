@@ -1,6 +1,7 @@
 #ifndef NSFW_SEMAPHORE_H
 #define NSFW_SEMAPHORE_H
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 
@@ -45,6 +46,21 @@ public:
 
     mCond.wait_for(lk, ms);
     return mState;
+  }
+
+  /**
+   * Waits for signal() for as long as alive() holds, checked every step.
+   *
+   * \return true if the semaphore was signal()ed; false once alive() no longer holds
+   */
+  template <typename Alive>
+  bool waitWhile(Alive alive, std::chrono::milliseconds step = std::chrono::milliseconds(100)) {
+    while (!waitFor(step)) {
+      if (!alive()) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**

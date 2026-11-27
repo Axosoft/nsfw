@@ -1,6 +1,7 @@
 #ifndef NSFW_FS_EVENTS_SERVICE_H
 #define NSFW_FS_EVENTS_SERVICE_H
 
+#include "FSEventsBarrier.h"
 #include "RunLoop.h"
 #include "../Queue.h"
 
@@ -15,6 +16,7 @@
 #include <vector>
 #include <string>
 #include <atomic>
+#include <condition_variable>
 
 void FSEventsServiceCallback(
   ConstFSEventStreamRef streamRef,
@@ -53,7 +55,12 @@ public:
   bool isWatching();
   // The run loop thread ended: on its own it can't report anything anymore, which hasErrored() tells.
   void runLoopExited();
+  // Whether path is the marker flush() waits for, which is then taken as seen once the batch is handled.
+  bool isBarrierMarker(const std::string &path);
+  void barrierPassed();
   void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
+  // Handles the changes made before the call before returning, see the definition.
+  void flush();
 
   ~FSEventsService();
 private:
@@ -144,6 +151,14 @@ private:
   static void releaseExcludedPaths(const std::vector<CFStringRef> &excludedPaths);
 
   std::string mPath;
+  // Watched by the stream too, see flush(); empty if it couldn't be made.
+  std::string mBarrierDirectory;
+  // The marker flush() waits for, empty when none, and whether the stream reported it.
+  std::mutex mBarrierLock;
+  std::condition_variable mBarrierPassed;
+  std::string mBarrierMarker;
+  bool mBarrierSeen = false;
+  uint64_t mBarriers = 0;
   RunLoop *mRunLoop;
   std::shared_ptr<EventQueue> mQueue;
   std::shared_ptr<PathFilter> mFilter;

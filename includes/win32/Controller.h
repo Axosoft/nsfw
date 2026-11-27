@@ -16,6 +16,7 @@ class Controller {
     bool hasErrored();
     bool isWatching();
     void updateExcludedPaths(const std::vector<std::string> &excludedPaths);
+    void flush();
 
     ~Controller();
   private:

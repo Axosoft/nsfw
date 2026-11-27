@@ -1,5 +1,6 @@
 #include "../../includes/linux/InotifyEventLoop.h"
 
+#include <climits>
 #include <poll.h>
 
 InotifyEventLoop::InotifyEventLoop(
@@ -50,13 +51,46 @@ void InotifyEventLoop::wake() {
   if (sent == -1 && errno != EAGAIN) mInotifyService->setError("Cannot wake inotify reader");
 }
 
-void InotifyEventLoop::work() {
-  char buffer[BUFFER_SIZE];
+// A move whose IN_MOVED_TO didn't come: the entry most likely went somewhere that isn't watched (outside the watched
+// path, or an excluded directory). An IN_MOVED_TO that comes after abandonment is reported as a creation.
+// The event that triggers abandonment may be in another buffer.
+void InotifyEventLoop::abandonRename() {
+  if (!mRename.isStarted) {
+    return;
+  }
+
+  mRename.isStarted = false;
+  if (mRename.isDirectory) {
+    mInotifyService->removeMovedDirectory(mRename.wd, mRename.name);
+  } else {
+    mInotifyService->remove(mRename.wd, mRename.name, false);
+    mInotifyService->revalidateLinks();
+  }
+}
+
+// Reads the next events into buffer, with event handling locked, so they are handled in the order they were queued
+// whichever thread reads them, see drain(). Their size, 0 if none are queued, -1 when the run ends, with error set.
+ssize_t InotifyEventLoop::readBuffer(char *buffer, std::string &error) {
+  ssize_t bytesRead;
+  do {
+    bytesRead = read(mInotifyInstance, buffer, BUFFER_SIZE);
+  } while (bytesRead == -1 && errno == EINTR);
+  if (bytesRead == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    return 0;
+  }
+  if (bytesRead <= 0) {
+    error = readErrorMessage(bytesRead, errno);
+    return -1;
+  }
+  return bytesRead;
+}
+
+// Handles a read, with event handling locked. eventsRead: what it takes from the queue, less what removeDroppedWatch()
+// puts back. False when the run ends, with error set unless the tree errored or the queue overflowed.
+bool InotifyEventLoop::handleBuffer(char *buffer, ssize_t bytesRead, int &eventsRead, std::string &error) {
   inotify_event *event = NULL;
   bool isDirectoryEvent = false, isDirectoryRemoval = false;
   InotifyService *inotifyService = mInotifyService;
-  InotifyRenameEvent renameEvent;
-  renameEvent.isStarted = false;
 
   auto create = [&event, &isDirectoryEvent, &inotifyService](bool fromInCreate) {
     if (event == NULL) {
@@ -90,43 +124,27 @@ void InotifyEventLoop::work() {
     }
   };
 
-  auto renameStart = [&event, &isDirectoryEvent, &renameEvent]() {
-    renameEvent.cookie = event->cookie;
-    renameEvent.isDirectory = isDirectoryEvent;
-    renameEvent.name = event->len > 0 ? event->name : "";
-    renameEvent.wd = event->wd;
-    renameEvent.isStarted = true;
+  auto renameStart = [&event, &isDirectoryEvent, this]() {
+    mRename.cookie = event->cookie;
+    mRename.isDirectory = isDirectoryEvent;
+    mRename.name = event->len > 0 ? event->name : "";
+    mRename.wd = event->wd;
+    mRename.isStarted = true;
+    mRename.giveUpAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(RENAME_PAIRING_TIMEOUT_MS);
   };
 
-  // A move whose IN_MOVED_TO didn't come: the entry most likely went somewhere that isn't watched (outside the watched
-  // path, or an excluded directory). An IN_MOVED_TO that comes after abandonment is reported as a creation.
-  // The event that triggers abandonment may be in another buffer.
-  auto renameAbandon = [&inotifyService, &renameEvent]() {
-    if (!renameEvent.isStarted) {
-      return;
-    }
-
-    renameEvent.isStarted = false;
-    if (renameEvent.isDirectory) {
-      inotifyService->removeMovedDirectory(renameEvent.wd, renameEvent.name);
-    } else {
-      inotifyService->remove(renameEvent.wd, renameEvent.name, false);
-      inotifyService->revalidateLinks();
-    }
-  };
-
-  auto renameEnd = [&create, &event, &inotifyService, &renameEvent]() {
-    if (!renameEvent.isStarted) {
+  auto renameEnd = [&create, &event, &inotifyService, this]() {
+    if (!mRename.isStarted) {
       // From a directory that isn't watched.
       create(false);
       return;
     }
 
-    renameEvent.isStarted = false;
-    if (renameEvent.isDirectory) {
-      inotifyService->renameDirectory(renameEvent.wd, renameEvent.name, event->wd, event->len > 0 ? event->name : "");
+    mRename.isStarted = false;
+    if (mRename.isDirectory) {
+      inotifyService->renameDirectory(mRename.wd, mRename.name, event->wd, event->len > 0 ? event->name : "");
     } else {
-      inotifyService->rename(renameEvent.wd, renameEvent.name, event->wd, event->len > 0 ? event->name : "");
+      inotifyService->rename(mRename.wd, mRename.name, event->wd, event->len > 0 ? event->name : "");
     }
   };
 
@@ -142,6 +160,220 @@ void InotifyEventLoop::work() {
     return true;
   };
 
+  inotifyService->startRead(bytesRead);
+  ssize_t position = 0;
+  eventsRead = 0;
+  do {
+    event = (struct inotify_event *)(buffer + position);
+    ++eventsRead;
+
+    // The kernel queues this (with wd -1) once the queue holds fs.inotify.max_queued_events events, and drops the
+    // events that follow, so the tree may be missing directories and the watcher can't be trusted anymore. Check it
+    // first, so it never completes a pending rename or reaches a handler.
+    if (event->mask & (uint32_t)IN_Q_OVERFLOW) {
+      error = "Inotify event queue overflowed, events were lost";
+      break;
+    }
+    // So did the queue JavaScript takes events from: the delivery thread reports it, and the run ends without the
+    // watches and scans the rest of this read would take.
+    if (inotifyService->mQueue->overflowed()) break;
+
+    bool hasRenameCookie = event->cookie != 0;
+    #ifdef NSFW_FREEBSD_SYSTEM_INOTIFY
+      // The kernel's rename cookie counter starts at zero.
+      hasRenameCookie = true;
+    #endif
+    #ifdef NSFW_TEST_SLOW_1
+      if ((event->mask & IN_MOVED_FROM) && event->len > 0 &&
+          strcmp(event->name, "nsfw-test-zero-move-cookie") == 0) {
+        event->cookie = 0;
+        hasRenameCookie = true;
+      }
+      runTestHook(event);
+    #endif
+
+    if (event->mask & (uint32_t)IN_IGNORED) {
+      inotifyService->watchIgnored(event->wd);
+    }
+
+    // Events queued before the watch was found again cannot end a pending move.
+    if (dropQuarantined()) {
+      continue;
+    }
+
+    // Ordinary FreeBSD events also have cookie zero. IN_IGNORED can come between the two halves because watch
+    // removal queues it separately.
+    if (mRename.isStarted && !(event->mask & (uint32_t)IN_IGNORED) &&
+        (!(event->mask & (uint32_t)IN_MOVED_TO) || event->cookie != mRename.cookie)) {
+      abandonRename();
+    }
+
+    if (!(event->mask & (uint32_t)IN_IGNORED) && inotifyService->removeDroppedWatch(event->wd)) {
+      --eventsRead;
+    }
+
+    // An event dropped above, see dropQuarantined(), may have been the arrival of a directory at an excluded path:
+    // the links that lead into it go before this event is reported at one of them, not only once the read is
+    // handled. Not between the halves of a move, like the other maintenance.
+    if (!mRename.isStarted) {
+      inotifyService->revalidateLinks();
+    }
+
+    // Also when the steps above just found its directory again.
+    if (dropQuarantined()) {
+      continue;
+    }
+
+    isDirectoryRemoval = event->mask & (uint32_t)(IN_IGNORED | IN_DELETE_SELF);
+    isDirectoryEvent = event->mask & (uint32_t)(IN_ISDIR);
+
+    if (event->mask & (uint32_t)(IN_ATTRIB | IN_MODIFY)) {
+      modify();
+    } else if (event->mask & (uint32_t)IN_CREATE) {
+      create(true);
+      inotifyService->revalidateLinks();
+    } else if (event->mask & (uint32_t)(IN_DELETE | IN_DELETE_SELF)) {
+      remove();
+      inotifyService->revalidateLinks();
+    } else if (event->mask & (uint32_t)IN_MOVED_TO) {
+      if (!hasRenameCookie) {
+        create(false);
+      } else {
+        renameEnd();
+      }
+      inotifyService->revalidateLinks();
+    } else if (event->mask & (uint32_t)IN_MOVED_FROM) {
+      if (!hasRenameCookie) {
+        remove();
+        inotifyService->revalidateLinks(isDirectoryEvent);
+      } else {
+        renameStart();
+      }
+    } else if (event->mask & (uint32_t)IN_MOVE_SELF) {
+      inotifyService->removeDirectory(event->wd);
+    }
+  } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);
+  if (!error.empty() || inotifyService->mQueue->overflowed()) {
+    // The run is about to end with this error, or the queue's overflow, and the events still queued are discarded,
+    // so a pending rename is dropped instead of being reported as a removal.
+    return false;
+  }
+  inotifyService->finishRead(eventsRead, bytesRead);
+  return true;
+}
+
+// Once a read is handled. With a move pending, only what the read lets go of: its other half may put the directory a
+// retry is for where it has a node, see InotifyTree::retryWatches().
+void InotifyEventLoop::finishBatch(int eventsRead) {
+  if (mRename.isStarted) {
+    mInotifyService->removeDroppedWatches(eventsRead);
+    return;
+  }
+  mInotifyService->mTree->resumeFound();
+  mInotifyService->revalidateRejected();
+  mInotifyService->revalidateLinks();
+  mInotifyService->removeDroppedWatches(eventsRead);
+  mInotifyService->retryWatches();
+  // With nothing queued, see InotifyTree::forgetIncompleteScans().
+  mInotifyService->forgetIncompleteScans();
+}
+
+// poll()'s result: 0 once the timeout passes with nothing queued.
+int InotifyEventLoop::waitForEvents(int timeout) {
+  pollfd pending = { mInotifyInstance, POLLIN, 0 };
+  int ready;
+  do {
+    ready = poll(&pending, 1, timeout);
+  } while (ready == -1 && errno == EINTR);
+  return ready;
+}
+
+// Ends the run, with error, if any, whichever thread finds it: the loop stops at its next turn.
+void InotifyEventLoop::endRun(const std::string &error) {
+  if (!error.empty()) mInotifyService->setError(error);
+  mEnded = true;
+  wake();
+}
+
+// Reads and handles the next events, with event handling locked: their size, 0 if none are queued, -1 when the run
+// ended. loopLock: the loop's, which a test hook lets go of meanwhile, see pauseAfterRead().
+ssize_t InotifyEventLoop::readEvents(char *buffer, std::unique_lock<std::mutex> *loopLock) {
+  std::string error;
+  ssize_t bytesRead = readBuffer(buffer, error);
+  if (bytesRead == 0) {
+    return 0;
+  }
+  #ifdef NSFW_TEST_SLOW_1
+    if (bytesRead > 0 && loopLock != nullptr) {
+      pauseAfterRead(*loopLock, buffer, bytesRead);
+      if (mEnded) return -1;
+    }
+  #else
+    (void)loopLock;
+  #endif
+  int eventsRead = 0;
+  if (bytesRead < 0 || !handleBuffer(buffer, bytesRead, eventsRead, error)) {
+    // Before the lock is let go: no thread reads past the end of the run.
+    endRun(error);
+    return -1;
+  }
+  finishBatch(eventsRead);
+  return bytesRead;
+}
+
+// How long the pending move may still wait for its other half, in milliseconds.
+int InotifyEventLoop::renameWait() {
+  auto left = mRename.giveUpAt - std::chrono::steady_clock::now();
+  return left.count() <= 0 ? 0 : (int)std::chrono::ceil<std::chrono::milliseconds>(left).count();
+}
+
+// A move whose other half didn't come in time, see abandonRename(). Whichever thread finds it so, see work().
+void InotifyEventLoop::giveUpOnExpiredRename() {
+  if (mRename.isStarted && std::chrono::steady_clock::now() >= mRename.giveUpAt) {
+    abandonRename();
+    finishBatch(0);
+  }
+}
+
+bool InotifyEventLoop::drain() {
+  if (!mStarted || mEnded) {
+    return false;
+  }
+  // Not under a path that leads elsewhere now: the run ends with the error hasErrored() records, and the events queued
+  // with it, see work().
+  if (mInotifyService->mTree->hasErrored()) {
+    endRun("");
+    return false;
+  }
+  char buffer[BUFFER_SIZE];
+  // Only what is queued now: changes can keep coming for as long as this reads. A bounded part of it where the size
+  // can't be told.
+  const int queued = mInotifyService->mTree->getQueuedBytes();
+  const int64_t bound = queued == INT_MAX ? (int64_t)BUFFER_SIZE * UNKNOWN_QUEUE_DRAIN_READS : queued;
+  for (int64_t taken = 0; taken < bound;) {
+    ssize_t bytesRead = readEvents(buffer);
+    if (bytesRead < 0) return false;
+    if (bytesRead == 0) break;
+    taken += bytesRead;
+  }
+  // The other half of a move pending at the end, which the kernel queues along with it, or else what is left of its
+  // wait, see work().
+  if (mRename.isStarted) {
+    if (waitForEvents(renameWait()) > 0) {
+      if (readEvents(buffer) < 0) return false;
+    } else {
+      giveUpOnExpiredRename();
+    }
+    // One still waiting, which that read may have started, is the loop's.
+    if (mRename.isStarted) wake();
+  }
+  return true;
+}
+
+void InotifyEventLoop::work() {
+  char buffer[BUFFER_SIZE];
+  InotifyService *inotifyService = mInotifyService;
+
   mLoopingSemaphore.signal();
   std::string error;
   auto nextRetry = std::chrono::steady_clock::now();
@@ -149,16 +381,24 @@ void InotifyEventLoop::work() {
     // The run ends with the overflow, whichever thread queued the event that caused it: nothing more to watch for it.
     if (inotifyService->mQueue->overflowed()) break;
     int timeout = -1;
+    // A read may have split a move in two, or taken the IN_MOVED_FROM before the kernel queued its IN_MOVED_TO, so its
+    // other half gets a short wait, see renameWait(), without holding up the threads that take the lock. A drain
+    // meanwhile may read it, see drain().
+    bool renamePending;
     {
       auto lock = lockEventHandling();
-      if (!renameEvent.isStarted) {
+      if (mEnded) break;
+      renamePending = mRename.isStarted;
+      if (renamePending) {
+        timeout = renameWait();
+      } else {
         // An ignore file change left for later, see InotifyService::settleFilterChange().
         int filterWait = inotifyService->settleFilterChange();
         if (filterWait >= 0) {
           timeout = filterWait;
         }
       }
-      if (!renameEvent.isStarted && inotifyService->mTree->needsEntryRetry()) {
+      if (!mRename.isStarted && inotifyService->mTree->needsEntryRetry()) {
         auto now = std::chrono::steady_clock::now();
         if (now >= nextRetry) {
           inotifyService->mTree->retryChangedEntry();
@@ -180,6 +420,9 @@ void InotifyEventLoop::work() {
     if (ready == -1 && errno == EINTR) continue;
     if (ready == -1) {
       error = readErrorMessage(-1, errno);
+      // So a drain doesn't read past the end of the run, see drain().
+      auto lock = lockEventHandling();
+      mEnded = true;
       break;
     }
     if (inputs[1].revents & POLLIN) {
@@ -188,161 +431,29 @@ void InotifyEventLoop::work() {
       (void)consumed;
     }
     if (!inputs[0].revents) {
+      if (renamePending) {
+        auto lock = lockEventHandling();
+        if (mEnded) break;
+        giveUpOnExpiredRename();
+      }
       if (std::chrono::steady_clock::now() >= rootCheckAt && inotifyService->mTree->hasErrored()) break;
       continue;
     }
-    ssize_t bytesRead = read(mInotifyInstance, &buffer, BUFFER_SIZE);
-    if (bytesRead == -1 && errno == EINTR) {
-      continue;
-    }
-    if (bytesRead <= 0) {
-      error = readErrorMessage(bytesRead, errno);
-      break;
-    }
-
-    #ifdef NSFW_TEST_SLOW_1
-      pauseBeforeLock(buffer, bytesRead);
-    #endif
-
-    // Not under a path that leads elsewhere now: the run ends with the error hasErrored() records, and the batch with
-    // it.
+    // Not under a path that leads elsewhere now: the run ends with the error hasErrored() records, and the events
+    // queued with it. Before the lock, as hasErrored() may stat a slow filesystem.
     if (inotifyService->mTree->hasErrored()) break;
 
     std::unique_lock<std::mutex> syncWithDestructor(mMutex);
-    inotifyService->startRead(bytesRead);
-    ssize_t position = 0;
-    // What this read takes from the queue, less what removeDroppedWatch() puts back.
-    int eventsRead = 0;
-    do {
-      event = (struct inotify_event *)(buffer + position);
-      ++eventsRead;
-
-      // The kernel queues this (with wd -1) once the queue holds fs.inotify.max_queued_events events, and drops the
-      // events that follow, so the tree may be missing directories and the watcher can't be trusted anymore. Check it
-      // first, so it never completes a pending rename or reaches a handler.
-      if (event->mask & (uint32_t)IN_Q_OVERFLOW) {
-        error = "Inotify event queue overflowed, events were lost";
-        break;
-      }
-      // So did the queue JavaScript takes events from: the delivery thread reports it, and the run ends without the
-      // watches and scans the rest of this read would take.
-      if (inotifyService->mQueue->overflowed()) break;
-
-      bool hasRenameCookie = event->cookie != 0;
-      #ifdef NSFW_FREEBSD_SYSTEM_INOTIFY
-        // The kernel's rename cookie counter starts at zero.
-        hasRenameCookie = true;
-      #endif
-      #ifdef NSFW_TEST_SLOW_1
-        if ((event->mask & IN_MOVED_FROM) && event->len > 0 &&
-            strcmp(event->name, "nsfw-test-zero-move-cookie") == 0) {
-          event->cookie = 0;
-          hasRenameCookie = true;
-        }
-        runTestHook(event);
-      #endif
-
-      if (event->mask & (uint32_t)IN_IGNORED) {
-        inotifyService->watchIgnored(event->wd);
-      }
-
-      // Events queued before the watch was found again cannot end a pending move.
-      if (dropQuarantined()) {
-        continue;
-      }
-
-      // Ordinary FreeBSD events also have cookie zero. IN_IGNORED can come between the two halves because watch
-      // removal queues it separately.
-      if (renameEvent.isStarted && !(event->mask & (uint32_t)IN_IGNORED) &&
-          (!(event->mask & (uint32_t)IN_MOVED_TO) || event->cookie != renameEvent.cookie)) {
-        renameAbandon();
-      }
-
-      if (!(event->mask & (uint32_t)IN_IGNORED) && inotifyService->removeDroppedWatch(event->wd)) {
-        --eventsRead;
-      }
-
-      // An event dropped above, see dropQuarantined(), may have been the arrival of a directory at an excluded path:
-      // the links that lead into it go before this event is reported at one of them, not only once the read is
-      // handled. Not between the halves of a move, like the other maintenance.
-      if (!renameEvent.isStarted) {
-        inotifyService->revalidateLinks();
-      }
-
-      // Also when the steps above just found its directory again.
-      if (dropQuarantined()) {
-        continue;
-      }
-
-      isDirectoryRemoval = event->mask & (uint32_t)(IN_IGNORED | IN_DELETE_SELF);
-      isDirectoryEvent = event->mask & (uint32_t)(IN_ISDIR);
-
-      if (event->mask & (uint32_t)(IN_ATTRIB | IN_MODIFY)) {
-        modify();
-      } else if (event->mask & (uint32_t)IN_CREATE) {
-        create(true);
-        inotifyService->revalidateLinks();
-      } else if (event->mask & (uint32_t)(IN_DELETE | IN_DELETE_SELF)) {
-        remove();
-        inotifyService->revalidateLinks();
-      } else if (event->mask & (uint32_t)IN_MOVED_TO) {
-        if (!hasRenameCookie) {
-          create(false);
-        } else {
-          renameEnd();
-        }
-        inotifyService->revalidateLinks();
-      } else if (event->mask & (uint32_t)IN_MOVED_FROM) {
-        if (!hasRenameCookie) {
-          remove();
-          inotifyService->revalidateLinks(isDirectoryEvent);
-        } else {
-          renameStart();
-        }
-      } else if (event->mask & (uint32_t)IN_MOVE_SELF) {
-        inotifyService->removeDirectory(event->wd);
-      }
-    } while((position += sizeof(struct inotify_event) + event->len) < bytesRead);
-    if (!error.empty() || inotifyService->mQueue->overflowed()) {
-      // The run is about to end with this error, or the queue's overflow, and the events still queued are discarded,
-      // so a pending rename is dropped instead of being reported as a removal.
-      break;
-    }
-    inotifyService->finishRead(eventsRead, bytesRead);
-    if (renameEvent.isStarted) {
-      inotifyService->removeDroppedWatches(eventsRead);
-      eventsRead = 0;
-      // The read may have split the move in two, or taken the IN_MOVED_FROM before the kernel queued its IN_MOVED_TO,
-      // so its other half gets a short wait, without holding up the threads that take the lock. The pending rename is
-      // kept for the next read if events arrive or poll() fails.
-      syncWithDestructor.unlock();
-      pollfd pending = { mInotifyInstance, POLLIN, 0 };
-      int ready;
-      do {
-        ready = poll(&pending, 1, RENAME_PAIRING_TIMEOUT_MS);
-      } while (ready == -1 && errno == EINTR);
-      if (ready == 0) {
-        syncWithDestructor.lock();
-        renameAbandon();
-      }
-    }
-    if (!renameEvent.isStarted) {
-      // Not with a move pending: its other half may put the directory a retry is for where it has a node, see
-      // InotifyTree::retryWatches().
-      inotifyService->mTree->resumeFound();
-      inotifyService->revalidateRejected();
-      inotifyService->revalidateLinks();
-      inotifyService->removeDroppedWatches(eventsRead);
-      inotifyService->retryWatches();
-      // With nothing queued, see InotifyTree::forgetIncompleteScans().
-      inotifyService->forgetIncompleteScans();
-    }
+    if (mEnded) break;
+    // None when a drain took what poll() saw, see drain().
+    if (readEvents(buffer, &syncWithDestructor) < 0) break;
   }
 
   // Errors are terminal: the delivery thread reports this one (or the one recorded before it, or the root path error if
   // the watched path is gone, see InotifyTree::getError(), or the queue's overflow, which records none here) through
   // errorCallback and stops the watcher. isStarted() stays true, see its declaration.
   auto lock = lockEventHandling();
+  mEnded = true;
   if (!error.empty()) inotifyService->setError(error);
   inotifyService->mTree->cancelFound();
 }
@@ -368,27 +479,27 @@ void InotifyEventLoop::runTestHook(const inotify_event *event) {
   }
 }
 
-// Holds a read that has the creation of nsfw-test-pause-before-lock, without the lock, until
+// Holds a read that has the creation of nsfw-test-pause-after-read, with the lock released, until
 // nsfw-test-resume-event-loop shows up next to it (for at most a minute): other threads can change the tree meanwhile,
-// like updateExcludedPaths(), and the events they cause queue behind the ones read.
-void InotifyEventLoop::pauseBeforeLock(const char *buffer, ssize_t bytesRead) {
+// like updateExcludedPaths(), and the events they cause queue behind the ones read. A drain meanwhile, see
+// updateExcludedPatterns(), handles the events queued after the read held here before that read: only tests do this.
+void InotifyEventLoop::pauseAfterRead(std::unique_lock<std::mutex> &lock, const char *buffer, ssize_t bytesRead) {
   for (ssize_t position = 0; position < bytesRead;) {
     const inotify_event *event = (const inotify_event *)(buffer + position);
     position += sizeof(struct inotify_event) + event->len;
     if (
       !(event->mask & (uint32_t)IN_CREATE) || event->len == 0 ||
-      std::string(event->name) != "nsfw-test-pause-before-lock"
+      std::string(event->name) != "nsfw-test-pause-after-read"
     ) {
       continue;
     }
     std::string directory;
-    {
-      std::lock_guard<std::mutex> lock(mMutex);
-      if (!mInotifyService->mTree->getPath(directory, event->wd)) {
-        return;
-      }
+    if (!mInotifyService->mTree->getPath(directory, event->wd)) {
+      return;
     }
+    lock.unlock();
     waitForTestFile(directory, "nsfw-test-resume-event-loop");
+    lock.lock();
     return;
   }
 }

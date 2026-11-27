@@ -60,6 +60,8 @@ public:
   void forgetIncompleteScans();
   bool isReportedByScan(int wd, const std::string &name) const;
   void startRead(size_t bytesRead);
+  // What the descriptor holds, in bytes; INT_MAX when that can't be told.
+  int getQueuedBytes();
   bool removeDroppedWatch(int wd);
   void removeDroppedWatches(int eventsRead);
   void retryWatches(EmitCreatedEvent emitCreatedEvent);
@@ -268,7 +270,6 @@ private:
   int roomInQueue(int queuedBytes);
   void discard(InotifyNode *node, EmitCreatedEvent emitCreatedEvent);
   void discardNode(InotifyNode *node, Departure departure, EmitCreatedEvent emitCreatedEvent);
-  int getQueuedBytes();
   void markScanIncomplete(InotifyNode *node, bool unreported = false);
   void rescanIncomplete(InotifyNode *moved, EmitCreatedEvent emitCreatedEvent);
   bool isExcluded(const std::string &path) const;

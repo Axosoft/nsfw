@@ -42,7 +42,9 @@ InotifyService::InotifyService(std::shared_ptr<EventQueue> queue, std::string pa
   mQueue(queue),
   mFilter(filter),
   mSymlinks(std::move(symlinks)),
-  mInotifyInstance(inotify_init1(IN_CLOEXEC)) {
+  // Non-blocking: the event loop reads it with event handling locked, and so can another thread, see
+  // InotifyEventLoop::drain(), so what poll() told may be gone by the read.
+  mInotifyInstance(inotify_init1(IN_CLOEXEC | IN_NONBLOCK)) {
   if (!mInotifyInstance.isOpen()) {
     return;
   }
@@ -458,9 +460,17 @@ void InotifyService::updateExcludedPatterns(const std::vector<std::string> &excl
   // Like updateExcludedPaths(): the filter's answers change for the tree the event loop thread reads and changes. A
   // directory found again whose scan is pending has no children yet: that scan asks the filter as it is then.
   std::unique_lock<std::mutex> lock = mEventLoop->lockEventHandling();
+  // What changed before this call is judged by the patterns in force then: a removal judged by the new ones could be
+  // lost, although its creation was reported.
+  const bool running = mEventLoop->drain();
+  mFilter->setPatterns(excludedPatterns);
+  if (!running) {
+    // The tree takes no more watches: the delivery thread reports the error.
+    mFilter->commitPatterns();
+    return;
+  }
   // Patterns apply anywhere, at once: what they exclude now is dropped, and what they no longer exclude is watched,
   // unless an ignore file change still waiting for its quiet period ignores it, which the event loop applies later.
-  mFilter->setPatterns(excludedPatterns);
   mTree->excludeFiltered({ "" }, emitCreated());
   mFilter->commitPatterns();
   mTree->includeFiltered();

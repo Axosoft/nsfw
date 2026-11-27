@@ -22,6 +22,7 @@ if (UNIX)
         message (STATUS "compiling macOS specific file system service")
         set (NSFW_LIBRARY_SOURCES ${NSFW_LIBRARY_SOURCES}
             osx/RunLoop.cpp
+            osx/FSEventsBarrier.cpp
             osx/FSEventsService.cpp
         )
     else (APPLE)

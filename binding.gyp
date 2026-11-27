@@ -52,6 +52,7 @@
                 ],
                 "sources": [
                     "src/osx/RunLoop.cpp",
+                    "src/osx/FSEventsBarrier.cpp",
                     "src/osx/FSEventsService.cpp",
                     "src/osx/FSEventsContents.cpp"
                 ],

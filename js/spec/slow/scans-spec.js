@@ -71,7 +71,7 @@ describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, functio
 
       await watchWhile(async (events, watch) => {
         // The loop waits after reading the pause file, without its lock.
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // On disk P is O's directory, whose node's path is still O, which Y holds by then.
         await fsp.rename(path.join(watchedPath, 'O'), path.join(watchedPath, 'P'));
         await fsp.rename(path.join(outsidePath, 'Y'), path.join(watchedPath, 'O'));
@@ -94,7 +94,7 @@ describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, functio
       await mkdirp(path.join(watchedPath, ...before, 'child'));
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // The tree still has the parent at its old path, where nothing is on disk by then.
         await fsp.rename(path.join(watchedPath, before[0]), path.join(watchedPath, after[0]));
         await watch.updateExcludedPaths([]);
@@ -112,7 +112,7 @@ describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, functio
       await mkdirp(path.join(outsidePath, 'Y', 'child'));
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // The tree still has O's node at O, which Y holds on disk by then.
         await fsp.rename(path.join(watchedPath, 'O'), path.join(watchedPath, 'P'));
         await fsp.rename(path.join(outsidePath, 'Y'), path.join(watchedPath, 'O'));
@@ -124,6 +124,24 @@ describe('inotify scans (slow)', { skip: process.platform !== 'linux' }, functio
         assert.deepStrictEqual(events.filter(event => event.directory === path.join(watchedPath, 'P', 'child') &&
           event.file.startsWith('in-O-')), []);
       }, [path.join(watchedPath, 'O', 'child')]);
+    });
+
+  it('judges a removal still queued when updateExcludedPatterns() starts by the patterns in force before',
+    async function() {
+      const file = path.join(watchedPath, 'late.log');
+      await watchWhile(async (events, watch) => {
+        await fsp.writeFile(file, 'Late');
+        await waitFor(events, event => event.action === nsfw.actions.CREATED && event.file === 'late.log',
+          'creation of late.log');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
+        await remove(file);
+        await watch.updateExcludedPatterns(['*.log']);
+        touch('nsfw-test-resume-event-loop');
+
+        await barrier(events);
+        assert.strictEqual(events.filter(event => event.action === nsfw.actions.DELETED &&
+          event.file === 'late.log').length, 1);
+      });
     });
 
   it('watches a directory a move includes again once its parent is renamed while its node is built',

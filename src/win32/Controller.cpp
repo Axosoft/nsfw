@@ -45,6 +45,10 @@ bool Controller::isWatching() {
   return !hasErrored() && mWatcher->isRunning();
 }
 
+void Controller::flush() {
+  mWatcher->flush();
+}
+
 void Controller::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {
   std::vector<std::wstring> excludedWidePaths;
   for (const std::string &path : excludedPaths) {

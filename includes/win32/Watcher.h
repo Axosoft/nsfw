@@ -24,6 +24,8 @@ class Watcher
     bool isRunning() const { return mRunning; }
     std::string getError();
     void updateExcludedPaths(const std::vector<std::wstring> &excludedPaths);
+    // Waits for the watcher thread to handle the reads that completed before this call, see the definition.
+    void flush();
 #ifdef NSFW_TEST_FAULTS_1
     // The bytes the read buffers of all watchers hold.
     static std::size_t testBufferBytes() { return sTestBufferBytes; }
@@ -39,6 +41,7 @@ class Watcher
     void setError(const std::string &error);
     void eventCallback(DWORD errorCode, DWORD numBytes);
     void handleEvents();
+    bool sampleHandled(uint64_t &reads, bool &pendingRename);
     void handleArrival(const std::wstring &fileName);
     // kind: what the entry was, when known, see Event::kind.
     void handleRemoval(const std::wstring &fileName, PathFilter::Kind kind = PathFilter::Kind::UNKNOWN);

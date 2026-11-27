@@ -27,7 +27,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
 
       await watchWhile(async (events, watch) => {
         assert.deepStrictEqual(await reportedIn(events, deep, ['before.file']), ['a-deep/before.file']);
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         fs.writeFileSync(path.join(deep, 'hidden-queued.file'), '');
         fs.writeFileSync(path.join(kept, 'kept-queued.file'), '');
         await watch.updateExcludedPaths([blocked]);
@@ -61,7 +61,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
         touch(path.join('x', 'd2', 'secret.file'));
 
         await watchWhile(async (events, watch) => {
-          await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+          await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
           // Still queued when x and P are excluded, so their watches aren't removed yet.
           touch('before.file');
           await watch.updateExcludedPaths([path.join(watchedPath, 'x'), path.join(watchedPath, 'P')]);
@@ -88,7 +88,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
         }
 
         await watchWhile(async (events, watch) => {
-          await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+          await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
           touch('before.file');
           await watch.updateExcludedPaths([path.join(watchedPath, 'P')]);
           // The slow build takes 500 ms per node: b1 is found again at about 1000 ms, b3 at 2000, and the marker of
@@ -113,7 +113,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       fs.writeFileSync(path.join(watchedPath, 's2', 'secret.file'), 'Secret');
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // Still queued when d is excluded, so its watch isn't removed by that call, but at its next event, read
         // before the move that brings d back: d gets a new one, while s2 still comes under the old one.
         touch('before.file');
@@ -161,7 +161,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       const excludedPath = path.join(watchedPath, 'q');
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // x still has its node, and its watch, when q's scan finds it.
         fs.renameSync(path.join(watchedPath, 'x'), path.join(excludedPath, 'x'));
         fs.writeFileSync(path.join(excludedPath, 'x', 'secret.file'), 'Secret');
@@ -189,7 +189,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       const excludedPath = path.join(watchedPath, 'q');
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // z's scan sees a there after q's scan saw b: b, which a takes along, is seen again by z's rescan of it.
         fs.mkdirSync(path.join(watchedPath, 'z'));
         fs.renameSync(path.join(watchedPath, 'a'), path.join(watchedPath, 'z', 'a'));
@@ -217,7 +217,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     }
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       // Still queued, so neither call removes dropped watches on its own: only markers do.
       touch('before.file');
       await watch.updateExcludedPaths(names.map(name => path.join(watchedPath, name)));
@@ -242,7 +242,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     }
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       let update;
       try {
@@ -282,7 +282,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     await mkdirp(path.join(parent, 'second'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       let update;
       try {
@@ -316,7 +316,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     await mkdirp(path.join(parent, 'a', 'b', 'c', 'd'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       let update;
       try {
@@ -364,12 +364,12 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
           // and the write at the link are read while its events are still dropped.
           await untilLoopWaits('nsfw-test-hold-event-loop', 'nsfw-test-release-event-loop');
           await remove(waitingPath);
-          touch('nsfw-test-pause-before-lock');
+          touch('nsfw-test-pause-after-read');
           touch('nsfw-test-release-event-loop');
           fs.renameSync(moving, path.join(outsidePath, 'moved.file'));
           await untilWaiting('The event loop never paused');
         } else {
-          await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+          await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         }
         touch('before.file');
         let update;
@@ -401,7 +401,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     await fsp.symlink(target, path.join(parent, 'link'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       try {
         fs.renameSync(parent, moved);
         await watch.updateExcludedPaths([portal]);
@@ -422,7 +422,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     await mkdirp(child);
     await mkdirp(path.join(parent, 'sibling'));
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       await watch.updateExcludedPaths([parent]);
       let resolved = false;
@@ -459,7 +459,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     await fsp.writeFile(path.join(top, branch, 'visible.file'), '');
     await fsp.writeFile(path.join(top, branch, 'child', 'old.file'), '');
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       const outside = path.join(outsidePath, 'away');
       fs.renameSync(top, outside);
       fs.renameSync(outside, moved);
@@ -469,11 +469,11 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       await untilWaiting('The move was never handled');
 
       // Pause the following read outside the event mutex so the update can see the unfinished scan.
-      for (const name of ['nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop']) {
+      for (const name of ['nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop']) {
         await remove(path.join(watchedPath, name));
       }
       await remove(waitingPath);
-      touch('nsfw-test-pause-before-lock');
+      touch('nsfw-test-pause-after-read');
       touch('nsfw-test-release-event-loop');
       try {
         await untilWaiting('The next read never paused');
@@ -504,7 +504,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       await watch.updateExcludedPaths(['x', 'a', 'a/b', 'c'].map(at));
       // The slow build takes 500 ms per node. a is found again at about 500 ms and c at 1000, when their marker is
@@ -533,7 +533,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       // Still queued, so the read the loop holds removes no dropped watch once handled: only markers do.
       touch('before.file');
       await watch.updateExcludedPaths(['a1', 'a2', 'a3', 'x/k1/nm', 'x/k2/nm', 'x/k3/nm'].map(at));
@@ -561,7 +561,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       await watch.updateExcludedPaths(['x/a', 'x/a/b'].map(at));
       fs.renameSync(at('x'), at('y'));
@@ -584,7 +584,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       const at = relative => path.join(watchedPath, ...relative.split('/'));
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         touch('before.file');
         await watch.updateExcludedPaths(['a', 'c', 'e'].map(at));
         // The slow build takes 500 ms per node: a is found again at about 500 ms, c at 1000 and e at 1500.
@@ -614,7 +614,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       const at = relative => path.join(watchedPath, ...relative.split('/'));
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         touch('before.file');
         await watch.updateExcludedPaths(['a', 'c', 'e', 'z'].map(at));
         // The slow build takes 500 ms per node: a is found again at about 500 ms, c at 1000 and e at 1500.
@@ -660,7 +660,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     const at = relative => path.join(watchedPath, ...relative.split('/'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       await watch.updateExcludedPaths(['a', 'c', 'e', 'g', 'z'].map(at));
       const update = watch.updateExcludedPaths([at('z')]);
@@ -728,7 +728,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       }
 
       await watchWhile(async events => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         const watches = countInotifyWatches();
         // Q's scan sees d1, d2 and d3 before S's move out is handled: S's discard watches them in Q, with the
         // watches they had. The hold file, after them in the same read, keeps the loop there once they're handled.
@@ -757,7 +757,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       touch(path.join('src', 'D', 'existing.file'));
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // Still queued when node_modules is excluded, so pkg's watch stays: src's creation comes under it.
         touch('before.file');
         await watch.updateExcludedPaths([path.join(watchedPath, 'node_modules')]);
@@ -777,7 +777,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       await mkdirp(path.join(outsidePath, 'X'));
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // Still queued when E is excluded, so D's watch stays.
         touch('before.file');
         await watch.updateExcludedPaths([path.join(watchedPath, 'E')]);
@@ -887,7 +887,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
     touch(path.join('x', 'd', 'existing.file'));
 
     await watchWhile(async (events, watch) => {
-      await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+      await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
       touch('before.file');
       await watch.updateExcludedPaths([path.join(watchedPath, 'x')]);
       fs.renameSync(path.join(watchedPath, 'x', 'd'), path.join(watchedPath, 'e'));
@@ -906,7 +906,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       fs.writeFileSync(path.join(watchedPath, 'E', 'secret.file'), 'Secret');
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         touch('before.file');
         await watch.updateExcludedPaths([path.join(watchedPath, 'a', 'D')]);
         fs.renameSync(path.join(watchedPath, 'E'), path.join(outsidePath, 'E'));
@@ -933,7 +933,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       const excludedPath = path.join(watchedPath, 'q');
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         fs.renameSync(path.join(watchedPath, 'old', 'H'), path.join(excludedPath, 'H'));
         // Its events end the move out of old, whose handling finds H again, below q, behind a marker.
         touch(path.join('q', 'H', 'sub', 'phantom.file'));
@@ -956,7 +956,7 @@ describe('inotify restoration (slow)', { skip: process.platform !== 'linux' }, f
       await mkdirp(path.join(watchedPath, 'C'));
 
       await watchWhile(async (events, watch) => {
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         touch('before.file');
         await watch.updateExcludedPaths([path.join(watchedPath, 'R', 'P')]);
         fs.renameSync(path.join(watchedPath, 'C'), path.join(outsidePath, 'C'));

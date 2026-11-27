@@ -3,6 +3,7 @@
 #include <unordered_set>
 #include <iostream>
 #include <cerrno>
+#include <fcntl.h>
 #include <climits>
 #include <cstring>
 #include <iterator>
@@ -46,7 +47,8 @@ FSEventsService::FSEventsService(std::shared_ptr<EventQueue> queue, std::string 
     }
   }
 
-  mRunLoop = new RunLoop(this, path);
+  mBarrierDirectory = createFSEventsBarrierDirectory();
+  mRunLoop = new RunLoop(this, path, mBarrierDirectory);
 
   if (!mRunLoop->isLooping()) {
     delete mRunLoop;
@@ -60,6 +62,9 @@ FSEventsService::~FSEventsService() {
   if (mRunLoop != NULL) {
     mStopping = true;
     delete mRunLoop;
+  }
+  if (!mBarrierDirectory.empty()) {
+    rmdir(mBarrierDirectory.c_str());
   }
   releaseExcludedPaths(mExcludedPaths);
 }
@@ -108,9 +113,24 @@ void FSEventsServiceCallback(
   if (eventsService->mLostEvents != FSEventsService::LostEvents::NONE) {
     return;
   }
-  const FSEventStreamEventFlags rootChanged = kFSEventStreamEventFlagRootChanged;
-  auto isRootChange = [&](size_t i) { return eventIds[i] == 0 && (eventFlags[i] & rootChanged) == rootChanged; };
+  // Once the batch is handled, see FSEventsService::flush().
+  struct BarrierCheck {
+    FSEventsService *service;
+    bool seen;
+    ~BarrierCheck() {
+      if (seen) service->barrierPassed();
+    }
+  } barrier { eventsService, false };
   CFArrayRef eventData = (CFArrayRef)eventPaths;
+  const FSEventStreamEventFlags rootChanged = kFSEventStreamEventFlagRootChanged;
+  // The barrier's directory, see FSEventsService::flush(), is none of the watcher's.
+  auto isRootChange = [&](size_t i) {
+    if (eventIds[i] != 0 || (eventFlags[i] & rootChanged) != rootChanged) return false;
+    std::string path;
+    uint64_t inode;
+    return !FSEventsService::readEventData(CFArrayGetValueAtIndex(eventData, i), path, inode) ||
+      !isFSEventsBarrierPath(path);
+  };
   std::vector<FSEventsService::Event> events;
   events.reserve(numEvents);
   for (size_t i = 0; i < numEvents && !eventsService->mRootChanged; ++i) {
@@ -127,6 +147,10 @@ void FSEventsServiceCallback(
     }
     event.flags = eventFlags[i];
     event.id = eventIds[i];
+    if (readable && isFSEventsBarrierPath(event.path)) {
+      barrier.seen = barrier.seen || eventsService->isBarrierMarker(event.path);
+      continue;
+    }
     #ifdef NSFW_TEST_SLOW_1
       eventsService->runTestHook(event);
     #endif
@@ -1078,6 +1102,47 @@ void FSEventsService::splitFilePath(std::string &directory, std::string &name, c
     directory = (location == 0) ? "/" : path.substr(0, location);
     name = path.substr(location + 1);
   }
+}
+
+// A file created in the barrier directory, which the stream also watches, is reported after every change made before.
+// Without it, or once it was waited for 2 seconds, FSEventStreamFlushSync() delivers at least what fseventsd has
+// taken in. Nothing to wait for once the watcher failed: the callback no longer reads the events.
+void FSEventsService::flush() {
+  if (mRunLoop == NULL || hasErrored()) {
+    return;
+  }
+  bool seen = false;
+  if (!mBarrierDirectory.empty()) {
+    const std::string marker = mBarrierDirectory + "/" + std::to_string(++mBarriers);
+    {
+      std::lock_guard<std::mutex> lock(mBarrierLock);
+      mBarrierMarker = marker;
+      mBarrierSeen = false;
+    }
+    const int file = open(marker.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
+    std::unique_lock<std::mutex> lock(mBarrierLock);
+    if (file != -1) {
+      close(file);
+      seen = mBarrierPassed.wait_for(lock, std::chrono::seconds(2), [this] { return mBarrierSeen; });
+    }
+    mBarrierMarker.clear();
+    lock.unlock();
+    unlink(marker.c_str());
+  }
+  if (!seen) {
+    mRunLoop->flush();
+  }
+}
+
+bool FSEventsService::isBarrierMarker(const std::string &path) {
+  std::lock_guard<std::mutex> lock(mBarrierLock);
+  return !mBarrierMarker.empty() && path == mBarrierMarker;
+}
+
+void FSEventsService::barrierPassed() {
+  std::lock_guard<std::mutex> lock(mBarrierLock);
+  mBarrierSeen = true;
+  mBarrierPassed.notify_all();
 }
 
 void FSEventsService::updateExcludedPaths(const std::vector<std::string> &excludedPaths) {

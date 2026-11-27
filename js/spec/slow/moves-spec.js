@@ -477,7 +477,7 @@ describe('inotify moves (slow)', { skip: process.platform !== 'linux' }, functio
 
       await watchWhile(async (events, watch) => {
         // The loop waits after reading the pause file, without its lock.
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         // Still queued when d is excluded, so its watches aren't removed yet.
         fs.writeFileSync(path.join(watchedPath, 'd', 'sub', 'before.file'), 'Before');
         await watch.updateExcludedPaths([excludedPath]);
@@ -501,7 +501,7 @@ describe('inotify moves (slow)', { skip: process.platform !== 'linux' }, functio
 
       await watchWhile(async (events, watch) => {
         // The loop waits after reading the pause file, without its lock.
-        await untilLoopWaits('nsfw-test-pause-before-lock', 'nsfw-test-resume-event-loop');
+        await untilLoopWaits('nsfw-test-pause-after-read', 'nsfw-test-resume-event-loop');
         fs.writeFileSync(path.join(watchedPath, 'd', 'sub', 'before.file'), 'Before');
         // The second inclusion's marker comes after the first one's: neither lifts what the other quarantines early.
         for (const file of ['secret.file', 'secret2.file']) {

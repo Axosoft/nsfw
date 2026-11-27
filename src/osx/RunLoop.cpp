@@ -1,9 +1,12 @@
 #include "../../includes/osx/RunLoop.h"
 
-RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
+#include <memory>
+
+RunLoop::RunLoop(FSEventsService *eventsService, std::string path, std::string barrierDirectory):
   mEventsService(eventsService),
   mExited(false),
   mPath(path),
+  mBarrierDirectory(barrierDirectory),
   mRunLoop(NULL),
   mStarted(false) {
   mRunLoopThread = std::thread([] (RunLoop *rl) { rl->work(); }, this);
@@ -17,6 +20,21 @@ RunLoop::RunLoop(FSEventsService *eventsService, std::string path):
 
 bool RunLoop::isLooping() {
   return mStarted && !mExited;
+}
+
+void RunLoop::flush() {
+  if (!isLooping()) {
+    return;
+  }
+  // Shared with the block, which outlives this call if the run loop ends before running it.
+  auto flushed = std::make_shared<SingleshotSemaphore>();
+  FSEventStreamRef stream = mEventStream;
+  CFRunLoopPerformBlock(mRunLoop, kCFRunLoopDefaultMode, ^ {
+    FSEventStreamFlushSync(stream);
+    flushed->signal();
+  });
+  CFRunLoopWakeUp(mRunLoop);
+  flushed->waitWhile([this] { return isLooping(); });
 }
 
 RunLoop::~RunLoop() {
@@ -33,15 +51,14 @@ RunLoop::~RunLoop() {
 
 void RunLoop::work() {
   CFAbsoluteTime latency = 0.001;
-  CFStringRef fileWatchPath = CFStringCreateWithCString(
-    NULL,
-    mPath.c_str(),
-    kCFStringEncodingUTF8
-  );
+  CFStringRef watchedPaths[] = {
+    CFStringCreateWithCString(NULL, mPath.c_str(), kCFStringEncodingUTF8),
+    mBarrierDirectory.empty() ? NULL : CFStringCreateWithCString(NULL, mBarrierDirectory.c_str(), kCFStringEncodingUTF8)
+  };
   CFArrayRef pathsToWatch = CFArrayCreate(
     NULL,
-    (const void **)&fileWatchPath,
-    1,
+    (const void **)watchedPaths,
+    watchedPaths[1] == NULL ? 1 : 2,
     NULL
   );
   FSEventStreamContext callbackInfo {0, (void *)mEventsService, nullptr, nullptr, nullptr};
@@ -73,7 +90,9 @@ void RunLoop::work() {
   FSEventStreamStart(mEventStream);
   mStreamStarted.signal();
   CFRelease(pathsToWatch);
-  CFRelease(fileWatchPath);
+  for (CFStringRef watchedPath : watchedPaths) {
+    if (watchedPath != NULL) CFRelease(watchedPath);
+  }
 
   CFRunLoopRun();
 

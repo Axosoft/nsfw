@@ -82,6 +82,8 @@ void NativeInterface::updateExcludedPatterns(const std::vector<std::string> &exc
 #if defined(__linux__) || defined(__FreeBSD__)
   mNativeInterface->updateExcludedPatterns(excludedPatterns);
 #else
+  // What changed before this call is judged by the patterns in force then, see InotifyService::updateExcludedPatterns().
+  mNativeInterface->flush();
   mFilter->setPatterns(excludedPatterns);
   mFilter->commitPatterns();
 #endif

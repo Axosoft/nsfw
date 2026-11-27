@@ -276,21 +276,64 @@ jobs:
         shell: bash
         run: node js/scripts/fresh-install-test.js prebuilt package/nsfw-*.tgz
 
+  freebsd-tests:
+    name: "FreeBSD Tests (${{ matrix.release }}, x64, prebuilt)"
+    needs: prebuild
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['14.5', '15.1']
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+
+      - name: Install the packed package and watch a directory
+        uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: ${{ matrix.release }}
+          arch: x86_64
+          sync: scp
+          copyback: false
+          prepare: pkg install -y node22 npm-node22
+          run: |
+            freebsd-version
+            # Some VM images ship libinotify through SSHFS. SCP keeps working after its removal.
+            if pkg info -e libinotify; then
+              pkg delete -y libinotify
+            fi
+            sha256 package/nsfw-*.tgz
+            # FreeBSD includes clang in /usr/bin. Keep it out of the install's PATH.
+            export PATH=/usr/local/bin:/bin
+            for compiler in cc c++ clang clang++ gcc g++; do
+              if command -v "$compiler"; then
+                echo "Unexpected compiler on PATH" >&2
+                exit 1
+              fi
+            done
+            node js/scripts/fresh-install-test.js prebuilt package/nsfw-*.tgz
+
   # Single stable check for branch protection, so matrix changes don't require
   # editing the required status checks.
   tests-passed:
     name: "Tests passed"
     if: ${{ always() }}
-    needs: [prebuild, linux-slow-tests, linux-tests, musl-tests, macos-tests, windows-tests]
+    needs: [prebuild, linux-slow-tests, linux-tests, musl-tests, macos-tests, windows-tests, freebsd-tests]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check matrix results
         run: |
-          echo 'prebuild=${{ needs.prebuild.result }} linux-slow=${{ needs.linux-slow-tests.result }} linux=${{ needs.linux-tests.result }} musl=${{ needs.musl-tests.result }} macos=${{ needs.macos-tests.result }} windows=${{ needs.windows-tests.result }}'
+          echo 'prebuild=${{ needs.prebuild.result }} linux-slow=${{ needs.linux-slow-tests.result }} linux=${{ needs.linux-tests.result }} musl=${{ needs.musl-tests.result }} macos=${{ needs.macos-tests.result }} windows=${{ needs.windows-tests.result }} freebsd=${{ needs.freebsd-tests.result }}'
           test '${{ needs.prebuild.result }}' = success
           test '${{ needs.linux-slow-tests.result }}' = success
           test '${{ needs.linux-tests.result }}' = success
           test '${{ needs.musl-tests.result }}' = success
           test '${{ needs.macos-tests.result }}' = success
           test '${{ needs.windows-tests.result }}' = success
+          test '${{ needs.freebsd-tests.result }}' = success

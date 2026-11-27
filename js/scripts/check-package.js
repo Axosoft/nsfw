@@ -9,6 +9,7 @@ const zlib = require('zlib');
 const prebuilds = [
   'darwin-arm64/nsfw.node',
   'darwin-x64/nsfw.node',
+  'freebsd-x64/nsfw.node',
   'linux-arm64/nsfw.glibc.node',
   'linux-arm64/nsfw.musl.node',
   'linux-x64/nsfw.glibc.node',
@@ -18,7 +19,7 @@ const prebuilds = [
 ].map(file => `prebuilds/${file}`);
 const required = [...prebuilds, 'package.json', 'js/dist/index.js', 'js/dist/index.d.ts', 'binding.gyp', 'src/NSFW.cpp',
   'README.md', 'LICENSE', 'CHANGELOG.md'];
-// About twice the size with all eight binaries (1.6 MB), so a binary that grows by a lot, or a stray file, fails.
+// Leaves headroom for the prebuilds while catching unexpectedly large binaries or stray files.
 const maxPackedBytes = 3 * 1024 * 1024;
 
 const tarball = process.argv[2];

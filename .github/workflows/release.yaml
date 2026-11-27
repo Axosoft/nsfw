@@ -203,7 +203,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          for attempt in $(seq 20); do
+          for attempt in $(seq 40); do
             if [ "$(npm view "nsfw@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
               exit 0
             fi

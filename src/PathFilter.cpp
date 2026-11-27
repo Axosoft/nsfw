@@ -64,6 +64,7 @@ void PathFilter::setPatterns(const std::vector<std::string> &patterns) {
   }
   mPatterns = std::move(rules);
   mPatternsDiverged = mTracksApplied && mPatterns != mAppliedPatterns;
+  invalidateDirectories();
   // The applied patterns still count until committed.
   mActive = !mPatterns.empty() || !mAppliedPatterns.empty() || mGitignore;
   for (const auto &entry : untracked) {
@@ -88,6 +89,8 @@ std::string PathFilter::relativeOf(const std::string &key) const {
 // Whether the rules in force tell its kinds apart, so judge() looks at what it is: only rules for directories match
 // it, and no directory it is in is ignored.
 bool PathFilter::tellsKindsApart(const std::string &relative) {
+  // Asked both before and after setPatterns() changes the patterns.
+  startJudging();
   return !isAncestorIgnored(relative, false) &&
     isIgnoredBelowWatched(relative, false) != isIgnoredBelowWatched(relative, true);
 }
@@ -97,6 +100,7 @@ void PathFilter::commitPatterns() {
   mAppliedPatterns = mPatterns;
   mPatternsDiverged = false;
   mActive = !mPatterns.empty() || mGitignore;
+  invalidateDirectories();
 }
 
 uint64_t PathFilter::commit(uint64_t upTo) {
@@ -118,6 +122,7 @@ uint64_t PathFilter::commit(uint64_t upTo) {
   mAppliedPatterns = mPatterns;
   mPatternsDiverged = false;
   mActive = !mPatterns.empty() || mGitignore;
+  invalidateDirectories();
   return upTo;
 }
 
@@ -260,6 +265,7 @@ void PathFilter::refresh(CachedRules &cached, const std::string &file, bool igno
   if (rules != cached.rules || !cached.everRead) {
     cached.rules = std::move(rules);
     cached.changedAt = ++mGeneration;
+    invalidateDirectories();
     if (mTracksApplied) {
       mFilesDiverged = true;
       if (directory != NULL) {
@@ -381,20 +387,32 @@ bool PathFilter::isIgnoredBy(const std::string &relative, bool isDirectory, bool
     return match == GitignoreMatch::IGNORED;
   }
   // A .gitignore closer to the path takes precedence over the ones above it.
-  for (size_t slash = path.rfind('/');; slash = path.rfind('/', slash - 1)) {
+  size_t slash = path.rfind('/');
+  DirectoryState *directory = &directoryOf(slash == std::string::npos ? "" : path.substr(0, slash));
+  for (;;) {
     const bool top = slash == std::string::npos;
-    const CachedRules &cached = rulesOf(top ? "" : path.substr(0, slash));
+    if (directory->rules == NULL || directory->rules->stale) {
+      directory->rules = &rulesOf(top ? "" : path.substr(0, slash));
+    }
+    const CachedRules &cached = *directory->rules;
     if (conservative && cached.failed && !cached.everRead) {
       return true;
     }
-    match = matchGitignoreRules(applied ? cached.applied : cached.rules, top ? path : path.substr(slash + 1), isDirectory,
-      mCaseSensitive);
-    if (match != GitignoreMatch::NONE) {
-      return match == GitignoreMatch::IGNORED;
+    const Rules &rules = applied ? cached.applied : cached.rules;
+    if (!rules.empty()) {
+      match = matchGitignoreRules(rules, top ? path : path.substr(slash + 1), isDirectory, mCaseSensitive);
+      if (match != GitignoreMatch::NONE) {
+        return match == GitignoreMatch::IGNORED;
+      }
     }
     if (top || slash == 0) {
       break;
     }
+    slash = path.rfind('/', slash - 1);
+    if (directory->parent == NULL) {
+      directory->parent = &directoryOf(slash == std::string::npos ? "" : path.substr(0, slash));
+    }
+    directory = directory->parent;
   }
   for (auto *file : { &mInfoExclude, &mExcludesFile }) {
     const std::string &filePath = file == &mInfoExclude ? mInfoExcludePath : mExcludesFilePath;
@@ -424,17 +442,46 @@ bool PathFilter::isDirectoryIgnored(const std::string &directory, const std::str
     return false;
   }
   std::lock_guard<std::mutex> lock(mMutex);
+  startJudging();
   return isAncestorIgnored(path, false) || isIgnoredBelowWatched(path, true);
 }
 
-// Nothing in an ignored directory can be included again, as in git.
+// Nothing in an ignored directory can be included again, as in git. Asked once per directory, top-down, while the
+// rules stay as they are.
 bool PathFilter::isAncestorIgnored(const std::string &path, bool tree) {
-  for (size_t slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
-    if (isIgnoredBelowWatched(path.substr(0, slash), true, tree)) {
-      return true;
+  // The directories path is in whose answer isn't known yet, deepest first, with where their paths end.
+  std::vector<std::pair<size_t, DirectoryState *>> unknown;
+  bool ignored = false;
+  for (size_t slash = path.rfind('/'); slash != std::string::npos;
+    slash = slash == 0 ? std::string::npos : path.rfind('/', slash - 1)) {
+    DirectoryState &directory = directoryOf(toBase(path.substr(0, slash)));
+    if (directory.ignored[tree] != Answer::UNKNOWN) {
+      ignored = directory.ignored[tree] == Answer::YES;
+      break;
     }
+    unknown.emplace_back(slash, &directory);
   }
-  return false;
+  for (auto directory = unknown.rbegin(); directory != unknown.rend(); ++directory) {
+    ignored = ignored || isIgnoredBelowWatched(path.substr(0, directory->first), true, tree);
+    directory->second->ignored[tree] = ignored ? Answer::YES : Answer::NO;
+  }
+  return ignored;
+}
+
+// directory: relative to mBase.
+PathFilter::DirectoryState &PathFilter::directoryOf(const std::string &directory) {
+  return mDirectories[keyOf(directory)];
+}
+
+// What is known about the directories goes once the rules, or what they were read for, changed, or while an ignore
+// file can't be read: that one is read again on each use. Only here, before judging, since judging holds on to it.
+void PathFilter::startJudging() {
+  if (mDirectoriesStale || mFailedReads || mDirectories.size() > MAX_DIRECTORIES) {
+    if (!mDirectories.empty()) {
+      mDirectories.clear();
+    }
+    mDirectoriesStale = false;
+  }
 }
 
 bool PathFilter::isReplacementIgnored(const std::string &directory, const std::string &name, Kind kind,
@@ -450,6 +497,7 @@ bool PathFilter::judge(const std::string &directory, const std::string &name, Ki
     return false;
   }
   std::lock_guard<std::mutex> lock(mMutex);
+  startJudging();
   if (isAncestorIgnored(path, tree)) {
     return true;
   }
@@ -499,6 +547,7 @@ bool PathFilter::isChildIgnored(const std::string &directory, const std::string 
     return false;
   }
   std::lock_guard<std::mutex> lock(mMutex);
+  startJudging();
   if (mFilesDiverged || mPatternsDiverged) {
     // A directory the new rules ignore stays watched until they are applied: what is created in it meanwhile isn't.
     if (isAncestorIgnored(path, true)) {
@@ -625,6 +674,7 @@ void PathFilter::markInfoExcludeIfBelow(const std::string &directory, const std:
   const std::string path = comparable(join(withoutTrailingSeparators(toGeneric(directory)), name)) + "/";
   if (comparable(mInfoExcludePath).compare(0, path.size(), path) == 0) {
     mInfoExclude.stale = true;
+    invalidateDirectories();
   }
 }
 
@@ -676,6 +726,7 @@ void PathFilter::forget(const std::string &directory, const std::string &name) {
 // The rules read at entry and below it, from "entry/" up to "entry0", '0' following '/', all of them for "", go.
 void PathFilter::dropBelow(const std::string &entry) {
   const std::string key = keyOf(entry);
+  invalidateDirectories();
   auto drop = [this](std::map<std::string, CachedRules>::iterator cached) {
     if (cached->second.failed) {
       cached->second.stale = true;
@@ -744,6 +795,7 @@ void PathFilter::forgetSeenKinds() {
 // What is below entry may still be watched: its rules are only read again, keeping the applied ones.
 void PathFilter::markStaleBelow(const std::string &entry) {
   const std::string key = keyOf(entry);
+  invalidateDirectories();
   for (auto &cached : mDirectoryRules) {
     if (key.empty() || cached.first == key || cached.first.compare(0, key.size() + 1, key + "/") == 0) {
       cached.second.stale = true;
@@ -757,6 +809,7 @@ void PathFilter::markStaleBelow(const std::string &entry) {
 // The directory at from now is at to, rules and applied rules along, to be read again there.
 void PathFilter::moveBelow(const std::string &from, const std::string &to) {
   const std::string fromKey = keyOf(from);
+  invalidateDirectories();
   const std::string toKey = keyOf(to);
   std::vector<std::pair<std::string, CachedRules>> moved;
   // Keys like "from-x" sort between "from" and "from/": skipped.

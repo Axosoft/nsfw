@@ -43,6 +43,12 @@
   file of that name while `updateExcludedPatterns()` had removed the pattern, replaced it with others, or excluded a
   directory it is in, and then brought it back (#277).
 
+### Performance
+- With `respectGitignore`, judging whether a changed path is ignored no longer takes time quadratic in its depth (#279):
+  whether each directory is ignored, and which `.gitignore` files apply in it, is remembered until the rules change,
+  instead of being worked out again for every ancestor of every path. With a `*.o` rule, an event 32 directories deep
+  took about 65 µs and now under 2 µs. Time it with `js/scripts/benchmark-gitignore-depth.cpp`.
+
 ## 3.1.1
 
 ### Fixed

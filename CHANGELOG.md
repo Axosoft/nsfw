@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.2.0
 
 ### Added
 - `maxQueuedEvents` bounds the events that wait to be delivered to JavaScript, which grew without bound in native
@@ -9,6 +9,10 @@
   inotify queue overflow on Linux or a buffer overflow on Windows. Defaults to 1000000. Events that fill half of the
   room it leaves are delivered without waiting out `debounceMS`, so a burst alone doesn't overflow it while
   JavaScript keeps up.
+- A prebuilt binary for FreeBSD x64, built on FreeBSD 14.5 against the inotify of its base system, so installing nsfw
+  there needs neither a compiler nor the `libinotify` package (#285). FreeBSD 14.4 and earlier lack that inotify:
+  install `libinotify` there and build from source, as before. A build from source uses the base system's inotify
+  wherever `/usr/include/sys/inotify.h` is there, and `libinotify` otherwise.
 
 ### Changed
 - A directory watcher drops the batches of events still waiting for the JavaScript thread when it is stopped, paused
@@ -42,6 +46,8 @@
 - The removal of a directory excluded by a pattern for directories (`build/`) is no longer reported when it replaced a
   file of that name while `updateExcludedPatterns()` had removed the pattern, replaced it with others, or excluded a
   directory it is in, and then brought it back (#277).
+- Event batches and watcher errors still queued for JavaScript are freed when the Node environment tears down, as when a
+  `Worker` that watches a busy tree is terminated, or when the call that queues them fails. They used to leak (#273).
 
 ### Performance
 - With `respectGitignore`, judging whether a changed path is ignored no longer takes time quadratic in its depth (#279):
@@ -72,8 +78,6 @@
   is left, `errorCallback` gets the error, once until the directory is watched again, and the watcher keeps trying;
   without an `errorCallback` nothing is thrown. `start()` still rejects when the directory is there but can't be
   watched. Directory watchers are unchanged.
-- Event batches and watcher errors still queued for JavaScript are freed when the Node environment tears down, as when a
-  `Worker` that watches a busy tree is terminated, or when the call that queues them fails. They used to leak (#273).
 
 ### Changed
 - A note on 3.1.0, which changed it without saying so (#265): the delivery thread no longer wakes up every 50 ms, so

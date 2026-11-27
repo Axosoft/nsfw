@@ -39,6 +39,9 @@
   resolves again every one leading to the file on each of its changes (#278). Starting next to 5,000 symlinks to the
   file took about 50 ms and 5 MiB, and each change of the file about 45 ms more. A watched file only reports its own
   entry, so its watcher now follows no symlink, on any platform; a watched directory follows them as before.
+- The removal of a directory excluded by a pattern for directories (`build/`) is no longer reported when it replaced a
+  file of that name while `updateExcludedPatterns()` had removed the pattern, replaced it with others, or excluded a
+  directory it is in, and then brought it back (#277).
 
 ## 3.1.1
 

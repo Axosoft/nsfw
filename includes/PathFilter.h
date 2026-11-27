@@ -149,6 +149,8 @@ private:
   bool judge(const std::string &directory, const std::string &name, Kind kind, bool gone, bool tree,
     bool *replacedReported);
   bool isAncestorIgnored(const std::string &path, bool tree);
+  std::string relativeOf(const std::string &key) const;
+  bool tellsKindsApart(const std::string &relative);
   void dropSeenBelow(const std::string &key);
   void moveSeenBelow(const std::string &fromKey, const std::string &toKey);
   void seenMoved(const std::string &fromDirectory, const std::string &fromName, const std::string &toDirectory,
@@ -189,7 +191,8 @@ private:
   // itself), empty for one without. Ordered, so a directory's entries and the ones below it are a range.
   std::map<std::string, CachedRules> mDirectoryRules;
   // What the paths only rules for directories match were when last seen, by their keys, for when they are gone, see
-  // judge(). Dropped and moved along with the rules below them, see dropBelow() and moveBelow().
+  // judge(). Dropped and moved along with the rules below them, see dropBelow() and moveBelow(), and looked up again
+  // once the patterns tell their kinds apart again, see setPatterns().
   std::map<std::string, Kind> mSeenKinds;
   std::mutex mMutex;
 };

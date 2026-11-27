@@ -5124,6 +5124,163 @@ describe('Node Sentinel File Watcher', function() {
           }, inPath, { excludedPatterns: ['build/'] });
         });
 
+      // The patterns are others while change() runs, then build/ comes back.
+      async function withPatternsMeanwhile(watch, barrier, meanwhile, change) {
+        await watch.updateExcludedPatterns(meanwhile);
+        await barrier();
+        await change();
+        await barrier();
+        await watch.updateExcludedPatterns(['build/']);
+        await barrier();
+      }
+
+      for (const [label, meanwhile] of [['removed', []], ['replaced by others', ['other/']]]) {
+        it(`does not report the removal of a directory that replaced a file while the pattern was ${label}`,
+          async function() {
+            const entry = path.join(inPath, 'build');
+            await withWatchers(inPath, [], async ({ watch, actual, barrier, excluded }) => {
+              await actual.observe(entry, nsfw.actions.CREATED, () => fsp.writeFile(entry, 'A file'));
+              await withPatternsMeanwhile(watch, barrier, meanwhile, async () => {
+                await remove(entry);
+                await fsp.mkdir(entry);
+              });
+              await excluded(entry, nsfw.actions.DELETED, () => remove(entry));
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        it(`reports the removal of a file named like a pattern for directories, untouched while it was ${label}`,
+          async function() {
+            const entry = path.join(inPath, 'build');
+            await withWatchers(inPath, [], async ({ watch, actual, barrier }) => {
+              await actual.observe(entry, nsfw.actions.CREATED, () => fsp.writeFile(entry, 'A file'));
+              await withPatternsMeanwhile(watch, barrier, meanwhile, async () => {});
+              await actual.observe(entry, nsfw.actions.DELETED, () => remove(entry));
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        it(`reports the removal of a file named like a pattern for directories, written again while it was ${label}`,
+          async function() {
+            const entry = path.join(inPath, 'build');
+            await withWatchers(inPath, [], async ({ watch, actual, barrier }) => {
+              await actual.observe(entry, nsfw.actions.CREATED, () => fsp.writeFile(entry, 'A file'));
+              await withPatternsMeanwhile(watch, barrier, meanwhile, async () => {
+                await remove(entry);
+                await fsp.writeFile(entry, 'Another file');
+              });
+              await actual.observe(entry, nsfw.actions.DELETED, () => remove(entry));
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        // Its removal may be judged before or after the pattern comes back, which only matters where the watcher
+        // doesn't tell what was removed (Windows).
+        it(`reports the removal of a file named like a pattern for directories as it comes back from ${label}`,
+          async function() {
+            const entry = path.join(inPath, 'build');
+            await withWatchers(inPath, [], async ({ watch, actual, barrier }) => {
+              await actual.observe(entry, nsfw.actions.CREATED, () => fsp.writeFile(entry, 'A file'));
+              await watch.updateExcludedPatterns(meanwhile);
+              await barrier();
+              await actual.observe(entry, nsfw.actions.DELETED, async () => {
+                await remove(entry);
+                await watch.updateExcludedPatterns(['build/']);
+              });
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        it(`reports no creation of a directory made where a file was removed while the pattern was ${label}`,
+          async function() {
+            const entry = path.join(inPath, 'build');
+            await withWatchers(inPath, [], async ({ watch, actual, control, barrier, excluded }) => {
+              await actual.observe(entry, nsfw.actions.CREATED, () => fsp.writeFile(entry, 'A file'));
+              await withPatternsMeanwhile(watch, barrier, meanwhile, () => remove(entry));
+              const offset = actual.events.length;
+              await control.observe(entry, nsfw.actions.CREATED, () => fsp.mkdir(entry));
+              await barrier();
+              await new Promise(resolve => setTimeout(resolve, absenceWindowMS));
+              // The file's removal was reported already, but may be again: what was there is all the filter knows.
+              assert.deepStrictEqual(actual.events.slice(offset).filter(event => matches(event, entry) &&
+                event.action !== nsfw.actions.DELETED), []);
+              await excluded(entry, nsfw.actions.DELETED, () => remove(entry));
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        (process.platform === 'win32' ? it.skip : it)(
+          `does not report the removal of a symlink to a directory that replaced one to a file while it was ${label}`,
+          async function() {
+            const file = path.join(inPath, 'target.file');
+            const directory = path.join(inPath, 'store');
+            const link = path.join(inPath, 'build');
+            await fsp.writeFile(file, 'A file');
+            await mkdirp(directory);
+            await withWatchers(inPath, [], async ({ watch, actual, barrier, excluded }) => {
+              await actual.observe(link, nsfw.actions.CREATED, () => fsp.symlink(file, link));
+              await withPatternsMeanwhile(watch, barrier, meanwhile, async () => {
+                await remove(link);
+                await fsp.symlink(directory, link);
+              });
+              await excluded(link, nsfw.actions.DELETED, () => remove(link));
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        (process.platform === 'win32' ? it.skip : it)(
+          `does not report the removal of a symlink to a directory removed while the pattern was ${label}`,
+          async function() {
+            const directory = path.join(inPath, 'store');
+            const link = path.join(inPath, 'build');
+            await mkdirp(directory);
+            await withWatchers(inPath, [], async ({ watch, barrier, excluded }) => {
+              await excluded(link, nsfw.actions.CREATED, () => fsp.symlink(directory, link));
+              await withPatternsMeanwhile(watch, barrier, meanwhile, () => remove(directory));
+              await excluded(link, nsfw.actions.DELETED, () => remove(link));
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+
+        // macOS coalesces the events of one path, so whether it tells a replacement apart varies.
+        (isLinux ? it : it.skip)(
+          `reports the removal of a symlink to a file a symlink to a directory was renamed over after it was ${label}`,
+          async function() {
+            const file = path.join(inPath, 'target.file');
+            const directory = path.join(inPath, 'store');
+            const link = path.join(inPath, 'build');
+            const next = path.join(inPath, 'next');
+            await fsp.writeFile(file, 'A file');
+            await mkdirp(directory);
+            await withWatchers(inPath, [], async ({ watch, actual, barrier }) => {
+              await actual.observe(link, nsfw.actions.CREATED, () => fsp.symlink(file, link));
+              await withPatternsMeanwhile(watch, barrier, meanwhile, async () => {});
+              await actual.observe(link, nsfw.actions.DELETED, async () => {
+                await fsp.symlink(directory, next);
+                await fsp.rename(next, link);
+              });
+            }, inPath, { excludedPatterns: ['build/'] });
+          });
+      }
+
+      it('does not report the removal of a directory that replaced a file while a directory it is in was excluded',
+        async function() {
+          const directory = path.join(inPath, 'outer');
+          const entry = path.join(directory, 'build');
+          await mkdirp(directory);
+          await withWatchers(inPath, [], async ({ watch, actual, barrier, excluded }) => {
+            await actual.observe(entry, nsfw.actions.CREATED, () => fsp.writeFile(entry, 'A file'));
+            await withPatternsMeanwhile(watch, barrier, ['build/', 'outer/'], async () => {
+              await remove(entry);
+              await fsp.mkdir(entry);
+            });
+            await excluded(entry, nsfw.actions.DELETED, () => remove(entry));
+          }, inPath, { excludedPatterns: ['build/'] });
+        });
+
+      it('reports the removal of a file named like a pattern for directories, untouched while others were added',
+        async function() {
+          const entry = path.join(inPath, 'build');
+          await withWatchers(inPath, [], async ({ watch, actual, barrier }) => {
+            await actual.observe(entry, nsfw.actions.CREATED, () => fsp.writeFile(entry, 'A file'));
+            await withPatternsMeanwhile(watch, barrier, ['build/', '*.log'], async () => {});
+            await actual.observe(entry, nsfw.actions.DELETED, () => remove(entry));
+          }, inPath, { excludedPatterns: ['build/'] });
+        });
+
       it('matches patterns with many stars in bounded time', async function() {
         const name = 'a'.repeat(80);
         const nested = path.join(inPath, ...Array(20).fill('a'));
